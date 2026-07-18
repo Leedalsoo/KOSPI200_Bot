@@ -1,0 +1,29 @@
+name: HFT Manual Smoke Test (Selective)
+on:
+  workflow_dispatch:
+    inputs:
+      test_target:
+        description: '특정 모듈 테스트 (예: tests/unit/test_risk_manager.py)'
+        required: true
+        default: 'tests/'
+      run_chaos_monkey:
+        description: '네트워크 단절 및 지연 결함 고의 주입 (Chaos Mode)'
+        type: boolean
+        default: true
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install HFT Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Verify C/Rust Engines Load
+        run: python -c "import uvloop; import orjson; import numpy; print('✅ 프리미엄 엔진 로드 성공')"
+      - name: Run Target Tests
+        run: CHAOS_MODE=${{ github.event.inputs.run_chaos_monkey }} pytest ${{ github.event.inputs.test_target }} -v

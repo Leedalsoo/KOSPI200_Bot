@@ -1,0 +1,11 @@
+.env
+.env.*
+credentials/
+data/
+logs/
+*.log
+*.jsonl
+*.sqlite
+__pycache__/
+*.py[cod]
+venv/
