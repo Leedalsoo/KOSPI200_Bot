@@ -44,6 +44,14 @@ async def test_broadcast_serialization_once() -> None:
     broadcaster = WebsocketBroadcaster()
     ws1 = AsyncMock()
     ws2 = AsyncMock()
+    
+    # 🛡️ 워커가 queue.get()을 가로채어 소진하지 못하도록 ping 단계에서 비동기 무한 대기 유도
+    async def mock_ping() -> None:
+        await asyncio.sleep(100)
+
+    ws1.ping.side_effect = mock_ping
+    ws2.ping.side_effect = mock_ping
+
     sid1 = await broadcaster.register_connection(ws1)
     sid2 = await broadcaster.register_connection(ws2)
 
