@@ -76,3 +76,4 @@ def test_slippage_stats_accuracy() -> None:
     assert stats["mean"] == Decimal("0.2")
     # std = stddev([0.1, 0.2, 0.3]) ≈ 0.0816 → np.round(..., 4) = 0.0816
     assert stats["std"] == Decimal("0.0816")
+
