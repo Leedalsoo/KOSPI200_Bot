@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, Optional
 
 # Windows 환경 대응을 위한 uvloop 임포트 예외 처리
 try:
-    import uvloop  # type: ignore[import-not-found]
+    import uvloop  # type: ignore[import-not-found, unused-ignore]
     _HAS_UVLOOP = True
 except ImportError:
     _HAS_UVLOOP = False
