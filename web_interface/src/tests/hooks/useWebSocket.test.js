@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
-import { useWebSocket } from './useWebSocket';
-import { useStore } from '../store/rootStore';
+import { useWebSocket } from '../../hooks/useWebSocket';
+import { useStore } from '../../store/rootStore';
 
 // 🛡️ [글로벌 WebSocket 모킹]
 class MockWebSocket {
