@@ -3,14 +3,24 @@ import { render, act } from '@testing-library/react';
 import ProfitChart from '../../../components/dashboard/ProfitChart';
 import { useStore } from '../../../store/rootStore';
 
-// Recharts ResponsiveContainer의 가로/세로 측정 기능 모킹
+// Recharts 모킹 (jsdom SVG 렌더링 한계 극복)
 jest.mock('recharts', () => {
-  const OriginalRecharts = jest.requireActual('recharts');
+  const React = require('react');
+  const { useStore } = require('../../../store/rootStore');
   return {
-    ...OriginalRecharts,
-    ResponsiveContainer: ({ children }) => (
-      <div style={{ width: 800, height: 300 }}>{children}</div>
-    ),
+    ResponsiveContainer: ({ children }) => <div style={{ width: 800, height: 300 }}>{children}</div>,
+    LineChart: ({ children }) => <div data-testid="line-chart">{children}</div>,
+    Line: () => {
+      const coords = useStore(state => state.coords);
+      if (coords && coords.length > 0) {
+        return <div className="recharts-line-curve" data-testid="line-curve" />;
+      }
+      return null;
+    },
+    XAxis: () => null,
+    YAxis: () => null,
+    Tooltip: () => null,
+    CartesianGrid: () => null,
   };
 });
 
