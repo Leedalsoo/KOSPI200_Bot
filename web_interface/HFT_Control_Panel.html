@@ -1285,6 +1285,9 @@
         "Track8 (Monthly)": 0.0
       });
 
+      const [hourlyReturn, setHourlyReturn] = useState(0.0);
+      const [monthlyReturn, setMonthlyReturn] = useState(0.0);
+
       const [enabledStrategies, setEnabledStrategies] = useState({
         track1: true, track2: true, track3: true, track4: true,
         track5: true, track6: true, track7: true, track8: true
@@ -1466,6 +1469,12 @@
             }
             if (parsedData.enabledStrategies !== undefined) {
               setEnabledStrategies(parsedData.enabledStrategies);
+            }
+            if (parsedData.hourlyReturn !== undefined) {
+              setHourlyReturn(parsedData.hourlyReturn);
+            }
+            if (parsedData.monthlyReturn !== undefined) {
+              setMonthlyReturn(parsedData.monthlyReturn);
             }
 
 
@@ -1922,21 +1931,33 @@
                   <span style={{ color: '#64748B' }}>Margin Ratio (증거금률)</span>
                   <span style={{ fontSize: '16px', fontWeight: 700, color: riskLevel === 'DANGER' ? '#EF4444' : riskLevel === 'WARNING' ? '#F59E0B' : '#10B981' }}>{marginRatio}%</span>
                 </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderBottom: '1px solid #334155', paddingBottom: '6px' }}>
+                  <span style={{ color: '#64748B' }}>Hourly Return (매시간 손익률)</span>
+                  <span style={{ fontSize: '14px', fontWeight: 700, color: hourlyReturn > 0 ? '#10B981' : hourlyReturn < 0 ? '#EF4444' : '#CBD5E1' }}>
+                    {hourlyReturn > 0 ? `+${hourlyReturn.toFixed(2)}%` : `${hourlyReturn.toFixed(2)}%`}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderBottom: '1px solid #334155', paddingBottom: '6px' }}>
+                  <span style={{ color: '#64748B' }}>Monthly Return (월마감 손익률)</span>
+                  <span style={{ fontSize: '14px', fontWeight: 700, color: monthlyReturn > 0 ? '#10B981' : monthlyReturn < 0 ? '#EF4444' : '#CBD5E1' }}>
+                    {monthlyReturn > 0 ? `+${monthlyReturn.toFixed(2)}%` : `${monthlyReturn.toFixed(2)}%`}
+                  </span>
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ color: '#64748B' }}>Used Margin (사용 증거금)</span>
-                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#E2E8F0' }}>{formatCurrencyPrecise(usedMargin)}</span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#E2E8F0' }}>{formatCurrencyPrecise(usedMargin)}</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ color: '#64748B' }}>Free Margin (가능 증거금)</span>
-                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#10B981' }}>{formatCurrencyPrecise(Math.max(0, capital - usedMargin))}</span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#10B981' }}>{formatCurrencyPrecise(Math.max(0, capital - usedMargin))}</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ color: '#64748B' }}>Available Capital (가용 자본)</span>
-                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC' }}>{formatCurrencyPrecise(capital)}</span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#F8FAFC' }}>{formatCurrencyPrecise(capital)}</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ color: '#64748B' }}>Safety Reserve (안전 유보금)</span>
-                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#F59E0B' }}>{formatCurrencyPrecise(reserve)}</span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#F59E0B' }}>{formatCurrencyPrecise(reserve)}</span>
                 </div>
               </div>
             </section>

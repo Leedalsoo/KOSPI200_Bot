@@ -460,6 +460,7 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
     global strategy_realized_pnl  # Phase 2.4: 팩토리 재생성을 위해 global 선언 필수
     global SESSION_ID, already_rolled_this_month  # Phase 1.1 + 2.1: 세션 UUID 갱신 및 롤오버 플래그
     global enabled_strategies  # 전략 1~8 개별 온오프 강제 토글 플래그
+    global hourly_start_equity, month_start_capital, last_tracked_hour  # 매시간 및 월마감 손익률 추적용 변수
 
     # 🔑 [Phase 2.1] 세션 UUID 재생성 — 프론트엔드가 세션 경계를 감지할 수 있도록
     SESSION_ID = str(uuid.uuid4())
@@ -485,8 +486,9 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
         current_capital  = initial_capital
         accumulated_reserve = 0.0
         total_equity     = initial_capital
-        daily_hwm = initial_capital
-        highest_equity_today = initial_capital
+        hourly_start_equity = initial_capital
+        month_start_capital = initial_capital
+        last_tracked_hour = -1
         
         # 최초 기동이거나 롤오버(월 단위 리셋) 시에만 달력과 지수 위치 초기화
         calendar_sim = CalendarSimulator("2025-01-01")
@@ -685,6 +687,8 @@ async def simulation_loop() -> None:  # noqa: C901
     global SIM_STRESS_CIRCUIT_BREAKER, SIM_STRESS_FLASH_CRASH, SIM_STRESS_IV_EXPLOSION, SIM_STRESS_SLIPPAGE_MS
     global already_rolled_this_month, strategy_realized_pnl  # Phase 1.1 + 2.4
 
+
+    global last_tracked_hour, hourly_start_equity, month_start_capital
 
     assert track1_strategy is not None and track2_strategy is not None
     assert track3_strategy is not None and track4_strategy is not None
@@ -997,6 +1001,7 @@ async def simulation_loop() -> None:  # noqa: C901
                 highest_equity_today = total_equity
                 daily_hwm = total_equity
                 initial_capital = current_capital  # 차월 기준 자본금으로 업데이트
+                month_start_capital = total_equity  # 차월 월마감 손익률 기준점 업데이트
 
                 pnl_fmt = f"+{settlement_total_pnl:,.0f}원" if settlement_total_pnl >= 0 else f"-{abs(settlement_total_pnl):,.0f}원"
                 logger.info("📅 [EXPIRY & CARRY-OVER ROLLOVER] 당월물 옵션 만기 정산 완료! 정산손익: %s | 이월 자본금: ₩%s. 차월물 롤오버 완료.", pnl_fmt, f"{total_equity:,.0f}")
@@ -2774,6 +2779,15 @@ async def simulation_loop() -> None:  # noqa: C901
                 coord_data["fee"] = order.get("fee", 0.0)
                 coord_data["time"] = order.get("time", "")
 
+            # ── ⏱️ 매시간 손익률 & 월마감 손익률 연산 ─────────────────────
+            curr_hour = calendar_sim.current_time.hour
+            if last_tracked_hour == -1 or curr_hour != last_tracked_hour:
+                last_tracked_hour = curr_hour
+                hourly_start_equity = total_equity
+
+            hourly_return = ((total_equity - hourly_start_equity) / hourly_start_equity * 100.0) if hourly_start_equity > 0 else 0.0
+            monthly_return = ((total_equity - month_start_capital) / month_start_capital * 100.0) if month_start_capital > 0 else 0.0
+
             packet: Dict[str, Any] = {
                 "sessionId":             SESSION_ID,
                 "date":                  date_str,
@@ -2800,6 +2814,11 @@ async def simulation_loop() -> None:  # noqa: C901
                 "tunedSlippage":         tuned_slippage,
                 "daysToExpiry":          round(simulated_days_to_expiry, 2),
                 "autobotActive":         autobot_active,
+                # ── 📈 매시간 & 월마감 손익률 ──
+                "hourlyReturn":          round(hourly_return, 2),
+                "monthlyReturn":         round(monthly_return, 2),
+                "hourlyStartEquity":     round(hourly_start_equity, 2),
+                "monthStartCapital":     round(month_start_capital, 2),
                 # ── 극한 시나리오 상태 플래그 (프론트엔드 경보용) ──
                 "circuitBreaker":        circuit_breaker_active,
                 "flashCrash":            flash_crash_active,
