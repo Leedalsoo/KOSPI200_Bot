@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, act } from '@testing-library/react';
-import ProfitChart from '../../components/dashboard/ProfitChart';
-import { useStore } from '../../store/rootStore';
+import ProfitChart from '../../../components/dashboard/ProfitChart';
+import { useStore } from '../../../store/rootStore';
 
 // Recharts ResponsiveContainer의 가로/세로 측정 기능 모킹
 jest.mock('recharts', () => {

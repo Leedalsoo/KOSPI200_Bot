@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, act } from '@testing-library/react';
-import PayoffDiagram from '../../components/dashboard/PayoffDiagram';
-import { useStore } from '../../store/rootStore';
+import PayoffDiagram from '../../../components/dashboard/PayoffDiagram';
+import { useStore } from '../../../store/rootStore';
 
 // Recharts ResponsiveContainer 모킹
 jest.mock('recharts', () => {
