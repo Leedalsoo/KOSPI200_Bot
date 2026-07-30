@@ -976,9 +976,6 @@ async def simulation_loop() -> None:  # noqa: C901
                         
                     settlement_total_pnl += settlement_pnl
                 
-                # 🛡️ [Phase 1.2 BUG FIX] 정산 손익은 리포트 전용 기록만 — 자본에 가산하지 않음
-                # 이유: 월 단위 강제 리셋이 테스트 의도이므로, 가산 후 즉시 initial_capital로 덮어쓰는 모순 제거
-                # settlement_total_pnl은 rollover_event_log와 로그에만 기록됨
                 portfolio_options.clear()
                 
                 # 롤오버 실행: 새로운 ATM 기준 숏 스트랭글 재구축 (동적 간격 적용)
@@ -994,16 +991,21 @@ async def simulation_loop() -> None:  # noqa: C901
                 portfolio_options.append({"type": "PUT",  "side": "SELL", "strike": atm_strike - rollover_width, "price": 2.20, "qty": BASE_TRACK1_QTY})
                 portfolio_options.append({"type": "CALL", "side": "SELL", "strike": atm_strike + rollover_width, "price": 2.50, "qty": BASE_TRACK1_QTY})
                 
-                logger.info("📅 [EXPIRY & ROLLOVER] 당월물 옵션 만기 도달! 정산 손익: ₩%s (리포트 전용). 차월물 롤오버 완료.", f"{settlement_total_pnl:+,.0f}")
-                
-                # 🛡️ [Phase 1.2 BUG FIX] 정산 손익 복리 누적을 위해 강제 리셋 제거
+                # 💰 [CARRY-OVER CAPITAL] 만기 정산 손익을 자본금에 최종 가산하여 차월로 100% 연속 이월
                 current_capital += settlement_total_pnl
-                total_equity += settlement_total_pnl
+                total_equity = current_capital + accumulated_reserve
                 highest_equity_today = total_equity
                 daily_hwm = total_equity
-                # 🛡️ [Phase 2.4] 전략별 실현 PnL도 월 리셋
-                strategy_realized_pnl = _make_strategy_dict()
-                logger.info("💰 [MONTHLY FULL RESET] 한 사이클(1개월) 테스트 종료! 자본금 ₩25,000,000 복구. 롤오버 플래그 해제 대기.")
+                initial_capital = current_capital  # 차월 기준 자본금으로 업데이트
+
+                pnl_fmt = f"+{settlement_total_pnl:,.0f}원" if settlement_total_pnl >= 0 else f"-{abs(settlement_total_pnl):,.0f}원"
+                logger.info("📅 [EXPIRY & CARRY-OVER ROLLOVER] 당월물 옵션 만기 정산 완료! 정산손익: %s | 이월 자본금: ₩%s. 차월물 롤오버 완료.", pnl_fmt, f"{total_equity:,.0f}")
+                
+                event_logs.append({
+                    "seq": seq, "date": date_str, "time": time_str,
+                    "event": "월 만기 옵션 정산 & 자본 이월",
+                    "details": f"정산손익: {pnl_fmt} / 이월 자본금: ₩{total_equity:,.0f}"
+                })
 
                 insurance_active_this_month = False
                 insurance_reentry_needed_today = False
