@@ -36,6 +36,8 @@ jobs:
           cd web_interface
           npm run lint
       - name: Run Frontend Tests (React Hooks 단위 테스트)
+        env:
+          CI: true
         run: |
           cd web_interface
           npm run test
