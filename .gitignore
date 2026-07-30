@@ -9,3 +9,7 @@ logs/
 __pycache__/
 *.py[cod]
 venv/
+node_modules/
+test_session_data.json
+mock_ws_server_refactored.py
+scratch/

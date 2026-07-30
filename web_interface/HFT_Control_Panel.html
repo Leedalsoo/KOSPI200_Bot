@@ -1,0 +1,2034 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KOSPI200 HFT Emergency Control Panel</title>
+  <!-- React, ReactDOM, Babel CDN 로드 -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Recharts CDN 로드 (D3 의존성 포함) -->
+  <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.12.0/umd/Recharts.js"></script>
+  <style>
+    /* 🛡️ HFT 프리미엄 다크 테마 글로벌 CSS 정의 */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #0F172A;
+      /* Slate 900 */
+      color: #F8FAFC;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow-x: hidden;
+      padding: 24px;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #0F172A;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #1E293B;
+      border-radius: 4px;
+      border: 1px solid #334155;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #334155;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: .4;
+        transform: scale(0.95);
+      }
+    }
+
+    @keyframes warnPulse {
+
+      0%,
+      100% {
+        color: #EF4444;
+        text-shadow: 0 0 5px rgba(239, 68, 68, 0.3);
+      }
+
+      50% {
+        color: #F59E0B;
+        text-shadow: 0 0 15px rgba(245, 158, 11, 0.8);
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef, memo } = React;
+    const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ScatterChart, Scatter, ReferenceLine, ResponsiveContainer, Brush, Cell } = Recharts;
+
+
+    const MAX_POINTS = 5000;
+    const MAX_ORDERS = 50;
+
+    // 천단위 쉼표 포맷팅 유틸 (십만단위 절사 정렬 적용 - 차트용)
+    const formatCurrency = (val) => {
+      const num = Math.round(Number(val) / 100000) * 100000;
+      return (num >= 0 ? "₩" : "-₩") + Math.abs(num).toLocaleString('ko-KR');
+    };
+
+    // 정밀 원화 포맷팅 유틸 (헤더 수치 변동 감시용)
+    const formatCurrencyPrecise = (val) => {
+      const num = Math.round(Number(val));
+      return (num >= 0 ? "₩" : "-₩") + Math.abs(num).toLocaleString('ko-KR');
+    };
+
+    // 가상 경과 시간 포맷터 (**일 **시간 **분)
+    const formatElapsedTime = (totalSecs) => {
+      if (!totalSecs) return '0일 0시간 0분';
+      const days = Math.floor(totalSecs / 86400);
+      const remainingSecs = totalSecs % 86400;
+      const hours = Math.floor(remainingSecs / 3600);
+      const mins = Math.floor((remainingSecs % 3600) / 60);
+      return `${days}일 ${hours}시간 ${mins}분`;
+    };
+
+    // 소수점 D-Day 만기일시 포맷터
+    const formatDDay = (days) => {
+      if (days === undefined || days === null) return '';
+      const d = Math.floor(days);
+      const frac = days - d;
+      const hours = Math.round(frac * 24);
+      if (d === 0 && hours === 0) return '만기 정산 중';
+      return `D-${d}일 ${hours}시간`;
+    };
+
+    // ==============================================================================
+    // 1. [NEW] 8-Strategy Position Matrix Dashboard
+    // ==============================================================================
+    // ==============================================================================
+    // 1. [NEW] 8-Strategy Master Unified Position & PnL Matrix Dashboard (100% Full Width)
+    // ==============================================================================
+    const MasterMultiStrategyMatrixDashboard = memo(({ weights, strategyPnL, portfolioOptions, futuresQty }) => {
+      const pnlData = strategyPnL || {};
+      const options = portfolioOptions || [];
+
+      const getProgressColor = (name) => {
+        if (name.includes("Track1")) return "#EF4444";
+        if (name.includes("Track2")) return "#F59E0B";
+        if (name.includes("Track3")) return "#10B981";
+        if (name.includes("Track5") || name.includes("Gap")) return "#06B6D4";
+        if (name.includes("Track6") || name.includes("Daily")) return "#EAB308";
+        if (name.includes("Track7") || name.includes("Weekly")) return "#8B5CF6";
+        if (name.includes("Track8") || name.includes("Monthly")) return "#EC4899";
+        return "#3B82F6"; // Track 4
+      };
+
+      const getStrategyDescription = (name) => {
+        if (name.includes("Track1")) return "🛡️ 100% 방어막 유지 (옵션 1:1 대칭 / 테타 프리미엄 수취)";
+        if (name.includes("Track2")) return "🛡️ 90% 마진 헷지 동적 작동 (5틱 휩소 쿨다운 억제 중)";
+        if (name.includes("Track3")) return "⛔ [V2 HOLD] 차익 거래 일시 정지 (시뮬레이션 테스트 순도 유지)";
+        if (name.includes("Track4")) return "⚔️ 감마 델타 스캘핑 수확 진행 중 (지수 급등락 휩소 환원)";
+        if (name.includes("Track5")) return "⚡ 시가 갭 회귀 가변 Z-Score 감시 중 (NORMAL: 1.1 / HIGH_VOL: 1.8)";
+        if (name.includes("Track6")) return "🎉 0DTE 당일 옵션 보험 이익 실현 정산 완료 (상시 대기)";
+        if (name.includes("Track7")) return "🎉 위클리 롱 스트랭글 동적 익절 완료 (+150% 이상 장중 청산)";
+        if (name.includes("Track8")) return "⏳ 월물 초입 DTE 15일 이상 자본 2% 예산 연동 매수";
+        return "전략 가동 중";
+      };
+
+      const getStatusBadge = (name, weight) => {
+        if (name.includes("Track3")) {
+          return { label: "HOLD", bg: "rgba(239, 68, 68, 0.15)", color: "#EF4444", border: "#EF4444" };
+        }
+        if (name.includes("Track6") || name.includes("Track7")) {
+          return { label: "COMPLETED", bg: "rgba(139, 92, 246, 0.15)", color: "#A78BFA", border: "#8B5CF6" };
+        }
+        if (weight > 0) {
+          return { label: "ACTIVE", bg: "rgba(16, 185, 129, 0.15)", color: "#10B981", border: "#10B981" };
+        }
+        return { label: "STANDBY", bg: "rgba(245, 158, 11, 0.15)", color: "#FBBF24", border: "#F59E0B" };
+      };
+
+      const renderMiniCol = (colTitle, items) => {
+        const buys = items.filter(p => p.side === "BUY");
+        const sells = items.filter(p => p.side === "SELL");
+
+        return (
+          <div style={{ flex: 1, padding: '2px 4px', borderRight: colTitle !== 'PUT' ? '1px solid #334155' : 'none', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ textAlign: 'center', fontWeight: 700, color: '#94A3B8', fontSize: '10px', marginBottom: '2px' }}>{colTitle}</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px', color: '#64748B', marginBottom: '2px' }}>
+              <span style={{ color: '#EF4444' }}>SELL</span>
+              <span style={{ color: '#10B981' }}>BUY</span>
+            </div>
+            <div style={{ display: 'flex', flex: 1, gap: '2px', overflowY: 'auto', maxHeight: '110px' }}>
+              <div style={{ flex: 1 }}>
+                {sells.map((s, idx) => (
+                  <div key={`s-${idx}`} style={{
+                    backgroundColor: 'rgba(239,68,68,0.15)',
+                    padding: '3px 4px',
+                    border: '1px solid #EF4444',
+                    borderRadius: '4px',
+                    marginBottom: '3px',
+                    fontSize: '10px',
+                    color: '#F8FAFC',
+                    fontFamily: 'monospace'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{s.type === 'FUTURES' ? `F(${s.qty})` : `${s.strike}(${s.qty})`}</span>
+                      {s.tag_id && <span style={{ color: '#EF4444', fontSize: '8px', fontWeight: 'bold' }}>🔗#{s.tag_id}</span>}
+                    </div>
+                    {s.price && <div style={{ fontSize: '8px', color: '#94A3B8', marginTop: '1px' }}>{s.price}P</div>}
+                  </div>
+                ))}
+              </div>
+              <div style={{ flex: 1 }}>
+                {buys.map((b, idx) => (
+                  <div key={`b-${idx}`} style={{
+                    backgroundColor: 'rgba(16,185,129,0.15)',
+                    padding: '3px 4px',
+                    border: '1px solid #10B981',
+                    borderRadius: '4px',
+                    marginBottom: '3px',
+                    fontSize: '10px',
+                    color: '#F8FAFC',
+                    fontFamily: 'monospace'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{b.type === 'FUTURES' ? `F(${b.qty})` : `${b.strike}(${b.qty})`}</span>
+                      {b.tag_id && <span style={{ color: '#10B981', fontSize: '8px', fontWeight: 'bold' }}>🔗#{b.tag_id}</span>}
+                    </div>
+                    {b.price && <div style={{ fontSize: '8px', color: '#94A3B8', marginTop: '1px' }}>{b.price}P</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      return (
+        <section style={{
+          backgroundColor: '#0F172A',
+          borderRadius: '16px',
+          border: '1px solid #334155',
+          padding: '24px',
+          marginTop: '24px',
+          width: '100%',
+          gridColumn: '1 / -1',
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
+          boxSizing: 'border-box'
+        }}>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #334155', paddingBottom: '14px' }}>
+            <h2 style={{ fontSize: '16px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#F8FAFC', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>📊 Multi-Strategy Master Position & PnL Matrix</span>
+              <span style={{ fontSize: '11px', color: '#38BDF8', fontWeight: 500, fontFamily: 'monospace' }}>
+                (전략별 실시간 누적 손익 · 프로세스 · 선물/옵션 체결 포지션 매트릭스)
+              </span>
+            </h2>
+            <span style={{ fontSize: '11px', color: '#94A3B8', fontFamily: 'monospace', backgroundColor: '#1E293B', padding: '4px 10px', borderRadius: '6px', border: '1px solid #334155' }}>
+              8 Tracks Live Synchronized (100% Full Width)
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: '8px', width: '100%' }}>
+            {Object.entries(weights || {}).map(([name, val]) => {
+              const pnl = pnlData[name] || 0.0;
+              const estFee = pnl !== 0 ? Math.min(Math.abs(pnl) * 0.02, 125000) : 0;
+              const grossPnL = pnl + estFee;
+              const badge = getStatusBadge(name, val);
+              const color = getProgressColor(name);
+              const desc = getStrategyDescription(name);
+
+              const trackKey = name.split(' ')[0]; // Track1, Track2...
+              const trackPositions = (options || []).filter(pos => {
+                const s = pos.activeStrategy || '';
+                return s.includes(trackKey) || s.includes(name);
+              });
+
+              const futuresItems = trackPositions.filter(p => p.type === "FUTURES");
+              const callItems = trackPositions.filter(p => p.type === "CALL");
+              const putItems = trackPositions.filter(p => p.type === "PUT");
+              const totalItemsCount = futuresItems.length + callItems.length + putItems.length;
+
+              return (
+                <div key={name} style={{
+                  backgroundColor: '#1E293B',
+                  borderRadius: '12px',
+                  border: `1px solid ${totalItemsCount > 0 ? color : '#334155'}`,
+                  padding: '16px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                  minHeight: '340px'
+                }}>
+                  {/* 전략 헤더: 전략명 + 상태 배지 */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: 800, color: '#F8FAFC' }}>{name}</span>
+                      <span style={{
+                        fontSize: '9px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px',
+                        backgroundColor: badge.bg, color: badge.color, border: `1px solid ${badge.border}`,
+                        fontFamily: 'monospace'
+                      }}>
+                        [{badge.label}]
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 실시간 누적 순손익 & 수수료 */}
+                  <div style={{ backgroundColor: '#0F172A', padding: '10px 12px', borderRadius: '8px', border: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontFamily: 'monospace' }}>
+                    <div>
+                      <div style={{ fontSize: '9px', color: '#64748B' }}>NET PnL (순손익)</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: pnl >= 0 ? '#10B981' : '#EF4444' }}>
+                        {pnl >= 0 ? '+' : ''}{Math.round(pnl).toLocaleString('ko-KR')}원
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '9px', color: '#64748B' }}>EST. FEE / GROSS</div>
+                      <div style={{ fontSize: '10px', color: '#F59E0B' }}>
+                        -{Math.round(estFee).toLocaleString('ko-KR')}원
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 수행 과정 설명 */}
+                  <div style={{ fontSize: '11px', color: '#CBD5E1', fontFamily: 'monospace', borderLeft: `3px solid ${color}`, paddingLeft: '8px', lineHeight: '1.4' }}>
+                    {desc}
+                  </div>
+
+                  {/* 비중 게이지 바 */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontFamily: 'monospace', color: '#64748B' }}>
+                      <span>할당 비중</span>
+                      <span style={{ color: color, fontWeight: 700 }}>{val}%</span>
+                    </div>
+                    <div style={{ width: '100%', height: '6px', backgroundColor: '#0F172A', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div style={{
+                        width: `${val}%`, height: '100%', backgroundColor: color, borderRadius: '3px',
+                        transition: 'width 0.3s ease-in-out'
+                      }} />
+                    </div>
+                  </div>
+
+                  {/* 📊 통합 실시간 포지션 매트릭스 구역 (FUTURES / CALL / PUT) */}
+                  <div style={{
+                    marginTop: 'auto',
+                    backgroundColor: '#0F172A',
+                    borderRadius: '8px',
+                    border: '1px solid #334155',
+                    padding: '8px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                    minHeight: '120px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '10px', fontWeight: 700, color: '#38BDF8', fontFamily: 'monospace', borderBottom: '1px solid #1E293B', paddingBottom: '4px' }}>
+                      <span>🛰️ LIVE POSITIONS</span>
+                      <span style={{ fontSize: '9px', color: '#94A3B8' }}>{totalItemsCount}건</span>
+                    </div>
+
+                    {totalItemsCount > 0 ? (
+                      <div style={{ display: 'flex', flex: 1 }}>
+                        {renderMiniCol("FUTURES", futuresItems)}
+                        {renderMiniCol("CALL", callItems)}
+                        {renderMiniCol("PUT", putItems)}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#64748B', fontSize: '10px', fontFamily: 'monospace', padding: '16px 0' }}>
+                        현재 보유 포지션 없음 (대기 중)
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      );
+    });
+
+
+    // 누적수익률 그래프를 위한 커스텀 툴팁 컴포넌트
+    const CustomTooltip = ({ active, payload }) => {
+      if (active && payload && payload.length) {
+        const data = payload[0].payload;
+        const profit = data.y;
+
+        return (
+          <div style={{
+            backgroundColor: '#1E293B',
+            border: '1px solid #4A5568',
+            borderRadius: '8px',
+            padding: '12px',
+            color: '#F8FAFC',
+            fontSize: '12px',
+            fontFamily: 'monospace',
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)'
+          }}>
+            <p style={{ margin: '0 0 6px 0', color: '#94A3B8', fontWeight: 600 }}>[Tick #{data.x}]</p>
+            <p style={{ margin: '0 0 8px 0', fontSize: '13px', fontWeight: 700, color: '#38BDF8' }}>
+              총 자본금: {profit.toLocaleString('ko-KR')}원
+            </p>
+
+            {data.activeStrategy ? (
+              <div style={{ borderTop: '1px solid #334155', paddingTop: '8px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                <p style={{ margin: 0, color: '#F59E0B', fontWeight: 700 }}>⚡ [매매 체결 상황]</p>
+                <p style={{ margin: 0 }}>전략명: <span style={{ color: '#818CF8', fontWeight: 600 }}>{data.activeStrategy}</span></p>
+                <p style={{ margin: 0 }}>
+                  구분: <span style={{ color: data.type === 'BUY' ? '#EF4444' : '#3B82F6', fontWeight: 600 }}>{data.type} ({data.assetType})</span>
+                </p>
+                <p style={{ margin: 0 }}>가격: {data.price} | 수량: {data.qty}</p>
+                <p style={{ margin: 0, color: '#94A3B8' }}>시간: {data.time} | 상태: <span style={{ color: data.status === 'FILLED' ? '#10B981' : '#EF4444' }}>{data.status}</span></p>
+                {data.fee > 0 && <p style={{ margin: 0, color: '#EF4444' }}>수수료: -₩{data.fee.toLocaleString()}</p>}
+              </div>
+            ) : (
+              <div style={{ borderTop: '1px solid #334155', paddingTop: '6px', marginTop: '4px', color: '#64748B' }}>
+                💡 [포지션 유지 / 평온 상태]
+              </div>
+            )}
+          </div>
+        );
+      }
+      return null;
+    };
+
+    // 매매 발생 지점을 위한 커스텀 마커 닷 컴포넌트
+    const CustomDot = (props) => {
+      const { cx, cy, payload, focusedTickSeq } = props;
+      const isFocused = payload && payload.x === focusedTickSeq;
+      if (isFocused) {
+        return (
+          <circle cx={cx} cy={cy} r={7.5} fill="#EC4899" stroke="#FFF" strokeWidth={2.5} style={{ filter: 'drop-shadow(0 0 8px #EC4899)', cursor: 'pointer' }} />
+        );
+      } else if (payload && payload.activeStrategy) {
+        return (
+          <circle cx={cx} cy={cy} r={4.5} fill="#EC4899" stroke="#FFF" strokeWidth={1.5} style={{ filter: 'drop-shadow(0 0 3px #EC4899)', cursor: 'pointer' }} />
+        );
+      }
+      return null;
+    };
+
+    // ==============================================================================
+    // 2. 수익률 추이 차트 컴포넌트
+    // ==============================================================================
+    const ProfitChart = memo(({ coords, focusedTickSeq }) => {
+      const clickedIndex = focusedTickSeq !== null ? coords.findIndex(c => c.x === focusedTickSeq) : undefined;
+      return (
+        <div style={{ width: '100%', height: '300px', position: 'relative', overflow: 'hidden' }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={coords} activeTooltipIndex={clickedIndex} margin={{ top: 25, right: 25, left: 10, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" opacity={0.3} />
+              <XAxis
+                dataKey="date"
+                stroke="#94A3B8"
+                tickLine={false}
+                axisLine={{ stroke: '#334155' }}
+                tick={{ fontSize: 11, fill: '#94A3B8' }}
+                minTickGap={65}
+                tickFormatter={(val) => {
+                  if (!val) return '';
+                  return val.length >= 10 ? val.slice(5) : val;
+                }}
+              />
+              <YAxis
+                width={95}
+                domain={['dataMin - 1500000', 'dataMax + 1500000']}
+                stroke="#A0AEC0"
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => {
+                  const rounded = Math.round(v / 100000) * 100000;
+                  return rounded.toLocaleString('ko-KR');
+                }}
+                tick={{ fontSize: 10, fill: '#A0AEC0', textAnchor: 'start', dx: -90, dy: -12 }}
+              />
+              <Tooltip content={<CustomTooltip />} />
+              <Line type="monotone" dataKey="y" stroke="#818CF8" strokeWidth={2} dot={<CustomDot focusedTickSeq={focusedTickSeq} />} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    });
+
+
+    // ==============================================================================
+    // 3. 파생상품 페이오프 다이어그램 컴포넌트
+    // ==============================================================================
+    const PayoffDiagram = memo(({ payoffCoords, currentPrice }) => {
+      const xDomain = [currentPrice - 20, currentPrice + 20];
+      return (
+        <div style={{ width: '100%', height: '260px', position: 'relative' }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ScatterChart margin={{ top: 10, right: 10, left: 15, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" opacity={0.3} />
+              <XAxis type="number" dataKey="x" name="Index" domain={xDomain} stroke="#A0AEC0" tick={{ fontSize: 11, fill: '#A0AEC0' }} />
+              <YAxis
+                type="number"
+                dataKey="y"
+                name="PnL"
+                domain={['auto', 'auto']}
+                stroke="#A0AEC0"
+                width={85}
+                tickFormatter={(v) => {
+                  if (Math.abs(v) >= 10000) {
+                    return (v >= 0 ? "₩" : "-₩") + (Math.abs(v) / 10000).toLocaleString('ko-KR') + "만";
+                  }
+                  return (v >= 0 ? "₩" : "-₩") + Math.abs(v).toLocaleString('ko-KR');
+                }}
+                tick={{ fontSize: 11, fill: '#A0AEC0' }}
+              />
+              <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={(v, name) => [v.toLocaleString() + "원", name]} contentStyle={{ backgroundColor: '#1A202C', borderColor: '#4A5568', color: '#FFF' }} />
+              <Scatter data={payoffCoords} fill="#10B981" line={{ stroke: '#10B981', strokeWidth: 2 }} isAnimationActive={false} />
+              <ReferenceLine y={0} stroke="#E53E3E" strokeDasharray="3 3" />
+              <ReferenceLine x={currentPrice} stroke="#3182CE" strokeWidth={2} label={{ value: 'Current', fill: '#3182CE', fontSize: 10, position: 'top' }} />
+            </ScatterChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    });
+
+
+    // ==============================================================================
+    // 3-C. 실시간 옵션 & 선물 포지션 모니터 컴포넌트 (신설 전용 패널)
+    // ==============================================================================
+    const ActivePositionsMonitor = memo(({ portfolioOptions, futuresQty }) => {
+      // 보험 포지션과 일반 전략 포지션 분리
+      const insurances = (portfolioOptions || []).filter(pos => pos.is_insurance);
+      const regularOptions = (portfolioOptions || []).filter(pos => !pos.is_insurance);
+
+      // 전략별 분류
+      const getPositionsByStrategy = (stratName) => {
+        return regularOptions.filter(pos => {
+          const strat = pos.activeStrategy || 'Track1 (Defense)';
+          return strat.includes(stratName);
+        });
+      };
+
+      const strategies = [
+        { id: 'Track1', name: 'Track 1 (Defense)' },
+        { id: 'Track2', name: 'Track 2 (Trap)' },
+        { id: 'Track3', name: 'Track 3 (Arbitrage)' },
+        { id: 'Track4', name: 'Track 4 (Gamma)' },
+        { id: 'Track5', name: 'Track 5 (Gap)' },
+        { id: 'Track6', name: 'Track 6 (Daily Insurance)' },
+        { id: 'Track7', name: 'Track 7 (Weekly Insurance)' },
+        { id: 'Track8', name: 'Track 8 (Monthly Insurance)' }
+      ];
+
+      return (
+        <section style={{
+          backgroundColor: '#1E293B',
+          borderRadius: '16px',
+          border: '1px solid #334155',
+          padding: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          height: '320px',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden'
+        }}>
+          <h2 style={{ fontSize: '13px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.075em', color: '#94A3B8', margin: '0 0 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Live Position Inventory (선물 헷징 & 옵션 보유량)</span>
+            {futuresQty !== 0 && (
+              <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: futuresQty > 0 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(59, 130, 246, 0.15)', color: futuresQty > 0 ? '#EF4444' : '#3B82F6', border: `1px solid ${futuresQty > 0 ? '#EF4444' : '#3B82F6'}`, fontFamily: 'monospace' }}>
+                선물 헷지 포지션: {futuresQty > 0 ? `BUY +${futuresQty}` : `SELL ${futuresQty}`} 계약
+              </span>
+            )}
+          </h2>
+
+          <div style={{ flex: 1, overflowY: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', paddingRight: '4px' }}>
+            {/* 왼쪽: 전략 1~4 보유 현황 */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', borderBottom: '1px solid #334155', paddingBottom: '4px', textTransform: 'uppercase' }}>전략별 옵션 포지션</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '210px' }}>
+                {strategies.map(strat => {
+                  const items = getPositionsByStrategy(strat.id);
+                  return (
+                    <div key={strat.id} style={{ padding: '8px 10px', borderRadius: '8px', backgroundColor: '#0F172A', border: '1px solid #2D3748' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#F8FAFC', marginBottom: '6px', fontFamily: 'sans-serif', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>{strat.name}</span>
+                        <span style={{ fontSize: '10px', color: '#64748B' }}>({items.length} 건)</span>
+                      </div>
+                      {items.length === 0 ? (
+                        <div style={{ fontSize: '11px', color: '#475569', fontFamily: 'monospace' }}>보유 포지션 없음</div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {items.map((pos, idx) => (
+                            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontFamily: 'monospace', color: '#CBD5E1', borderTop: idx > 0 ? '1px dashed #1E293B' : 'none', paddingTop: idx > 0 ? '4px' : '0' }}>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <span style={{ color: pos.type === 'CALL' ? '#EF4444' : '#3B82F6', fontWeight: 700 }}>[{pos.type}]</span>
+                                <span>행사가: {pos.strike}</span>
+                              </span>
+                              <span>
+                                {pos.price}P | <span style={{ color: pos.side === 'BUY' ? '#EF4444' : '#3B82F6', fontWeight: 600 }}>{pos.side === 'BUY' ? `매수` : `매도`} {pos.qty}</span>계약
+                                {pos.is_locked && <span style={{ marginLeft: '4px', fontSize: '9px', padding: '1px 3px', backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#EF4444', borderRadius: '3px', border: '1px solid #EF4444' }}>HedgeLock</span>}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 오른쪽: OTM 쌍발 보험 및 전체 합산 요약 */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', borderBottom: '1px solid #334155', paddingBottom: '4px', textTransform: 'uppercase' }}>극외가 (OTM) 쌍발 보험 및 총계</span>
+              <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: insurances.length > 0 ? 'rgba(245, 158, 11, 0.05)' : '#0F172A', border: `1px solid ${insurances.length > 0 ? 'rgba(245, 158, 11, 0.3)' : '#2D3748'}`, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#F59E0B', display: 'flex', justifyContent: 'space-between', fontFamily: 'sans-serif' }}>
+                  <span>🛡️ 극외가 쌍발 보험 (Overnight OTM Straddle)</span>
+                  <span style={{ fontSize: '10px', color: '#D97706' }}>({insurances.length} 건)</span>
+                </div>
+                {insurances.length === 0 ? (
+                  <div style={{ fontSize: '11px', color: '#475569', fontFamily: 'monospace' }}>현재 가입된 보험 없음</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {insurances.map((ins, idx) => (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontFamily: 'monospace', color: '#E2E8F0' }}>
+                        <span>[{ins.type || "OPT"}] 행사가: <span style={{ color: '#F59E0B', fontWeight: 700 }}>{ins.strike}</span></span>
+                        <span>
+                          프리미엄: {ins.price}P | <span style={{ color: '#EF4444', fontWeight: 700 }}>매수 {ins.qty}</span>계약
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 요약 카드 */}
+              <div style={{ flex: 1, padding: '12px', borderRadius: '8px', backgroundColor: '#0F172A', border: '1px solid #2D3748', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '6px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#94A3B8', borderBottom: '1px solid #1E293B', paddingBottom: '4px' }}>포트폴리오 요약</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '11px', fontFamily: 'monospace', color: '#CBD5E1' }}>
+                  <div>총 보유 옵션 수: <span style={{ color: '#F8FAFC', fontWeight: 700 }}>{portfolioOptions.length} 건</span></div>
+                  <div>선물 헷징 계약: <span style={{ color: futuresQty !== 0 ? '#38BDF8' : '#64748B', fontWeight: 700 }}>{Math.abs(futuresQty)} 계약 ({futuresQty > 0 ? '매수' : futuresQty < 0 ? '매도' : '없음'})</span></div>
+                  <div>총 옵션 수량: <span style={{ color: '#F8FAFC', fontWeight: 700 }}>{portfolioOptions.reduce((acc, c) => acc + parseInt(c.qty || 0), 0)} 계약</span></div>
+                  <div>보험 매입 수량: <span style={{ color: '#F59E0B', fontWeight: 700 }}>{insurances.reduce((acc, c) => acc + parseInt(c.qty || 0), 0)} 계약</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      );
+    });
+
+
+    // ==============================================================================
+    // 2-B. [신설] 전략별 체결 & 청산 완료 히스토리 컴포넌트 (Completed Trades)
+    // ==============================================================================
+    const CompletedTradesHistory = memo(({ eventLogs }) => {
+      const logs = eventLogs || [];
+
+      const getLogBadge = (evt) => {
+        const text = (evt.event || "") + " " + (evt.details || "");
+        if (text.includes("이익") || text.includes("청산") || text.includes("PROFIT") || text.includes("수취")) {
+          return { label: "CLOSED / PROFIT", bg: "rgba(16, 185, 129, 0.2)", color: "#10B981", border: "#10B981" };
+        }
+        if (text.includes("Unwind") || text.includes("언와인드")) {
+          return { label: "UNWIND", bg: "rgba(139, 92, 246, 0.2)", color: "#A78BFA", border: "#8B5CF6" };
+        }
+        if (text.includes("Hedge") || text.includes("헷지") || text.includes("진입")) {
+          return { label: "HEDGE EXEC", bg: "rgba(59, 130, 246, 0.2)", color: "#60A5FA", border: "#3B82F6" };
+        }
+        if (text.includes("급등락") || text.includes("VOLATILITY") || text.includes("주입")) {
+          return { label: "VOLATILITY INJECT", bg: "rgba(245, 158, 11, 0.2)", color: "#FBBF24", border: "#F59E0B" };
+        }
+        return { label: "CLOSED", bg: "rgba(148, 163, 184, 0.2)", color: "#CBD5E1", border: "#64748B" };
+      };
+
+      return (
+        <section style={{
+          backgroundColor: '#1E293B',
+          borderRadius: '16px',
+          border: '1px solid #334155',
+          padding: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          height: '320px',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden'
+        }}>
+          <h2 style={{ fontSize: '13px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.075em', color: '#94A3B8', margin: '0 0 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>📜 Completed Strategy Trades & Execution History (전략별 체결/청산 완료 이력)</span>
+            </span>
+            <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(139, 92, 246, 0.15)', color: '#A78BFA', border: '1px solid #8B5CF6', fontFamily: 'monospace' }}>
+              최근 {logs.length} 건 기록됨
+            </span>
+          </h2>
+
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }}>
+            {logs.length === 0 ? (
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B', fontSize: '12px', fontFamily: 'monospace' }}>
+                최근 완료된 매매/이익실현 이력이 없습니다.
+              </div>
+            ) : (
+              logs.slice().reverse().map((log, idx) => {
+                const badge = getLogBadge(log);
+                return (
+                  <div key={idx} style={{
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    backgroundColor: '#0F172A',
+                    border: '1px solid #2D3748',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '12px'
+                  }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{
+                          fontSize: '9px',
+                          fontWeight: 800,
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          backgroundColor: badge.bg,
+                          color: badge.color,
+                          border: `1px solid ${badge.border}`,
+                          fontFamily: 'monospace'
+                        }}>
+                          [{badge.label}]
+                        </span>
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#F8FAFC', fontFamily: 'sans-serif' }}>
+                          {log.event || "매매 이벤트 완료"}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#94A3B8', fontFamily: 'monospace' }}>
+                        {log.details || ""}
+                      </div>
+                    </div>
+
+                    <div style={{ textAlign: 'right', flexShrink: 0, fontFamily: 'monospace' }}>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>{log.date || ""}</div>
+                      <div style={{ fontSize: '11px', color: '#38BDF8', fontWeight: 600 }}>{log.time || ""}</div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+      );
+    });
+
+
+    // ==============================================================================
+    // 3-B. 합성 포트폴리오 만기 손익 다이어그램 (신설 전용 패널 - 극외가~극내가 전구간)
+    // ==============================================================================
+    const SyntheticPayoffDiagram = memo(({ payoffCoords, currentPrice }) => {
+      if (!payoffCoords || payoffCoords.length === 0) {
+        return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}>포지션 데이터 대기 중...</div>;
+      }
+
+      // Y축 동적 범위 (20% 여백 자동 추가)
+      const yValues = payoffCoords.map(p => p.y);
+      const yMin = Math.min(...yValues);
+      const yMax = Math.max(...yValues);
+      const yPad = Math.max(Math.abs(yMax - yMin) * 0.18, 200000);
+      const yDomain = [Math.floor(yMin - yPad), Math.ceil(yMax + yPad)];
+
+      // X축 전체 범위 (패킷에서 수신한 payoffCoords 그대로 활용)
+      const xValues = payoffCoords.map(p => p.x);
+      const xMin = Math.min(...xValues);
+      const xMax = Math.max(...xValues);
+
+      // 현재가와 가장 가까운 포지션의 PnL 계산 (툴팁 표시용)
+      const closestPoint = payoffCoords.reduce((prev, curr) =>
+        Math.abs(curr.x - currentPrice) < Math.abs(prev.x - currentPrice) ? curr : prev, payoffCoords[0]);
+
+      return (
+        <div style={{ width: '100%', height: '300px', position: 'relative' }}>
+          {/* 현재가 기준 손익 요약 */}
+          <div style={{
+            position: 'absolute', top: 0, right: 12, zIndex: 10,
+            backgroundColor: closestPoint.y >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+            border: `1px solid ${closestPoint.y >= 0 ? '#10B981' : '#EF4444'}`,
+            borderRadius: '8px', padding: '4px 10px',
+            fontSize: '12px', fontFamily: 'monospace', fontWeight: 700,
+            color: closestPoint.y >= 0 ? '#10B981' : '#EF4444'
+          }}>
+            현재가 기준 만기손익: {closestPoint.y >= 0 ? '+' : ''}{closestPoint.y.toLocaleString('ko-KR')}원
+          </div>
+
+          <ResponsiveContainer width="100%" height="100%">
+            <ScatterChart margin={{ top: 28, right: 20, left: 10, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" opacity={0.3} />
+              <XAxis
+                type="number"
+                dataKey="x"
+                name="행사가"
+                domain={[xMin, xMax]}
+                stroke="#A0AEC0"
+                tick={{ fontSize: 11, fill: '#A0AEC0' }}
+                label={{ value: '← Deep OTM     행사가 (Strike Price)     Deep ITM →', position: 'insideBottom', offset: -10, fill: '#64748B', fontSize: 11 }}
+                tickCount={10}
+              />
+              <YAxis
+                type="number"
+                dataKey="y"
+                name="만기손익"
+                domain={yDomain}
+                stroke="#A0AEC0"
+                width={90}
+                tickFormatter={(v) => {
+                  const absV = Math.abs(v);
+                  if (absV >= 100000000) return (v >= 0 ? '' : '-') + (absV / 100000000).toFixed(1) + '억';
+                  if (absV >= 10000) return (v >= 0 ? '' : '-') + Math.round(absV / 10000).toLocaleString() + '만';
+                  return (v >= 0 ? '₩' : '-₩') + absV.toLocaleString('ko-KR');
+                }}
+                tick={{ fontSize: 10, fill: '#A0AEC0' }}
+              />
+              <Tooltip
+                cursor={{ strokeDasharray: '3 3' }}
+                formatter={(v, name) => [
+                  (v >= 0 ? '+₩' : '-₩') + Math.abs(v).toLocaleString('ko-KR') + '원',
+                  '합성 만기손익'
+                ]}
+                labelFormatter={(label) => `행사가: ${label}p`}
+                contentStyle={{ backgroundColor: '#1A202C', borderColor: '#8B5CF6', color: '#FFF', fontSize: '12px' }}
+              />
+              {/* 손익분기선 (0원) */}
+              <ReferenceLine y={0} stroke="#EF4444" strokeDasharray="5 3" strokeWidth={1.5} label={{ value: '손익분기', fill: '#EF4444', fontSize: 10, position: 'insideTopLeft' }} />
+              {/* 현재 기준가 이동 수직선 */}
+              <ReferenceLine
+                x={currentPrice}
+                stroke="#F59E0B"
+                strokeWidth={2.5}
+                strokeDasharray="6 2"
+                label={{ value: `ATM ${currentPrice.toFixed(1)}p`, fill: '#F59E0B', fontSize: 11, fontWeight: 700, position: 'top' }}
+              />
+              {/* 합성 포트폴리오 페이오프 곡선 (보라색) */}
+              <Scatter
+                data={payoffCoords}
+                fill="#8B5CF6"
+                line={{ stroke: '#8B5CF6', strokeWidth: 2.5 }}
+                isAnimationActive={false}
+              />
+            </ScatterChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    });
+
+
+
+
+
+
+
+    // ==============================================================================
+    // 4-B. [신설] 전략별 수수료 포함 순손익 바 차트 그래프 컴포넌트
+    // ==============================================================================
+    const StrategyPnLBarChart = memo(({ strategyPnL, frictionCost }) => {
+      const pnlData = strategyPnL || {};
+
+      const strategies = [
+        { id: "Track1 (Defense)", name: "T1 (Defense)" },
+        { id: "Track2 (Trap)", name: "T2 (Trap)" },
+        { id: "Track3 (Arbitrage)", name: "T3 (Arbitrage)" },
+        { id: "Track4 (Gamma)", name: "T4 (Gamma)" },
+        { id: "Track5 (Gap)", name: "T5 (Gap)" },
+        { id: "Track6 (Daily)", name: "T6 (Daily)" },
+        { id: "Track7 (Weekly)", name: "T7 (Weekly)" },
+        { id: "Track8 (Monthly)", name: "T8 (Monthly)" },
+      ];
+
+      const chartData = strategies.map(s => {
+        const netPnL = pnlData[s.id] || 0.0;
+        const estFee = netPnL !== 0 ? Math.min(Math.abs(netPnL) * 0.02, 125000) : 0;
+        const grossPnL = netPnL + estFee;
+
+        return {
+          name: s.name,
+          fullName: s.id,
+          grossPnL: Math.round(grossPnL),
+          fee: Math.round(estFee),
+          netPnL: Math.round(netPnL)
+        };
+      });
+
+      let maxAbsVal = 0;
+      chartData.forEach(d => {
+        const absGross = Math.abs(d.grossPnL || 0);
+        const absFee = Math.abs(d.fee || 0);
+        const absNet = Math.abs(d.netPnL || 0);
+        maxAbsVal = Math.max(maxAbsVal, absGross, absFee, absNet);
+      });
+      // 0을 Y축 중앙에 완벽 고정하기 위한 대칭적 가변 범위 연산 (최소 10만원 ~ 25% 헤드룸 버퍼)
+      const yLimit = Math.max(100000, Math.ceil((maxAbsVal * 1.25) / 10000) * 10000);
+      const yDomain = [-yLimit, yLimit];
+
+      return (
+        <div style={{ backgroundColor: '#1E293B', borderRadius: '16px', border: '1px solid #334155', padding: '24px', height: '360px', display: 'flex', flexDirection: 'column' }}>
+
+          <h3 style={{ fontSize: '14px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.075em', color: '#94A3B8', margin: '0 0 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>📊 Strategy PnL & Fee Breakdown Chart (전략별 수수료 포함 순손익 그래프)</span>
+            <span style={{ fontSize: '11px', color: '#F59E0B', fontFamily: 'monospace' }}>
+              총 누적 수수료: -₩{Math.round(frictionCost || 0).toLocaleString('ko-KR')}원
+            </span>
+          </h3>
+
+          <div style={{ flex: 1, width: '100%', minHeight: 0 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.5} />
+                <XAxis dataKey="name" stroke="#94A3B8" tick={{ fontSize: 11, fill: '#94A3B8' }} />
+                <YAxis
+                  domain={yDomain}
+                  stroke="#94A3B8"
+                  tick={{ fontSize: 10, fill: '#94A3B8' }}
+                  tickFormatter={(v) => {
+                    const absV = Math.abs(v);
+                    if (absV >= 10000000) return (v >= 0 ? '' : '-') + (absV / 10000000).toFixed(1) + '천만';
+                    if (absV >= 10000) return (v >= 0 ? '' : '-') + Math.round(absV / 10000).toLocaleString() + '만';
+                    return (v >= 0 ? '₩' : '-₩') + absV.toLocaleString('ko-KR');
+                  }}
+                />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#F8FAFC' }}
+                  formatter={(value, name) => {
+                    const labelMap = { grossPnL: '수수료 차감 전 손익', fee: '발생 수수료', netPnL: '최종 순손익' };
+                    const prefix = value >= 0 ? '+' : '';
+                    return [`${prefix}₩${Number(value).toLocaleString('ko-KR')}원`, labelMap[name] || name];
+                  }}
+                  labelFormatter={(label, items) => {
+                    const full = items && items[0] ? items[0].payload.fullName : label;
+                    return `전략: ${full}`;
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                <ReferenceLine y={0} stroke="#EF4444" strokeWidth={1.5} strokeDasharray="3 3" />
+                <Bar dataKey="grossPnL" name="수수료 차감 전 손익" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="fee" name="발생 수수료" fill="#F59E0B" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="netPnL" name="최종 순손익" fill="#10B981" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      );
+
+    });
+
+
+
+    // ==============================================================================
+    // 4.5. 🚀 [MASTER UI DIRECTIVE] Universal Net Payoff & Auto-Scaling Dashboard Widget
+    // ==============================================================================
+    const PayoffWidget = memo(({ currentPrice, activeStrategy, portfolioOptions, futuresQty, frictionCost }) => {
+      const canvasRef = useRef(null);
+      const [anchorPrice, setAnchorPrice] = useState(null);
+
+      // 1) 초기 원점 고정 및 Smart Re-centering
+      useEffect(() => {
+        if (!currentPrice) return;
+        if (!anchorPrice) {
+          setAnchorPrice(currentPrice);
+        } else {
+          // 지수가 화면을 크게 벗어날 경우 재정렬 (예: 10포인트 이상)
+          if (Math.abs(currentPrice - anchorPrice) > 10) {
+            setAnchorPrice(currentPrice);
+          }
+        }
+      }, [currentPrice, anchorPrice]);
+
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas || !anchorPrice) return;
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+
+        // Auto-Scaling: 기본 좌우 12.5pt (5호가)
+        const range = 12.5;
+        const xMin = anchorPrice - range;
+        const xMax = anchorPrice + range;
+
+        const MULTIPLIER = 250000;
+
+        // 가격(x)에 따른 순손익(Net Payoff) 계산 함수
+        const calcNetPayoff = (price) => {
+          let payoff = 0;
+
+          // 1. 옵션 포지션 합산
+          (portfolioOptions || []).forEach(pos => {
+            const strike = parseFloat(pos.strike);
+            const qty = parseInt(pos.qty);
+            const entryPrice = parseFloat(pos.avg_price || pos.price || 0); // 평단가
+            if (isNaN(strike) || isNaN(qty)) return;
+
+            let intrinsic = 0;
+            if (pos.type === 'CALL' || pos.type === 'C') {
+              intrinsic = Math.max(0, price - strike);
+            } else if (pos.type === 'PUT' || pos.type === 'P') {
+              intrinsic = Math.max(0, strike - price);
+            }
+
+            // 매수/매도 방향에 따른 부호 처리
+            let finalQty = qty;
+            if (pos.side === 'SELL' || pos.side === 'S' || pos.position === 'SELL') {
+              finalQty = -qty;
+            }
+
+            payoff += (intrinsic - entryPrice) * finalQty * MULTIPLIER;
+          });
+
+          // 2. 선물 포지션 합산 (델타 헷징 및 감마 스캘핑용)
+          // [PATCH] 옵션 순수 구조(페이오프) 시각적 안정화를 위해 선물 선형 델타는 합산에서 제외 (차트 춤춤 방지)
+          /* 
+          if (futuresQty && futuresQty !== 0) {
+            const fQty = parseInt(futuresQty);
+            payoff += (price - anchorPrice) * fQty * MULTIPLIER; 
+          }
+          */
+
+          // 3. 마찰비용(Friction Cost) 차감 -> Downward Shift
+          payoff -= (frictionCost || 0);
+          return payoff;
+        };
+
+        // Y축 스케일링을 위해 범위 내 최대/최소 페이오프 계산
+        let maxPayoff = -Infinity;
+        let minPayoff = Infinity;
+        for (let p = xMin; p <= xMax; p += 0.5) {
+          const val = calcNetPayoff(p);
+          if (val > maxPayoff) maxPayoff = val;
+          if (val < minPayoff) minPayoff = val;
+        }
+
+        // 여백 확보 및 오토 스케일링
+        const paddingY = Math.max(1000000, (maxPayoff - minPayoff) * 0.2);
+        const yMax = maxPayoff + paddingY;
+        const yMin = Math.min(-1000000, minPayoff - paddingY);
+
+        const getX = (price) => ((price - xMin) / (xMax - xMin)) * width;
+        const getY = (pnl) => height - (((pnl - yMin) / (yMax - yMin)) * height);
+
+        ctx.clearRect(0, 0, width, height);
+
+        // 배경 그리드 (X축/Y축)
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 1;
+
+        // Zero Net Payoff 선 (0원)
+        ctx.beginPath();
+        const zeroY = getY(0);
+        ctx.moveTo(0, zeroY);
+        ctx.lineTo(width, zeroY);
+        ctx.stroke();
+
+        // 현재 지수 선 (세로선)
+        const currentX = getX(currentPrice);
+        ctx.strokeStyle = '#38BDF8'; // Light Blue
+        ctx.beginPath();
+        ctx.moveTo(currentX, 0);
+        ctx.lineTo(currentX, height);
+        ctx.stroke();
+
+        // 페이오프 곡선 그리기
+        ctx.beginPath();
+        ctx.strokeStyle = '#F59E0B'; // 주황색 (페이오프)
+        ctx.lineWidth = 2.5;
+        for (let p = xMin; p <= xMax; p += 0.1) {
+          const px = getX(p);
+          const py = getY(calcNetPayoff(p));
+          if (p === xMin) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+
+        // 텍스트 라벨 (현재 지수, 중심축)
+        ctx.fillStyle = '#E2E8F0';
+        ctx.font = '12px monospace';
+        ctx.fillText(`Anchor: ${anchorPrice.toFixed(2)}`, 10, 20);
+        ctx.fillStyle = '#38BDF8';
+        ctx.fillText(`Curr: ${currentPrice.toFixed(2)}`, currentX + 5, 20);
+
+      }, [currentPrice, anchorPrice, portfolioOptions, futuresQty, frictionCost, activeStrategy]);
+
+      return (
+        <section style={{
+          backgroundColor: '#1E293B',
+          borderRadius: '16px',
+          border: '1px solid #334155',
+          padding: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          height: '320px',
+          display: 'flex',
+          flexDirection: 'column'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: 'bold', color: '#E2E8F0', margin: 0 }}>
+              Universal Net Payoff Widget
+            </h2>
+            <div style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '4px', backgroundColor: '#0F172A', color: '#10B981' }}>
+              {activeStrategy}
+            </div>
+          </div>
+          <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+            <canvas
+              ref={canvasRef}
+              width={600}
+              height={220}
+              style={{ width: '100%', height: '100%' }}
+            />
+          </div>
+        </section>
+      );
+    });
+
+    // ==============================================================================
+    // 5. 대시보드 통합 메인 레이아웃 컴포넌트 (초대형 국면 배지 및 호가공백 연출 추가)
+    // ==============================================================================
+    const Dashboard = () => {
+      const [isConnected, setIsConnected] = useState(false);
+      // 내부 가상 시간을 Date 객체로 통합 관리하여 프론트엔드 자체 자율 타이머 구동
+      const [virtualDateTime, setVirtualDateTime] = useState(new Date("2025-01-01T09:00:00"));
+      const [regime, setRegime] = useState('NEUTRAL');
+      const [bidAskSpread, setBidAskSpread] = useState(0.05); // 🛡️ 호가공백 상태
+      const [coords, setCoords] = useState([]);
+      const [payoffCoords, setPayoffCoords] = useState([]);
+      const [orders, setOrders] = useState([]);
+      const [seq, setSeq] = useState(0);
+      const [currentPrice, setCurrentPrice] = useState(350);
+      const [capital, setCapital] = useState(25000000);
+      const [reserve, setReserve] = useState(0);
+      const [budgetPool, setBudgetPool] = useState(0);
+      const [stressMode, setStressMode] = useState(false);
+      const [hardenedMode, setHardenedMode] = useState(false);
+      const [slippageMs, setSlippageMs] = useState(50);
+      const [slippageRate, setSlippageRate] = useState(0.001);
+      const [usedMargin, setUsedMargin] = useState(0);
+      const [marginRatio, setMarginRatio] = useState(0);
+      const [riskLevel, setRiskLevel] = useState('NORMAL');
+      const [activeStrategy, setActiveStrategy] = useState('Track1 (Defense)');
+      const [tuningFactor, setTuningFactor] = useState(1.0);
+      const [daysToExpiry, setDaysToExpiry] = useState(7.0);
+      const [autobotActive, setAutobotActive] = useState(false);
+
+      // 📅 [신규 추가] 가상 테스트 시작/종료 일시 및 경과 시간 상태
+      const [testStartDateTime, setTestStartDateTime] = useState('');
+      const [testEndDateTime, setTestEndDateTime] = useState('');
+      const [realElapsedSecs, setRealElapsedSecs] = useState(0);
+      const [focusedTickSeq, setFocusedTickSeq] = useState(null);
+      const [portfolioOptions, setPortfolioOptions] = useState([]);
+      const [futuresQty, setFuturesQty] = useState(0);
+      const [frictionCost, setFrictionCost] = useState(0);
+      const [eventLogs, setEventLogs] = useState([]);
+      const [strategyPnL, setStrategyPnL] = useState({});
+
+
+
+      // 가상 테스트의 소요시간 계산 함수
+      const getVirtualElapsedSecs = () => {
+        if (!testStartDateTime) return 0;
+        const startDt = new Date(testStartDateTime.replace(' ', 'T'));
+        if (isNaN(startDt.getTime())) return 0;
+        const diffMs = virtualDateTime.getTime() - startDt.getTime();
+        return Math.max(0, Math.floor(diffMs / 1000));
+      };
+
+      const [activeScenarios, setActiveScenarios] = useState({
+        circuitBreaker: false,
+        flashCrash: false,
+        ivExplosion: false,
+        rejectionStorm: false,
+        liquidityDrought: false,
+        ivSellBlocked: false
+      });
+
+      const [strategyWeights, setStrategyWeights] = useState({
+        "Track1 (Defense)": 30.0,
+        "Track2 (Trap)": 0.0,
+        "Track3 (Arbitrage)": 0.0,
+        "Track4 (Gamma)": 0.0,
+        "Track5 (Gap)": 0.0,
+        "Track6 (Daily)": 0.0,
+        "Track7 (Weekly)": 0.0,
+        "Track8 (Monthly)": 0.0
+      });
+
+      const currentSessionIdRef = useRef(null);
+      const reconnectCount = useRef(0);
+      const wsRef = useRef(null);
+
+      const handleStartBot = useCallback(() => {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ action: "start_bot" }));
+        }
+      }, []);
+
+      const connect = useCallback(() => {
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host || 'localhost:8082'; // Phase 4: V2 Server 포트
+        const wsUrl = `${wsProtocol}//${host}/ws`;
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          setIsConnected(true);
+          reconnectCount.current = 0;
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const parsedData = JSON.parse(event.data);
+            if (!parsedData || typeof parsedData !== 'object') return;
+
+            // 0-1. 🛡️ [Phase 3.1] 세션 경계 감지 및 상태 리셋
+            if (parsedData.sessionId && parsedData.sessionId !== currentSessionIdRef.current) {
+              console.warn(`[SESSION CHANGE] 새 세션 감지 (${parsedData.sessionId}), 로컬 상태 초기화`);
+              currentSessionIdRef.current = parsedData.sessionId;
+              setCoords([]);
+              if (typeof setPortfolioOptions === 'function') setPortfolioOptions([]);
+            }
+
+            // 0-2. 날짜 및 시간 수신
+            if (parsedData.date && parsedData.time) {
+              const newDt = new Date(`${parsedData.date}T${parsedData.time}`);
+              if (!isNaN(newDt.getTime())) {
+                setVirtualDateTime(newDt);
+              }
+            }
+
+            // 1. 가격 (🛡️ [Phase 3.2] 가격 falsy 값 안전 처리)
+            const priceVal = parsedData.underlyingPrice ?? parsedData.price;
+            if (priceVal !== undefined && priceVal !== null) {
+              setCurrentPrice(priceVal);
+            }
+
+            // 2. 국면
+            if (parsedData.regime) {
+              setRegime(parsedData.regime);
+            }
+
+            // 3. 🛡️ 호가공백(스프레드) 수신
+            if (parsedData.bidAskSpread !== undefined) {
+              setBidAskSpread(parsedData.bidAskSpread);
+            }
+
+            // 4. Coords
+            if (parsedData.coord) {
+              setCoords((prev) => [...prev, parsedData.coord].slice(-MAX_POINTS));
+              if (parsedData.coord.x !== undefined) {
+                setSeq(parsedData.coord.x);
+              }
+            }
+
+            // 5. Payoff
+            if (parsedData.payoffCoords) {
+              setPayoffCoords(parsedData.payoffCoords);
+            }
+
+            // 6. Orders
+            if (parsedData.order && parsedData.order.id) {
+              setOrders((prev) => [parsedData.order, ...prev].slice(0, MAX_ORDERS));
+            } else if (Array.isArray(parsedData.orders)) {
+              setOrders((prev) => [...parsedData.orders, ...prev].slice(0, MAX_ORDERS));
+            }
+
+            // 7. 전략 가중치
+            // 7. 전략 가중치
+            if (parsedData.strategyWeights) {
+              setStrategyWeights(parsedData.strategyWeights);
+            }
+            if (parsedData.autobotActive !== undefined) {
+              setAutobotActive(parsedData.autobotActive);
+            }
+
+            // 8. 🛡️ 자본금 및 유보금 수신
+            if (parsedData.capital !== undefined) {
+              setCapital(parsedData.capital);
+            }
+            if (parsedData.reserve !== undefined) {
+              setReserve(parsedData.reserve);
+            }
+            if (parsedData.budgetPool !== undefined) {
+              setBudgetPool(parsedData.budgetPool);
+            }
+
+            // 9. 🛡️ 스트레스 테스트 정보 수신
+            if (parsedData.stressMode !== undefined) {
+              setStressMode(parsedData.stressMode);
+            }
+            if (parsedData.hardenedMode !== undefined) {
+              setHardenedMode(parsedData.hardenedMode);
+            }
+            if (parsedData.slippageMs !== undefined) {
+              setSlippageMs(parsedData.slippageMs);
+            }
+            if (parsedData.slippageRate !== undefined) {
+              setSlippageRate(parsedData.slippageRate);
+            }
+
+            // 10. 🛡️ 증거금 정보 수신
+            if (parsedData.usedMargin !== undefined) {
+              setUsedMargin(parsedData.usedMargin);
+            }
+            if (parsedData.marginRatio !== undefined) {
+              setMarginRatio(parsedData.marginRatio);
+            }
+            if (parsedData.riskLevel !== undefined) {
+              setRiskLevel(parsedData.riskLevel);
+            }
+            if (parsedData.activeStrategy) {
+              setActiveStrategy(parsedData.activeStrategy);
+            }
+            if (parsedData.tuningFactor !== undefined) {
+              setTuningFactor(parsedData.tuningFactor);
+            }
+            if (parsedData.frictionCost !== undefined) {
+              setFrictionCost(parsedData.frictionCost);
+            }
+            if (parsedData.daysToExpiry !== undefined) {
+              setDaysToExpiry(parsedData.daysToExpiry);
+            }
+
+            // 📅 [신규 추가] 가상 테스트 시작/종료 일시 및 현실 경과 시간 수신
+            if (parsedData.simStartDateTime !== undefined) {
+              setTestStartDateTime(parsedData.simStartDateTime);
+            }
+            if (parsedData.simEndDateTime !== undefined) {
+              setTestEndDateTime(parsedData.simEndDateTime);
+            }
+            if (parsedData.realElapsedSecs !== undefined) {
+              setRealElapsedSecs(parsedData.realElapsedSecs);
+            }
+            if (parsedData.portfolioOptions !== undefined) {
+              setPortfolioOptions(parsedData.portfolioOptions);
+            }
+            if (parsedData.futuresQty !== undefined) {
+              setFuturesQty(parsedData.futuresQty);
+            }
+            if (parsedData.eventLogs !== undefined) {
+              setEventLogs(parsedData.eventLogs);
+            }
+            if (parsedData.strategyPnL !== undefined) {
+              setStrategyPnL(parsedData.strategyPnL);
+            }
+
+
+
+            // 🛡️ 극한 시나리오 상태 플래그 동기화
+            setActiveScenarios({
+              circuitBreaker: !!parsedData.circuitBreaker,
+              flashCrash: !!parsedData.flashCrash,
+              ivExplosion: !!parsedData.ivExplosion,
+              rejectionStorm: !!parsedData.rejectionStorm,
+              liquidityDrought: !!parsedData.liquidityDrought,
+              ivSellBlocked: !!parsedData.ivSellBlocked
+            });
+
+          } catch (err) {
+            console.error("Packet Parsing Error:", err);
+          }
+        };
+
+        ws.onclose = () => {
+          setIsConnected(false);
+          // 🛡️ 서버 접속 종료 시 로컬 상태 전면 리셋 (이전 세션 잔상 방지)
+          currentSessionIdRef.current = null;
+          setCoords([]);
+          if (typeof setPortfolioOptions === 'function') setPortfolioOptions([]);
+          if (typeof setEventLogs === 'function') setEventLogs([]);
+          if (typeof setOrders === 'function') setOrders([]);
+          
+          const delay = Math.min(1000 * Math.pow(2, reconnectCount.current), 30000);
+          reconnectCount.current += 1;
+          setTimeout(connect, delay);
+        };
+
+        ws.onerror = () => {
+          ws.close();
+        };
+      }, []);
+
+      // useEffect(() => {
+      //   const interval = setInterval(() => {
+      //     setVirtualDateTime((prev) => {
+      //       // 매 100ms (1틱) 당 가상 시간 30초씩 전진 (서버 끊김 시 시계 자율 흐름 보장)
+      //       return new Date(prev.getTime() + 30 * 1000);
+      //     });
+      //   }, 100);
+      //   return () => clearInterval(interval);
+      // }, []);
+
+      useEffect(() => {
+        connect();
+      }, [connect]);
+
+      // 📅 [신규 추가] 현실 경과 시간 실시간 카운트업 타이머
+      useEffect(() => {
+        let timer;
+        if (isConnected) {
+          timer = setInterval(() => {
+            setRealElapsedSecs((prev) => prev + 1);
+          }, 1000);
+        }
+        return () => clearInterval(timer);
+      }, [isConnected]);
+
+      // 🛡️ [국면 표시 크기 강화] 초대형 배지 크기 및 화려한 섀도우 효과 부여
+      const getRegimeBadgeStyle = () => {
+        let bgColor = 'rgba(59, 130, 246, 0.15)';
+        let textColor = '#3B82F6';
+        let label = 'NEUTRAL / 평온 횡보';
+        let shadow = '0 0 10px rgba(59, 130, 246, 0.3)';
+
+        if (regime === 'HIGH_VOL') {
+          bgColor = 'rgba(239, 68, 68, 0.2)';
+          textColor = '#EF4444';
+          label = 'HIGH VOL / 급변 폭풍';
+          shadow = '0 0 25px rgba(239, 68, 68, 0.6)';
+        } else if (regime === 'NORMAL') {
+          bgColor = 'rgba(16, 185, 129, 0.15)';
+          textColor = '#10B981';
+          label = 'NORMAL / 보통 추세';
+          shadow = '0 0 15px rgba(16, 185, 129, 0.4)';
+        }
+
+        return {
+          padding: '8px 16px',
+          borderRadius: '8px',
+          fontSize: '14px',
+          fontWeight: '900',
+          backgroundColor: bgColor,
+          color: textColor,
+          border: `2px solid ${textColor}`,
+          letterSpacing: '0.075em',
+          boxShadow: shadow,
+          display: 'inline-flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          transition: 'all 0.3s ease-in-out',
+          width: '250px', // 고정 폭
+          height: '55px', // 고정 높이
+          flexShrink: 0,
+          whiteSpace: 'nowrap',
+          boxSizing: 'border-box',
+          label: label // label 반환 추가
+        };
+      };
+
+      // 호가 스프레드(호가공백) 지표 박스 스타일
+      const getSpreadStyle = () => {
+        const isGap = bidAskSpread >= 0.5;
+        return {
+          fontSize: '14px',
+          fontFamily: 'monospace',
+          fontWeight: 700,
+          color: isGap ? '#EF4444' : '#94A3B8',
+          animation: isGap ? 'warnPulse 1.5s infinite' : 'none',
+          backgroundColor: '#0F172A',
+          padding: '8px 16px',
+          borderRadius: '8px',
+          border: `1px solid ${isGap ? '#EF444455' : '#334155'}`,
+          display: 'inline-flex',
+          justifyContent: 'space-between',
+          gap: '8px',
+          alignItems: 'center',
+          width: '150px', // 고정 폭
+          height: '55px', // 고정 높이
+          flexShrink: 0,
+          whiteSpace: 'nowrap',
+          boxSizing: 'border-box'
+        };
+      };
+
+      const styles = {
+        header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1E293B', paddingBottom: '16px', marginBottom: '28px' },
+        title: { fontSize: '22px', fontWeight: 700, letterSpacing: '-0.025em', margin: 0, background: 'linear-gradient(to right, #38BDF8, #818CF8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' },
+        statusBadge: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '6px 14px', borderRadius: '9999px', fontSize: '12px', fontWeight: 600, letterSpacing: '0.05em', backgroundColor: isConnected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(100, 116, 139, 0.1)', color: isConnected ? '#10B981' : '#64748B', border: isConnected ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(100, 116, 139, 0.2)', width: '135px', height: '55px', flexShrink: 0, boxSizing: 'border-box' },
+        statusDot: { width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isConnected ? '#10B981' : '#64748B', boxShadow: isConnected ? '0 0 10px #10B981' : 'none', animation: isConnected ? 'pulse 2s infinite' : 'none' },
+        gridLayout: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '24px' },
+        card: { backgroundColor: '#1E293B', borderRadius: '16px', border: '1px solid #334155', padding: '24px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', height: '320px' },
+        cardTitle: { fontSize: '12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.075em', color: '#94A3B8', margin: '0 0 10px 0' }
+      };
+
+      const badgeInfo = getRegimeBadgeStyle();
+
+      return (
+        <div onClick={() => setFocusedTickSeq(null)}>
+          <header style={styles.header}>
+            <h1 style={styles.title}>KOSPI200 HFT CONTROL CENTER (EMERGENCY PANEL)</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+              {/* 📅 [실시간 역사적 영업일 및 장중 시각 캘린더 배지] */}
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '10px',
+                backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                color: '#38BDF8',
+                border: '1px solid #38BDF8',
+                padding: '6px 16px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontFamily: 'monospace',
+                fontWeight: 800,
+                width: '210px',
+                height: '55px',
+                boxSizing: 'border-box',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center' }}>
+                  <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: '1.1' }}>Trading Date</span>
+                  <span style={{ fontSize: '12px', fontWeight: 800, lineHeight: '1.2' }}>
+                    {virtualDateTime.getFullYear()}-{String(virtualDateTime.getMonth() + 1).padStart(2, '0')}-{String(virtualDateTime.getDate()).padStart(2, '0')}
+                  </span>
+                  <span style={{ fontSize: '10px', color: '#EC4899', fontWeight: 900, marginTop: '2px', lineHeight: '1.0' }}>
+                    D-{daysToExpiry !== undefined ? Math.floor(daysToExpiry) : ''}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
+                  <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: '1.1' }}>Session Time</span>
+                  <span style={{ color: '#F8FAFC', fontWeight: 800, fontSize: '13px', lineHeight: '1.2' }}>
+                    {String(virtualDateTime.getHours()).padStart(2, '0')}:{String(virtualDateTime.getMinutes()).padStart(2, '0')}:{String(virtualDateTime.getSeconds()).padStart(2, '0')}
+                  </span>
+                </div>
+              </div>
+
+              {/* 📅 [실시간 가상 테스트 시작/종료 일시 및 현실 경과 시간 배지] */}
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                backgroundColor: 'rgba(236, 72, 153, 0.1)',
+                color: '#EC4899',
+                border: '1px solid #EC4899',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontFamily: 'monospace',
+                fontWeight: 800,
+                width: '320px',
+                height: '55px',
+                boxSizing: 'border-box',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sim Test Span</span>
+                  <span style={{ fontSize: '11px', color: '#F8FAFC', fontWeight: 800 }}>
+                    {testStartDateTime ? testStartDateTime.split(' ')[0] : 'N/A'} ~ {testEndDateTime ? testEndDateTime.split(' ')[0] : 'N/A'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                  <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Virtual Elapsed Time</span>
+                  <span style={{ color: '#F472B6', fontWeight: 800, fontSize: '13px' }}>
+                    {formatElapsedTime(getVirtualElapsedSecs())}
+                  </span>
+                </div>
+              </div>
+
+              {/* 🛡️ [실시간 증거금 및 마진 위험도 배지] */}
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '10px',
+                backgroundColor: riskLevel === 'DANGER' ? 'rgba(239, 68, 68, 0.2)' : riskLevel === 'WARNING' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.1)',
+                color: riskLevel === 'DANGER' ? '#EF4444' : riskLevel === 'WARNING' ? '#F59E0B' : '#10B981',
+                border: `1px solid ${riskLevel === 'DANGER' ? '#EF4444' : riskLevel === 'WARNING' ? '#F59E0B' : '#10B981'}`,
+                padding: '8px 16px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontFamily: 'monospace',
+                fontWeight: 800,
+                boxShadow: riskLevel === 'DANGER' ? '0 0 15px rgba(239, 68, 68, 0.5)' : riskLevel === 'WARNING' ? '0 0 10px rgba(245, 158, 11, 0.3)' : 'none',
+                animation: riskLevel !== 'NORMAL' ? 'pulse 1.5s infinite' : 'none',
+                transition: 'all 0.3s ease-in-out',
+                width: '185px',
+                height: '55px',
+                boxSizing: 'border-box',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Margin Ratio</span>
+                  <span style={{ fontSize: '13px', fontWeight: 800 }}>{marginRatio}%</span>
+                </div>
+                <span style={{
+                  backgroundColor: riskLevel === 'DANGER' ? '#EF4444' : riskLevel === 'WARNING' ? '#F59E0B' : '#10B981',
+                  color: '#0F172A',
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  fontSize: '10px',
+                  fontWeight: 900
+                }}>
+                  {riskLevel}
+                </span>
+              </div>
+
+              {/* 🛡️ [스트레스 테스트 모드 모니터링 배지] */}
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px',
+                backgroundColor: hardenedMode ? 'rgba(217, 70, 239, 0.2)' : (stressMode ? 'rgba(239, 68, 68, 0.15)' : 'rgba(100, 116, 139, 0.05)'),
+                color: hardenedMode ? '#D946EF' : (stressMode ? '#EF4444' : '#64748B'),
+                border: `1px solid ${hardenedMode ? '#D946EFAA' : (stressMode ? '#EF4444AA' : '#334155')}`,
+                padding: '8px 16px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontFamily: 'monospace',
+                fontWeight: 700,
+                boxShadow: hardenedMode ? '0 0 20px rgba(217, 70, 239, 0.5)' : (stressMode ? '0 0 15px rgba(239, 68, 68, 0.3)' : 'none'),
+                transition: 'all 0.3s ease-in-out',
+                width: '290px',
+                height: '55px',
+                boxSizing: 'border-box',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Stress Test Mode</span>
+                  <span style={{ color: hardenedMode ? '#F472B6' : (stressMode ? '#F59E0B' : '#64748B'), fontSize: '11px', fontWeight: 800 }}>
+                    {hardenedMode ? `🔥 HELL MODE (${slippageMs}ms / ${(slippageRate * 100).toFixed(1)}%) 🌋` :
+                      (stressMode ? `ACTIVE (${slippageMs}ms / ${(slippageRate * 100).toFixed(1)}%) ⚠️` : 'OFF')}
+                  </span>
+                </div>
+              </div>
+
+              {/* 🛡️ [가용 자본금 및 유보금 표기 박스] */}
+              <div style={{
+                backgroundColor: '#1E293B',
+                border: '1px solid #334155',
+                borderRadius: '8px',
+                padding: '8px 16px',
+                fontSize: '13px',
+                fontFamily: 'monospace',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '16px',
+                color: '#94A3B8',
+                width: '320px',
+                height: '55px',
+                boxSizing: 'border-box',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Capital</span>
+                  <span style={{ color: '#F8FAFC', fontWeight: 700, fontSize: '13px' }}>{formatCurrencyPrecise(capital)}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                  <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Reserve</span>
+                  <span style={{ color: '#F59E0B', fontWeight: 700, fontSize: '13px' }}>{formatCurrencyPrecise(reserve)}</span>
+                </div>
+              </div>
+
+              {/* 🛡️ [보험 예산 풀 표기 박스] */}
+              <div style={{
+                backgroundColor: '#1E293B',
+                border: '1px solid #334155',
+                borderRadius: '8px',
+                padding: '8px 16px',
+                fontSize: '13px',
+                fontFamily: 'monospace',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'flex-start',
+                color: '#94A3B8',
+                width: '160px',
+                height: '55px',
+                boxSizing: 'border-box',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}>
+                <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#10B981' }}>Budget Pool</span>
+                <span style={{ color: '#10B981', fontWeight: 800, fontSize: '13px' }}>{formatCurrencyPrecise(budgetPool)}</span>
+              </div>
+
+              {/* 🛡️ [Self-Tuning Guard 자율 튜닝 수치 표시] */}
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px',
+                backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                color: '#A78BFA',
+                border: '1px solid rgba(139, 92, 246, 0.4)',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontFamily: 'monospace',
+                fontWeight: 700,
+                boxShadow: tuningFactor < 1.0 ? '0 0 10px rgba(139, 92, 246, 0.4)' : 'none',
+                width: '230px',
+                height: '55px',
+                boxSizing: 'border-box',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tuning (Strategy)</span>
+                  <span style={{ color: tuningFactor < 0.7 ? '#EF4444' : (tuningFactor < 1.0 ? '#F59E0B' : '#10B981'), fontSize: '13px', fontWeight: 800 }}>
+                    {(tuningFactor * 100).toFixed(0)}% <span style={{ fontSize: '10px', color: '#64748B', fontWeight: 400 }}>({activeStrategy.split(' ')[0]})</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* 🛡️ [호가공백 모니터링 수치 표기] */}
+              <div style={getSpreadStyle()}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: '9px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Spread Gap</span>
+                  <span style={{ fontSize: '13px', fontWeight: 800 }}>{bidAskSpread} {bidAskSpread >= 0.5 ? '⚠️ GAP' : 'OK'}</span>
+                </div>
+              </div>
+
+              {/* 🛡️ [초대형 국면 배지] */}
+              <span style={badgeInfo}>{badgeInfo.label}</span>
+
+              {autobotActive ? (
+                <div style={{
+                  padding: '6px 16px',
+                  backgroundColor: '#10B981',
+                  color: '#fff',
+                  borderRadius: '8px',
+                  fontWeight: 800,
+                  fontSize: '13px',
+                  letterSpacing: '0.05em',
+                  boxShadow: '0 0 10px rgba(16,185,129,0.5)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <span style={{ width: '8px', height: '8px', backgroundColor: '#fff', borderRadius: '50%', display: 'inline-block' }}></span>
+                  AUTO RUNNING
+                </div>
+              ) : (
+                <button
+                  onClick={handleStartBot}
+                  disabled={!isConnected}
+                  style={{
+                    padding: '6px 24px',
+                    backgroundColor: isConnected ? '#3B82F6' : '#475569',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontWeight: 800,
+                    fontSize: '14px',
+                    cursor: isConnected ? 'pointer' : 'not-allowed',
+                    boxShadow: isConnected ? '0 4px 6px -1px rgba(59, 130, 246, 0.4)' : 'none',
+                    transition: 'all 0.2s',
+                    letterSpacing: '0.05em'
+                  }}
+                >
+                  START
+                </button>
+              )}
+
+              <div style={styles.statusBadge}>
+                <span style={styles.statusDot} />
+                {isConnected ? 'LIVE' : 'DISCONNECTED'}
+              </div>
+            </div>
+          </header>
+
+          <div style={styles.gridLayout}>
+            {/* 🛡️ [계좌 자산 및 증거금 종합 원장 카드] */}
+            <section style={{
+              backgroundColor: '#1E293B',
+              borderRadius: '16px',
+              border: '1px solid #334155',
+              padding: '24px',
+              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+              height: '320px',
+              display: 'flex',
+              flexDirection: 'column'
+            }}>
+              <h2 style={styles.cardTitle}>Account Capital & Margin Ledger</h2>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '14px',
+                flex: 1,
+                alignContent: 'center',
+                fontFamily: 'monospace',
+                fontSize: '13px'
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                  <span style={{ color: '#64748B' }}>Total Equity (총 자산)</span>
+                  <span style={{ fontSize: '16px', fontWeight: 700, color: '#38BDF8' }}>{formatCurrencyPrecise(capital + reserve)}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                  <span style={{ color: '#64748B' }}>Margin Ratio (증거금률)</span>
+                  <span style={{ fontSize: '16px', fontWeight: 700, color: riskLevel === 'DANGER' ? '#EF4444' : riskLevel === 'WARNING' ? '#F59E0B' : '#10B981' }}>{marginRatio}%</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ color: '#64748B' }}>Used Margin (사용 증거금)</span>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#E2E8F0' }}>{formatCurrencyPrecise(usedMargin)}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ color: '#64748B' }}>Free Margin (가능 증거금)</span>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#10B981' }}>{formatCurrencyPrecise(Math.max(0, capital - usedMargin))}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ color: '#64748B' }}>Available Capital (가용 자본)</span>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC' }}>{formatCurrencyPrecise(capital)}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ color: '#64748B' }}>Safety Reserve (안전 유보금)</span>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#F59E0B' }}>{formatCurrencyPrecise(reserve)}</span>
+                </div>
+              </div>
+            </section>
+
+            {/* 🚀 [MASTER UI DIRECTIVE] 실시간 합성 페이오프 위젯 (전략 1~4 공통) — 🔇 HIDDEN (나중에 활용 가능) */}
+            {false && <PayoffWidget
+              currentPrice={currentPrice}
+              activeStrategy={activeStrategy}
+              portfolioOptions={portfolioOptions}
+              futuresQty={futuresQty}
+              frictionCost={frictionCost}
+            />}
+
+            {/* 🛡️ 실시간 파생상품 옵션 & 선물 보유 자산 현황 판넬 — 🔇 HIDDEN (나중에 활용 가능) */}
+            {false && <ActivePositionsMonitor portfolioOptions={portfolioOptions} futuresQty={futuresQty} />}
+
+            {/* 📜 [신설] 전략별 체결 & 청산 완료 히스토리 판넬 (Completed Trades History) */}
+            <CompletedTradesHistory eventLogs={eventLogs} />
+
+
+            {/* 📈 전략별 수수료 포함 순손익 그래프 — 🔇 HIDDEN (나중에 활용 가능) */}
+            {false && <StrategyPnLBarChart strategyPnL={strategyPnL} frictionCost={frictionCost} />}
+
+            {/* 기존 고정형 옵션 전략 페이오프 다이어그램 (변경 없음) */}
+            <section style={styles.card}>
+              <h2 style={styles.cardTitle}>Option Strategy Payoff Profile</h2>
+              <PayoffDiagram payoffCoords={payoffCoords} currentPrice={currentPrice} />
+            </section>
+
+
+            {/* 📊 [신설 통합] 8대 전략 통합 가로 100% 매트릭스 대시보드 (PnL + 프로세스 + 선물/옵션 체결 포지션) */}
+            <MasterMultiStrategyMatrixDashboard weights={strategyWeights} strategyPnL={strategyPnL} portfolioOptions={portfolioOptions} futuresQty={futuresQty} />
+
+            {/* 🚀 누적 수익률 차트 (기존 StrategyPnLBarChart 위치로 이동, 가로 100% 전체 폭 확장 적용) */}
+            <section style={{ ...styles.card, gridColumn: '1 / -1', height: '360px' }}>
+              <h2 style={styles.cardTitle}>Realtime Cumulative Profit (Tick / Fee Deducted)</h2>
+              <ProfitChart coords={coords} focusedTickSeq={focusedTickSeq} />
+            </section>
+
+
+
+
+
+            {/* 🌋 [신설] 실시간 스트레스 환경 모니터 카드 */}
+            <section style={{
+              backgroundColor: '#1E293B',
+              borderRadius: '16px',
+              border: '1px solid #334155',
+              padding: '24px',
+              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+              height: '320px',
+              display: 'flex',
+              flexDirection: 'column'
+            }}>
+              <h2 style={styles.cardTitle}>Active Stress Scenario Monitor</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', flex: 1, alignContent: 'center' }}>
+
+                {/* 1. Circuit Breaker */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: '8px', backgroundColor: activeScenarios.circuitBreaker ? 'rgba(239, 68, 68, 0.12)' : '#0F172A', border: `1px solid ${activeScenarios.circuitBreaker ? '#EF4444' : '#334155'}` }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: activeScenarios.circuitBreaker ? '#EF4444' : '#E2E8F0', fontFamily: 'sans-serif' }}>🚨 Circuit Breaker</span>
+                    <span style={{ fontSize: '9px', color: '#64748B', marginTop: '2px' }}>거래 일시정지 (서킷브레이커)</span>
+                  </div>
+                  <span style={{ fontSize: '9px', fontWeight: 900, padding: '2px 6px', borderRadius: '4px', backgroundColor: activeScenarios.circuitBreaker ? '#EF4444' : '#334155', color: activeScenarios.circuitBreaker ? '#0F172A' : '#FFF', fontFamily: 'monospace' }}>
+                    {activeScenarios.circuitBreaker ? "ACTIVE" : "OFF"}
+                  </span>
+                </div>
+
+                {/* 2. Flash Crash */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: '8px', backgroundColor: activeScenarios.flashCrash ? 'rgba(239, 68, 68, 0.12)' : '#0F172A', border: `1px solid ${activeScenarios.flashCrash ? '#EF4444' : '#334155'}` }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: activeScenarios.flashCrash ? '#EF4444' : '#E2E8F0', fontFamily: 'sans-serif' }}>💥 Flash Crash</span>
+                    <span style={{ fontSize: '9px', color: '#64748B', marginTop: '2px' }}>순간 가격급락 (플래시크래시)</span>
+                  </div>
+                  <span style={{ fontSize: '9px', fontWeight: 900, padding: '2px 6px', borderRadius: '4px', backgroundColor: activeScenarios.flashCrash ? '#EF4444' : '#334155', color: activeScenarios.flashCrash ? '#0F172A' : '#FFF', fontFamily: 'monospace' }}>
+                    {activeScenarios.flashCrash ? "ACTIVE" : "OFF"}
+                  </span>
+                </div>
+
+                  {/* 3. IV Explosion */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: '8px', backgroundColor: activeScenarios.ivExplosion ? 'rgba(245, 158, 11, 0.12)' : '#0F172A', border: `1px solid ${activeScenarios.ivExplosion ? '#F59E0B' : '#334155'}` }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 600, color: activeScenarios.ivExplosion ? '#F59E0B' : '#E2E8F0', fontFamily: 'sans-serif' }}>🌋 IV Explosion</span>
+                      <span style={{ fontSize: '9px', color: '#64748B', marginTop: '2px' }}>변동성 폭발 (내재변동성 3배)</span>
+                    </div>
+                    <span style={{ fontSize: '9px', fontWeight: 900, padding: '2px 6px', borderRadius: '4px', backgroundColor: activeScenarios.ivExplosion ? '#F59E0B' : '#334155', color: activeScenarios.ivExplosion ? '#0F172A' : '#FFF', fontFamily: 'monospace' }}>
+                      {activeScenarios.ivExplosion ? "ACTIVE" : "OFF"}
+                    </span>
+                  </div>
+
+                  {/* 4. Rejection Storm */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: '8px', backgroundColor: activeScenarios.rejectionStorm ? 'rgba(245, 158, 11, 0.12)' : '#0F172A', border: `1px solid ${activeScenarios.rejectionStorm ? '#F59E0B' : '#334155'}` }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 600, color: activeScenarios.rejectionStorm ? '#F59E0B' : '#E2E8F0', fontFamily: 'sans-serif' }}>🚫 Rejection Storm</span>
+                      <span style={{ fontSize: '9px', color: '#64748B', marginTop: '2px' }}>주문 거부 폭풍 (거부율 80%)</span>
+                    </div>
+                    <span style={{ fontSize: '9px', fontWeight: 900, padding: '2px 6px', borderRadius: '4px', backgroundColor: activeScenarios.rejectionStorm ? '#F59E0B' : '#334155', color: activeScenarios.rejectionStorm ? '#0F172A' : '#FFF', fontFamily: 'monospace' }}>
+                      {activeScenarios.rejectionStorm ? "ACTIVE" : "OFF"}
+                    </span>
+                  </div>
+
+                  {/* 5. Liquidity Drought */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: '8px', backgroundColor: activeScenarios.liquidityDrought ? 'rgba(59, 130, 246, 0.12)' : '#0F172A', border: `1px solid ${activeScenarios.liquidityDrought ? '#3B82F6' : '#334155'}` }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 600, color: activeScenarios.liquidityDrought ? '#3B82F6' : '#E2E8F0', fontFamily: 'sans-serif' }}>🏜️ Liquidity Drought</span>
+                      <span style={{ fontSize: '9px', color: '#64748B', marginTop: '2px' }}>호가 잔량고갈 (유동성 가뭄)</span>
+                    </div>
+                    <span style={{ fontSize: '9px', fontWeight: 900, padding: '2px 6px', borderRadius: '4px', backgroundColor: activeScenarios.liquidityDrought ? '#3B82F6' : '#334155', color: activeScenarios.liquidityDrought ? '#0F172A' : '#FFF', fontFamily: 'monospace' }}>
+                      {activeScenarios.liquidityDrought ? "ACTIVE" : "OFF"}
+                    </span>
+                  </div>
+
+                  {/* 6. Option Sell Blocked */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: '8px', backgroundColor: activeScenarios.ivSellBlocked ? 'rgba(139, 92, 246, 0.12)' : '#0F172A', border: `1px solid ${activeScenarios.ivSellBlocked ? '#8B5CF6' : '#334155'}` }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 600, color: activeScenarios.ivSellBlocked ? '#8B5CF6' : '#E2E8F0', fontFamily: 'sans-serif' }}>🔒 Option Sell Block</span>
+                      <span style={{ fontSize: '9px', color: '#64748B', marginTop: '2px' }}>신규 매도 차단 (위험 회피)</span>
+                    </div>
+                    <span style={{ fontSize: '9px', fontWeight: 900, padding: '2px 6px', borderRadius: '4px', backgroundColor: activeScenarios.ivSellBlocked ? '#8B5CF6' : '#334155', color: activeScenarios.ivSellBlocked ? '#0F172A' : '#FFF', fontFamily: 'monospace' }}>
+                      {activeScenarios.ivSellBlocked ? "ACTIVE" : "OFF"}
+                    </span>
+                  </div>
+
+                </div>
+            </section>
+
+            {/* ── 🎛️ 실시간 가상 테스트 환경 설정 패널 (전체 폭 확장) ── */}
+            <div style={{ gridColumn: '1 / -1' }}>
+              <SimSettingsPanel wsRef={wsRef} />
+            </div>
+
+          </div>
+        </div>
+      );
+    };
+
+
+    // ==============================================================================
+    // 🎛️ 실시간 가상테스트 환경 설정 패널 컴포넌트
+    // ==============================================================================
+    const SimSettingsPanel = ({ wsRef }) => {
+      const [capitalRatio, setCapitalRatio] = React.useState(2);
+      const [volLevel, setVolLevel] = React.useState('CALM');
+      const [dailyShockPts, setDailyShockPts] = React.useState(0);
+      const [circuitBreaker, setCircuitBreaker] = React.useState(false);
+      const [flashCrash, setFlashCrash] = React.useState(false);
+      const [ivExplosion, setIvExplosion] = React.useState(false);
+      const [slippageMs, setSlippageMs] = React.useState(0);
+      const [applied, setApplied] = React.useState(false);
+      const [lastApplied, setLastApplied] = React.useState(null);
+
+      const sendSettings = () => {
+        const settings = { capitalRatio, volLevel, dailyShockPts, stressCircuitBreaker: circuitBreaker, stressFlashCrash: flashCrash, stressIVExplosion: ivExplosion, stressSlippageMs: slippageMs };
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ action: 'update_settings', settings }));
+          setApplied(true); setLastApplied(new Date().toLocaleTimeString('ko-KR'));
+          setTimeout(() => setApplied(false), 2500);
+        }
+      };
+
+      const ToggleBtn = ({ active, onClick, label, subLabel, color }) => (
+        <button onClick={onClick} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '12px 10px', borderRadius: '12px', cursor: 'pointer', minWidth: '118px', border: `2px solid ${active ? color : '#334155'}`, backgroundColor: active ? `${color}22` : '#1E293B', transition: 'all 0.2s ease' }}>
+          <span style={{ fontSize: '13px', fontWeight: 700, color: active ? color : '#94A3B8' }}>{label}</span>
+          <span style={{ fontSize: '9px', color: active ? color : '#64748B', textAlign: 'center', lineHeight: 1.4 }}>{subLabel}</span>
+          <span style={{ marginTop: '4px', fontSize: '9px', fontWeight: 900, padding: '2px 8px', borderRadius: '4px', fontFamily: 'monospace', backgroundColor: active ? color : '#334155', color: active ? '#0F172A' : '#94A3B8' }}>{active ? 'ON' : 'OFF'}</span>
+        </button>
+      );
+
+      const LS = { fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: '#7C3AED', marginBottom: '12px', display: 'block' };
+
+      return (
+        <section style={{ backgroundColor: '#0B1120', borderRadius: '20px', marginTop: '32px', border: '1.5px solid #4F46E5', padding: '28px 32px', boxShadow: '0 0 48px rgba(79,70,229,0.20)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+            <div>
+              <h2 style={{ fontSize: '15px', fontWeight: 800, color: '#A78BFA', letterSpacing: '0.06em', margin: 0 }}>🎛️ 가상 테스트 환경 실시간 설정 패널</h2>
+              <p style={{ fontSize: '11px', color: '#475569', margin: '5px 0 0 0' }}>설정값 조정 후 [즉시 적용] 버튼을 누르면 실행 중인 시뮬레이션에 실시간으로 반영됩니다.</p>
+            </div>
+            {lastApplied && <span style={{ fontSize: '10px', color: '#10B981', fontFamily: 'monospace' }}>✅ 마지막 반영: {lastApplied}</span>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 2fr', gap: '28px', alignItems: 'start' }}>
+            <div>
+              <span style={LS}>① 전략 5~8 자본비율</span>
+              <div style={{ fontSize: '36px', fontWeight: 900, color: '#818CF8', fontFamily: 'monospace', marginBottom: '10px' }}>{capitalRatio}%</div>
+              <input type="range" min="1" max="10" step="1" value={capitalRatio} onChange={e => setCapitalRatio(+e.target.value)} style={{ width: '100%', accentColor: '#6366F1', cursor: 'pointer' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#475569', marginTop: '4px' }}><span>1%</span><span>5%</span><span>10%</span></div>
+              <p style={{ fontSize: '10px', color: '#475569', marginTop: '10px', lineHeight: 1.6 }}>테일 보험·갭 전략 자본 예산.<br />일 HWM 기준 매일 재산정.</p>
+            </div>
+            <div>
+              <span style={LS}>② 변동성 레벨</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {[['CALM', '🌤️ 약함', '평온 · 저변동 (×0.45)', '#10B981'], ['NORMAL', '📊 보통', '표준 · 보통 (×0.95)', '#F59E0B'], ['HIGH', '🌪️ 강함', '고변동 · BEAR_VOL (×2.2)', '#EF4444']].map(([val, lbl, desc, col]) => (
+                  <button key={val} onClick={() => setVolLevel(val)} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${volLevel === val ? col : '#334155'}`, backgroundColor: volLevel === val ? `${col}18` : '#1E293B', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px', transition: 'all 0.2s' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: volLevel === val ? col : '#94A3B8' }}>{lbl}</span>
+                    <span style={{ fontSize: '9px', color: '#475569' }}>{desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span style={LS}>③ 일단위 지수변동폭</span>
+              <div style={{ fontSize: '36px', fontWeight: 900, fontFamily: 'monospace', marginBottom: '10px', color: dailyShockPts === 0 ? '#475569' : '#F59E0B' }}>{dailyShockPts === 0 ? 'AUTO' : `${dailyShockPts}pt`}</div>
+              <input type="range" min="0" max="20" step="5" value={dailyShockPts} onChange={e => setDailyShockPts(+e.target.value)} style={{ width: '100%', accentColor: '#F59E0B', cursor: 'pointer' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#475569', marginTop: '4px' }}><span>AUTO</span><span>5pt</span><span>10pt</span><span>15pt</span><span>20pt</span></div>
+              <p style={{ fontSize: '10px', color: '#475569', marginTop: '10px', lineHeight: 1.6 }}>하루 급등락 주입 크기 고정.<br />AUTO = 4~8pt 자율 가변.</p>
+            </div>
+            <div>
+              <span style={LS}>④ 극한요소 즉시 주입</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
+                <ToggleBtn active={circuitBreaker} onClick={() => setCircuitBreaker(v => !v)} label="🚨 서킷브레이커" subLabel="거래 일시정지" color="#EF4444" />
+                <ToggleBtn active={flashCrash} onClick={() => setFlashCrash(v => !v)} label="💥 플래시 크래시" subLabel="순간 급락 폭락" color="#F97316" />
+                <ToggleBtn active={ivExplosion} onClick={() => setIvExplosion(v => !v)} label="🌋 IV 3배 폭등" subLabel="증거금 2배 할증" color="#A855F7" />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '12px', borderRadius: '12px', border: `2px solid ${slippageMs > 0 ? '#3B82F6' : '#334155'}`, backgroundColor: slippageMs > 0 ? '#172554' : '#1E293B', minWidth: '118px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: slippageMs > 0 ? '#60A5FA' : '#94A3B8' }}>🔌 슬리피지 딜레이</span>
+                  <span style={{ fontSize: '9px', color: '#475569' }}>주문 지연 강제 주입</span>
+                  <input type="range" min="0" max="350" step="50" value={slippageMs} onChange={e => setSlippageMs(+e.target.value)} style={{ width: '100%', accentColor: '#3B82F6', cursor: 'pointer' }} />
+                  <span style={{ fontSize: '12px', fontWeight: 800, color: slippageMs > 0 ? '#60A5FA' : '#475569', fontFamily: 'monospace', textAlign: 'center' }}>{slippageMs === 0 ? 'OFF' : `${slippageMs}ms`}</span>
+                </div>
+              </div>
+              <button onClick={sendSettings} style={{ width: '100%', padding: '15px 0', borderRadius: '12px', cursor: 'pointer', border: 'none', background: applied ? 'linear-gradient(90deg,#059669,#10B981)' : 'linear-gradient(135deg,#4F46E5,#7C3AED)', color: '#FFF', fontSize: '14px', fontWeight: 800, letterSpacing: '0.05em', transition: 'all 0.3s', boxShadow: applied ? '0 0 24px rgba(16,185,129,0.45)' : '0 0 24px rgba(79,70,229,0.45)' }}>
+                {applied ? '✅ 시뮬레이션에 반영됨!' : '⚡ 즉시 적용 (실시간 반영)'}
+              </button>
+            </div>
+          </div>
+        </section>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<Dashboard />);
+  </script>
+</body>
+
+</html>

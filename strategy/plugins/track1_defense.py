@@ -1,226 +1,209 @@
-# -*- coding: utf-8 -*-
-import numpy as np
-from typing import List, Dict, Any, cast
-from collections import deque
-from decimal import Decimal, ROUND_HALF_UP
-from uuid import uuid4
+import logging
+from typing import Dict, Any, List, Optional
 
-from core.base_agent import BaseAgent
-from core.contracts import MarketTick, OrderRequest
+logger = logging.getLogger(__name__)
 
-class Track1Defense(BaseAgent):
-    """본월물 가두리 방어벽 (Short Strangle) 및 델타 헤징 엔진"""
-
-    def __init__(self, shared_context: Dict[str, Any]) -> None:
-        self.context: Dict[str, Any] = shared_context
-        self._tick_history: deque[MarketTick] = deque(maxlen=1000)
-        self.capital_allocation_rate: Decimal = Decimal('0.70')  # 원칙 1
-        self.delta_deadband: Decimal = Decimal('0.5') # 원칙 9
-        self.mdd_limit: Decimal = Decimal('0.15') # 원칙 8
-        self.is_shutdown: bool = False
-
-    async def start(self) -> None:
-        pass
-
-    async def stop(self) -> None:
-        pass
-
-    async def health_check(self) -> bool:
-        return True
-
-    async def process_message(self, message: Dict[str, Any]) -> None:
-        pass
-
-    def _calculate_kelly_fraction(self, win_rate: Decimal, payoff_ratio: Decimal) -> Decimal:
-        """[목표 A / 원칙 1] 수식: f = W - ((1-W)/R), f/8 적용 후 0~0.125 클램핑"""
-        if payoff_ratio <= Decimal('0'):
-            return Decimal('0')
+class DetailedProductionFenceEngine:
+    """
+    [전략 1: 꼬리표 순환형 다이내믹 가두리 및 미아 포지션 선물 헷지 루프]
+    공방 일체형 펜스 엔진.
+    """
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config.get("strategies", {}).get("strategy_1_1", {}).get("params", {})
+        self.base_price = 0.0          
+        self.fence_distance = 7.5  
         
-        # Kelly fraction: f = W - (1 - W) / R
-        f = win_rate - ((Decimal('1') - win_rate) / payoff_ratio)
-        fraction = f / Decimal('8')
+        # 1. 테일 방어용 넓은 양매수 상태 관리
+        self.long_strangle_positions: List[Dict] = []
         
-        # Clamp between 0.0 and 0.125
-        if fraction < Decimal('0'):
-            return Decimal('0')
-        if fraction > Decimal('0.125'):
-            return Decimal('0.125')
-        return fraction
-
-    def _check_global_mdd_shutdown(self, initial_equity: Decimal, current_equity: Decimal) -> bool:
-        """[목표 A / 원칙 8] MDD가 N% 하락 시 셧다운 트리거 발동 여부 확인"""
-        if initial_equity <= Decimal('0'):
-            return False
+        # 2. 가두리 및 꼬리표 순환 상태 관리
+        self.active_fence: Optional[Dict] = None  # {'type': 'PUT'/'CALL', 'strike': float, 'tag_id': int}
+        self.profit_buffer: float = 0.0           
         
-        drawdown = (current_equity - initial_equity) / initial_equity
-        if drawdown <= -self.mdd_limit:
-            self.is_shutdown = True
-            return True
-        return False
-
-    async def _execute_liquidity_discovery(self, risk_validator: Any, target_options: Dict[str, Any]) -> List[OrderRequest]:
-        """[목표 B / 원칙 6] 양날개 선 발주 -> 마진 재검증 -> 본대 발주 프로토콜"""
-        wing_code = str(target_options.get("wing", "OPT_WING"))
-        body_code = str(target_options.get("body", "OPT_BODY"))
-
-        # 🛡️ [시장가 주문 원천 차단] 지정가 주문 적용
-        wing_order = OrderRequest(
-            decision_id=uuid4(),
-            client_order_id=uuid4(),
-            instrument_code=wing_code,
-            side="BUY",
-            price=Decimal("1.50"),  # 최우선 호가 지정가
-            qty=10
-        )
-
-        # 🛡️ [Liquidity Discovery Death Trap 방어]
-        # 리스크 에이전트 마진 재검증
-        is_valid = await risk_validator.validate(wing_order)
-        if not is_valid:
-            # 본대(SELL) 발주 차단 및 생성 중이던 날개(BUY) 주문 파기 후 날개 청산 주문 리턴
-            cleanup_order = OrderRequest(
-                decision_id=uuid4(),
-                client_order_id=uuid4(),
-                instrument_code=wing_code,
-                side="SELL",
-                price=Decimal("1.40"),  # 슬리피지 감안 최우선 호가 - N틱 지정가
-                qty=10
-            )
-            return [cleanup_order]
-
-        body_order = OrderRequest(
-            decision_id=uuid4(),
-            client_order_id=uuid4(),
-            instrument_code=body_code,
-            side="SELL",
-            price=Decimal("2.50"),  # 최우선 호가 지정가
-            qty=10
-        )
-        return [wing_order, body_order]
-
-    def _dynamic_scale_by_rv(self, prices_array: np.ndarray) -> Decimal:
-        """[목표 C / 원칙 2, 3] Numpy 수익률 산출 -> RV -> Z-Score > 2.0 시 수량 축소율 반환"""
-        if prices_array.size < 10:
-            return Decimal('1.0')
-
-        # 로그 수익률 계산
-        log_returns = np.diff(np.log(prices_array))
+        # 3. 선물 헷지 및 휩소 방어 락
+        self.futures_hedge_count: int = 0
+        self.max_hedge_allowed: int = 20
+        self.active_hedge: Optional[str] = None   
+        self.hedge_entry_price: float = 0.0
         
-        # 롤링 RV (윈도우 크기 5) 계산
-        window = 5
-        if log_returns.size < window:
-            return Decimal('1.0')
+        self.is_market_opened = False
+        self.last_trading_date = None
 
-        rv_series = []
-        for i in range(len(log_returns) - window + 1):
-            sub_series = log_returns[i : i + window]
-            rv_series.append(np.std(sub_series))
+    def evaluate_strategy(self, current_underlying: float, current_atm: float, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """서버 연동 브릿지 함수"""
+        signals = []
+        current_date = market_data.get("date_str", "UNKNOWN")
+        trend_signal = market_data.get("momentum_confirmed", True) 
+
+        # 날짜 변경 감지
+        if self.last_trading_date != current_date:
+            self.last_trading_date = current_date
+            self.futures_hedge_count = 0
+
+        # 장 개장 세팅 (1번 꼬리표)
+        if not self.is_market_opened:
+            self.base_price = current_atm
+            self.is_market_opened = True
+            open_signals = self.on_market_open(current_underlying)
+            signals.extend(open_signals)
             
-        rv_arr = np.array(rv_series)
-        mean_rv = np.mean(rv_arr)
-        std_rv = np.std(rv_arr)
+        # 틱 메인 루프
+        tick_signals = self.on_tick(current_underlying, trend_signal)
+        signals.extend(tick_signals)
         
-        if std_rv == 0:
-            return Decimal('1.0')
-            
-        current_rv = rv_arr[-1]
-        z_score = float((current_rv - mean_rv) / std_rv)
+        return {"signals": signals}
 
-        # Z-Score > 2.0 시 수량 축소
-        if z_score > 3.0:
-            scale = 0.2
-        elif z_score > 2.0:
-            scale = 0.5
+    def on_market_open(self, current_price: float) -> List[Dict]:
+        """[1단계] 장 시작 직후 넓은 양매수 선제 구축 및 초기 풋매도 가두리 형성"""
+        signals = []
+        call_strike = round((current_price + self.fence_distance)/2.5)*2.5
+        put_strike = round((current_price - self.fence_distance)/2.5)*2.5
+        
+        self.long_strangle_positions.append({'type': 'CALL', 'strike': call_strike, 'qty': 1})
+        self.long_strangle_positions.append({'type': 'PUT', 'strike': put_strike, 'qty': 1})
+        
+        signals.append({
+            "action": "TAIL_DEFENSE_BUILD",
+            "call_strike": call_strike,
+            "put_strike": put_strike,
+            "reason": "[장 시작 세팅] 넓은 양매수(Long Strangle) 구축 완료"
+        })
+        
+        # 하방(풋매도) 가두리 구축
+        self.active_fence = {'type': 'PUT', 'strike': put_strike, 'tag_id': 1}
+        
+        signals.append({
+            "action": "FENCE_BUILD",
+            "type": "PUT",
+            "strike": put_strike,
+            "tag_id": 1,
+            "reason": f"초기 풋매도 가두리 (행사가: {put_strike}, #1)"
+        })
+        
+        logger.info(f"[장 시작 통합 세팅] 넓은 양매수 구축 완료 | 초기 풋매도 가두리 행사가: {put_strike} (#1)")
+        return signals
+
+    def on_tick(self, current_price: float, trend_signal: bool) -> List[Dict]:
+        """[2단계] 틱 스트리밍 루프: 꼬리표 순환 및 미아 방어 헷지"""
+        signals = []
+        if not self.active_fence:
+            return signals
+
+        # [시나리오 A] 상대방 90% 도달 시 순환 (이익 확정)
+        if self.check_opposite_90_reached(current_price):
+            signals.extend(self.execute_fence_rotation(current_price))
+            return signals
+
+        # [시나리오 B] 위협 접근 시 선물 헷지
+        if self.check_returning_90_approaching(current_price):
+            if self.active_hedge is None:
+                if self.futures_hedge_count >= self.max_hedge_allowed:
+                    logger.warning(f"🛡️ [헷지 락 차단] 금일 선물 헷지 {self.max_hedge_allowed}회 소진. 휩소 무시.")
+                    return signals
+                if not trend_signal:
+                    return signals
+                
+                self.futures_hedge_count += 1
+                self.active_hedge = "SELL" if self.active_fence['type'] == 'PUT' else "BUY"
+                self.hedge_entry_price = current_price
+                
+                signals.append({
+                    "action": "FUTURES_ORDER", 
+                    "type": self.active_hedge, 
+                    "price": current_price,
+                    "reason": f"선물 헷지 #{self.futures_hedge_count} 발동"
+                })
+                logger.info(f"🚨 [선물 헷지 발동 #{self.futures_hedge_count}] {self.active_hedge} 체결 (진입: {current_price})")
+            else:
+                signals.extend(self.check_hedge_exit_conditions(current_price))
+                
+        return signals
+
+    def check_opposite_90_reached(self, current_price: float) -> bool:
+        target_90_dist = self.fence_distance * 0.9
+        if self.active_fence['type'] == 'PUT':
+            target_90_price = self.base_price + target_90_dist
+            return current_price >= target_90_price
         else:
-            scale = 1.0
+            target_90_price = self.base_price - target_90_dist
+            return current_price <= target_90_price
 
-        # 🛡️ [Numpy Float 오염 철통 방어]
-        return Decimal(str(round(scale, 4)))
+    def check_returning_90_approaching(self, current_price: float) -> bool:
+        warning_dist = self.fence_distance * 0.9
+        if self.active_fence['type'] == 'PUT':
+            return current_price <= (self.base_price - warning_dist)
+        else:
+            return current_price >= (self.base_price + warning_dist)
 
-    def _trigger_kill_switch(self, portfolio_greeks: Dict[str, Decimal]) -> List[OrderRequest]:
-        """[목표 C / 원칙 5] 위험 한계 도달 시 매도 청산 및 매수 스위칭(방향성 스위치) 주문 반환"""
-        delta = portfolio_greeks.get("Delta", Decimal('0'))
-        gamma = portfolio_greeks.get("Gamma", Decimal('0'))
+    def execute_fence_rotation(self, current_price: float) -> List[Dict]:
+        """[꼬리표 순환 루프] 매수 청산 + 반대편 신규 매도"""
+        signals = []
+        old_tag = self.active_fence['tag_id']
+        old_type = self.active_fence['type']
+        old_strike = self.active_fence['strike']
         
-        orders: List[OrderRequest] = []
+        realized_profit = 2.5 * 50000 
+        self.profit_buffer += realized_profit
         
-        # 위험 한계 감지 임계치 설정 (예: 델타 절대값 10 초과 또는 감마 절대값 2 초과)
-        if abs(delta) > Decimal('10.0') or abs(gamma) > Decimal('2.0'):
-            # 🛡️ [시장가 주문 원천 차단] 지정가 적용
-            # 1. 기존 매도 포지션 청산 (BUY TO COVER)
-            orders.append(
-                OrderRequest(
-                    decision_id=uuid4(),
-                    client_order_id=uuid4(),
-                    instrument_code="OPT_SHORT_POS",
-                    side="BUY",
-                    price=Decimal("3.55"),  # 슬리피지 감안 최우선 호가 + N틱
-                    qty=10
-                )
-            )
-            # 2. 옵션 매수 스위칭 (BUY)
-            orders.append(
-                OrderRequest(
-                    decision_id=uuid4(),
-                    client_order_id=uuid4(),
-                    instrument_code="OPT_LONG_SWITCH",
-                    side="BUY",
-                    price=Decimal("2.10"),
-                    qty=10
-                )
-            )
-        return orders
-
-    def _calculate_futures_hedge_qty(self, current_portfolio_delta: Decimal) -> int:
-        """[목표 D / 원칙 9] 델타 데드밴드 버퍼 확인 후 KOSPI 200 선물 헤지 계약 수 도출"""
-        if abs(current_portfolio_delta) <= self.delta_deadband:
-            return 0
+        logger.info(f"🔄 [순환 루프] 꼬리표 #{old_tag} 청산 | 버퍼 누적: {self.profit_buffer}원")
+        signals.append({
+            "action": "FENCE_CLEAR",
+            "type": old_type,
+            "strike": old_strike,
+            "tag_id": old_tag,
+            "reason": f"꼬리표 #{old_tag} 순환 청산"
+        })
         
-        # 🛡️ [헤징 핑퐁(Whipsaw) 방어] 정수형으로 정확히 반올림하여 반환
-        val = - (current_portfolio_delta / Decimal('1.0'))
-        qty = int(val.to_integral_value(rounding=ROUND_HALF_UP))
-        return qty
+        # 기저점(Base) 재설정 및 반대편 가두리
+        self.base_price = round(current_price/2.5)*2.5 
+        new_type = 'CALL' if old_type == 'PUT' else 'PUT'
+        new_strike = round((self.base_price + self.fence_distance)/2.5)*2.5 if new_type == 'CALL' else round((self.base_price - self.fence_distance)/2.5)*2.5
 
-    async def on_tick(self, tick: MarketTick, current_delta: Decimal, near_iv: Decimal, far_iv: Decimal) -> List[OrderRequest]:
-        """메인 이벤트 루프: 백워데이션(원칙 3) 감지 및 상기 방어 로직 종합 오케스트레이션"""
-        self._tick_history.append(tick)
+        self.active_fence = {'type': new_type, 'strike': new_strike, 'tag_id': old_tag + 1}
         
-        # 1. 글로벌 MDD 셧다운 상태 검사
-        initial_equity = cast(Decimal, self.context.get("initial_equity", Decimal('100000000')))
-        current_equity = cast(Decimal, self.context.get("current_equity", Decimal('100000000')))
+        signals.append({
+            "action": "FENCE_BUILD",
+            "type": new_type,
+            "strike": new_strike,
+            "tag_id": old_tag + 1,
+            "reason": f"신규 꼬리표 #{old_tag + 1} ({new_type})"
+        })
+        logger.info(f"🏗️ [신규 가두리] {new_type}매도 (행사가: {new_strike}, #{old_tag + 1})")
+        return signals
+
+    def check_hedge_exit_conditions(self, current_price: float) -> List[Dict]:
+        signals = []
+        fence_strike = self.active_fence['strike']
         
-        if self._check_global_mdd_shutdown(initial_equity, current_equity) or self.is_shutdown:
-            return []
+        # 3단계: 100% 격돌 (선물+옵션 전량 청산)
+        is_flatten = False
+        if self.active_fence['type'] == 'PUT' and current_price <= fence_strike:
+            is_flatten = True
+        elif self.active_fence['type'] == 'CALL' and current_price >= fence_strike:
+            is_flatten = True
+            
+        if is_flatten:
+            logger.critical("💥 [100% 격돌] 방어선 붕괴. 선물 및 가두리 전량 동시 청산(Flatten)")
+            signals.append({"action": "FLATTEN_ALL", "reason": "100% 방어선 격돌"})
+            self.active_hedge = None
+            self.active_fence = None
+            return signals
 
-        # 2. 백워데이션 감지 (근월물 IV > 원월물 IV 역전 시 신규 진입 차단)
-        # 백워데이션 상태에서는 신규 포지션 구축을 억제하고 델타 헤징 및 킬 스위치 주문만 처리
-        is_backwardation = near_iv > far_iv
+        # 2단계: 1.5pt 반전 (선물만 언와인드)
+        is_reverted = False
+        if self.active_hedge == 'SELL' and (current_price - self.hedge_entry_price) >= 1.5:
+            is_reverted = True
+        elif self.active_hedge == 'BUY' and (self.hedge_entry_price - current_price) >= 1.5:
+            is_reverted = True
+            
+        if is_reverted:
+            logger.info("✅ [1.5pt 반전] 위험 완화. 선물 헷지 단독 청산 해제.")
+            signals.append({
+                "action": "FUTURES_UNWIND",
+                "type": self.active_hedge,
+                "reason": "1.5pt 반전 휩소 탈출"
+            })
+            self.active_hedge = None
 
-        # 3. 킬 스위치 검증
-        greeks = {
-            "Delta": current_delta,
-            "Gamma": cast(Decimal, self.context.get("portfolio_gamma", Decimal('0')))
-        }
-        kill_orders = self._trigger_kill_switch(greeks)
-        if kill_orders:
-            return kill_orders
+        return signals
 
-        # 4. 동적 선물 델타 헤징 검증
-        hedge_qty = self._calculate_futures_hedge_qty(current_delta)
-        if hedge_qty != 0:
-            side = "BUY" if hedge_qty > 0 else "SELL"
-            hedge_order = OrderRequest(
-                decision_id=uuid4(),
-                client_order_id=uuid4(),
-                instrument_code="FUT_KOSPI200",
-                side=side,
-                price=Decimal("350.00"),  # 고정 또는 틱 가격 기준
-                qty=abs(hedge_qty)
-            )
-            return [hedge_order]
-
-        # 5. 신규 매도 진입 시도 (백워데이션일 경우 차단)
-        if is_backwardation:
-            return []
-
-        return []

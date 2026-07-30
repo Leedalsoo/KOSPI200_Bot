@@ -7,13 +7,13 @@ from typing import Dict, Any
 from uuid import uuid4
 from core.contracts import MarketTick, OrderRequest
 from infra.time_service import TimeService
-from strategy.plugins.track2_trap import Track2Trap
+from strategy.plugins.track2_trap import AsymmetricTrapStrategy
 
 def test_market_trigger_bbw_and_zscore() -> None:
     """[원칙 1 검증] BBW 스퀴즈 및 거래량 Z-Score > 3.0 조건 결합 연산 무결성 증명"""
     ts = TimeService(mode="BACKTEST")
     ctx: Dict[str, Any] = {}
-    agent = Track2Trap(ctx, ts)
+    agent = AsymmetricTrapStrategy(ctx, ts)
     
     # 거래량 폭발 배열 연출 (평균 10, 마지막 값 50 -> Z-Score > 3.0 조건 충족)
     vol_data = np.array([10.0]*19 + [50.0])
@@ -26,7 +26,7 @@ def test_market_trigger_bbw_and_zscore_boundary() -> None:
     """[경계값 검증] Z-Score 3.0 문턱값 전후(2.99 vs 3.01)에서의 정밀 사격 및 방아쇠 작동 증명"""
     ts = TimeService(mode="BACKTEST")
     ctx: Dict[str, Any] = {}
-    agent = Track2Trap(ctx, ts)
+    agent = AsymmetricTrapStrategy(ctx, ts)
     bbw_data = np.array([0.05]*20)
     
     # 임의의 가상 거래량 데이터 이력
@@ -46,7 +46,7 @@ def test_iv_skew_mismatch_abort() -> None:
     """[원칙 2 검증] IV 스큐 엇박자 발생 시 가짜 돌파(Whipsaw)로 인지하여 Abort(False)하는지 증명"""
     ts = TimeService(mode="BACKTEST")
     ctx: Dict[str, Any] = {}
-    agent = Track2Trap(ctx, ts)
+    agent = AsymmetricTrapStrategy(ctx, ts)
     
     # OBI를 0.5 초과하게 만들기 위해 bid_qtys의 합을 더 크게 둠 (OBI = 0.66)
     tick = MarketTick("CODE", datetime.now(), Decimal("350.0"), 100, [Decimal("350.0")]*5, [Decimal("351.0")]*5, [10]*5, [2]*5)
@@ -61,7 +61,7 @@ def test_reversal_short_order_tick_quantization() -> None:
     """[원칙 3 검증] 스위칭 매도 주문 생성 시 옵션 틱 사이즈 테이블 연동 및 최소가격 클램핑 증명"""
     ts = TimeService(mode="BACKTEST")
     ctx: Dict[str, Any] = {}
-    agent = Track2Trap(ctx, ts)
+    agent = AsymmetricTrapStrategy(ctx, ts)
     
     # 1. 3.0 미만 가격대: BBO 2.50 -> 2틱(0.02) 감산 -> 2.48
     long_order_1 = OrderRequest(uuid4(), uuid4(), "OPT_TRAP", Decimal("2.50"), 10, "BUY")
@@ -83,7 +83,7 @@ async def test_hardware_cooldown_timer_block() -> None:
     """[원칙 5 검증] 손절 발생 후 15분 하드웨어 쿨다운 시간 내 진입 시도 시 무조건 주문 차단 증명"""
     ts = TimeService(mode="BACKTEST")
     ctx: Dict[str, Any] = {}
-    agent = Track2Trap(ctx, ts)
+    agent = AsymmetricTrapStrategy(ctx, ts)
     
     now = datetime(2026, 7, 17, 10, 0, 0)
     ts.set_virtual_time(now)
@@ -109,7 +109,7 @@ async def test_cooldown_release_and_daily_limit() -> None:
     """[원칙 5 검증] 15분 쿨다운 해제 시 정상 진입 및 일일 최대 2회 도달 시 3회째 기계적 차단 증명"""
     ts = TimeService(mode="BACKTEST")
     ctx: Dict[str, Any] = {}
-    agent = Track2Trap(ctx, ts)
+    agent = AsymmetricTrapStrategy(ctx, ts)
     
     now = datetime(2026, 7, 17, 10, 0, 0)
     ts.set_virtual_time(now)
