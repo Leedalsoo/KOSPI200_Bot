@@ -20,4 +20,5 @@ exclude = [
     "node_modules",
     "scratch",
     "mock_ws_server_refactored.py",
+    "tests",
 ]
