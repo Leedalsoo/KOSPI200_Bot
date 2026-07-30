@@ -30,6 +30,7 @@ jobs:
         run: |
           cd web_interface
           npm install --ignore-scripts
+          chmod -R +x node_modules/.bin || true
       - name: Run Frontend Lint (ESLint 검증)
         run: |
           cd web_interface
