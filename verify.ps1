@@ -1,3 +1,7 @@
+if (Test-Path ".\venv\Scripts\Activate.ps1") {
+    . .\venv\Scripts\Activate.ps1
+}
+
 Write-Output "🔍 1. 문법 및 안티패턴 검사 (Ruff)..."
 ruff check .
 if ($LASTEXITCODE -ne 0) { exit 1 }

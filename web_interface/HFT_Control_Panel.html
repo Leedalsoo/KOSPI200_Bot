@@ -93,13 +93,13 @@
     // 천단위 쉼표 포맷팅 유틸 (십만단위 절사 정렬 적용 - 차트용)
     const formatCurrency = (val) => {
       const num = Math.round(Number(val) / 100000) * 100000;
-      return (num >= 0 ? "₩" : "-₩") + Math.abs(num).toLocaleString('ko-KR');
+      return (num >= 0 ? "+" : "-") + Math.abs(num).toLocaleString('ko-KR') + "원";
     };
 
     // 정밀 원화 포맷팅 유틸 (헤더 수치 변동 감시용)
     const formatCurrencyPrecise = (val) => {
       const num = Math.round(Number(val));
-      return (num >= 0 ? "₩" : "-₩") + Math.abs(num).toLocaleString('ko-KR');
+      return (num >= 0 ? "+" : "-") + Math.abs(num).toLocaleString('ko-KR') + "원";
     };
 
     // 가상 경과 시간 포맷터 (**일 **시간 **분)
@@ -718,7 +718,12 @@
                         </span>
                       </div>
                       <div style={{ fontSize: '11px', color: '#94A3B8', fontFamily: 'monospace' }}>
-                        {log.details || ""}
+                        {(log.details || "")
+                          .replace(/\+₩-/g, "-")
+                          .replace(/\+\s*-/g, "-")
+                          .replace(/\+₩/g, "+")
+                          .replace(/-₩/g, "-")
+                          .replace(/₩/g, "")}
                       </div>
                     </div>
 
@@ -730,6 +735,115 @@
                 );
               })
             )}
+          </div>
+        </section>
+      );
+    });
+
+    // ==============================================================================
+    // 2-C. [신설] 전략 1~8 개별 On/Off 강제 제어 패널 (Strategy Toggle Control Panel)
+    // ==============================================================================
+    const StrategyToggleControlPanel = memo(({ enabledStrategies, onToggleStrategy, isConnected }) => {
+      const defaultFlags = {
+        track1: true, track2: true, track3: true, track4: true,
+        track5: true, track6: true, track7: true, track8: true
+      };
+      const flags = { ...defaultFlags, ...(enabledStrategies || {}) };
+
+      const tracks = [
+        { id: 'track1', name: 'Track 1: Tail Defense', desc: '테일 방어 양매수' },
+        { id: 'track2', name: 'Track 2: Asymmetric Trap', desc: '비대칭 트랩 세팅' },
+        { id: 'track3', name: 'Track 3: Stat Arbitrage', desc: '선물/옵션 차익' },
+        { id: 'track4', name: 'Track 4: Gamma Scalping', desc: '동적 감마 스캘핑' },
+        { id: 'track5', name: 'Track 5: Gap Protocol', desc: '시가 갭 평균복귀' },
+        { id: 'track6', name: 'Track 6: Daily 0DTE', desc: '당일 옵션 헷지' },
+        { id: 'track7', name: 'Track 7: Weekly Insurance', desc: '주간 테일 보험' },
+        { id: 'track8', name: 'Track 8: Monthly Strangle', desc: '월간 넓은 양매수' },
+      ];
+
+      return (
+        <section style={{
+          backgroundColor: '#1E293B',
+          borderRadius: '16px',
+          border: '1px solid #334155',
+          padding: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          height: '320px',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden'
+        }}>
+          <h2 style={{ fontSize: '13px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.075em', color: '#94A3B8', margin: '0 0 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>🎯 Strategy Execution On/Off Control (전략1~8 개별 강제 제어)</span>
+            </span>
+            <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#34D399', border: '1px solid #10B981', fontFamily: 'monospace' }}>
+              REALTIME TOGGLE
+            </span>
+          </h2>
+
+          <div style={{
+            flex: 1,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '10px',
+            overflowY: 'auto'
+          }}>
+            {tracks.map((t) => {
+              const isOn = flags[t.id] !== false;
+              return (
+                <div key={t.id} style={{
+                  backgroundColor: '#0F172A',
+                  borderRadius: '10px',
+                  border: `1px solid ${isOn ? '#10B981' : '#334155'}`,
+                  padding: '10px 12px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  transition: 'all 0.2s ease-in-out',
+                  opacity: isOn ? 1 : 0.6
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 800, color: isOn ? '#38BDF8' : '#64748B', fontFamily: 'monospace' }}>
+                      {t.id.toUpperCase()}
+                    </span>
+                    <button
+                      disabled={!isConnected}
+                      onClick={() => onToggleStrategy(t.id, !isOn)}
+                      style={{
+                        position: 'relative',
+                        width: '36px',
+                        height: '20px',
+                        borderRadius: '10px',
+                        backgroundColor: isOn ? '#10B981' : '#475569',
+                        border: 'none',
+                        cursor: isConnected ? 'pointer' : 'not-allowed',
+                        transition: 'background-color 0.2s',
+                        padding: 0
+                      }}
+                    >
+                      <span style={{
+                        position: 'absolute',
+                        top: '2px',
+                        left: isOn ? '18px' : '2px',
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        backgroundColor: '#FFFFFF',
+                        transition: 'left 0.2s',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.4)'
+                      }} />
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: '#F8FAFC', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {t.name.split(': ')[1]}
+                  </div>
+                  <div style={{ fontSize: '9px', color: '#94A3B8', marginTop: '2px' }}>
+                    {t.desc}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
       );
@@ -1171,9 +1285,27 @@
         "Track8 (Monthly)": 0.0
       });
 
+      const [enabledStrategies, setEnabledStrategies] = useState({
+        track1: true, track2: true, track3: true, track4: true,
+        track5: true, track6: true, track7: true, track8: true
+      });
+
       const currentSessionIdRef = useRef(null);
       const reconnectCount = useRef(0);
       const wsRef = useRef(null);
+
+      const handleToggleStrategy = useCallback((trackId, newState) => {
+        setEnabledStrategies(prev => {
+          const updated = { ...prev, [trackId]: newState };
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({
+              action: "update_strategy_flags",
+              enabled_strategies: updated
+            }));
+          }
+          return updated;
+        });
+      }, []);
 
       const handleStartBot = useCallback(() => {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -1183,8 +1315,11 @@
 
       const connect = useCallback(() => {
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.host || 'localhost:8082'; // Phase 4: V2 Server 포트
-        const wsUrl = `${wsProtocol}//${host}/ws`;
+        let host = window.location.host;
+        if (!host || host === 'localhost' || host.includes('3000') || host.includes('8082')) {
+          host = 'localhost:8080';
+        }
+        const wsUrl = `${wsProtocol}//${host}`;
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
@@ -1328,6 +1463,9 @@
             }
             if (parsedData.strategyPnL !== undefined) {
               setStrategyPnL(parsedData.strategyPnL);
+            }
+            if (parsedData.enabledStrategies !== undefined) {
+              setEnabledStrategies(parsedData.enabledStrategies);
             }
 
 
@@ -1817,6 +1955,13 @@
 
             {/* 📜 [신설] 전략별 체결 & 청산 완료 히스토리 판넬 (Completed Trades History) */}
             <CompletedTradesHistory eventLogs={eventLogs} />
+
+            {/* 🎯 [신설] 전략 1~8 개별 On/Off 강제 제어 패널 (Strategy Execution On/Off Control) */}
+            <StrategyToggleControlPanel
+              enabledStrategies={enabledStrategies}
+              onToggleStrategy={handleToggleStrategy}
+              isConnected={isConnected}
+            />
 
 
             {/* 📈 전략별 수수료 포함 순손익 그래프 — 🔇 HIDDEN (나중에 활용 가능) */}

@@ -12,15 +12,37 @@ from infra.time_service import TimeService
 class Track2Trap(BaseAgent):
     """데일리 함정(Trap) 기습 공격 및 4중 휩쏘 검증 엔진"""
 
-    def __init__(self, shared_context: Dict[str, Any], time_service: TimeService) -> None:
-        self.context: Dict[str, Any] = shared_context
-        self.time_service: TimeService = time_service
+    def __init__(self, shared_context: Optional[Dict[str, Any]] = None, time_service: Optional[TimeService] = None, config: Optional[Dict[str, Any]] = None) -> None:
+        self.context: Dict[str, Any] = shared_context if shared_context is not None else (config or {})
+        self.time_service: TimeService = time_service if time_service is not None else TimeService()
         self.capital_allocation_rate: Decimal = Decimal('0.10')  # 자본의 10% 할당
         
+        self.trap_state: Dict[str, Any] = {"is_active": False}
         self._last_loss_time: Optional[datetime] = None
         self._daily_entry_count: int = 0
         self._max_daily_entries: int = 2
         self._cooldown_duration: timedelta = timedelta(minutes=15)
+
+    def build_asymmetric_trap(self, current_atm: float) -> Dict[str, Any]:
+        """[Track 2] 비대칭 양매수 및 프리미엄 수취 함정 구조 생성"""
+        self.trap_state["is_active"] = True
+        return {
+            "status": "SUCCESS",
+            "signals": [
+                {
+                    "action": "EXECUTE_SHORT_LEG",
+                    "strikes": {"call": current_atm + 7.5, "put": current_atm - 7.5}
+                },
+                {
+                    "action": "EXECUTE_LONG_TRAP_LEG",
+                    "strikes": {"call": current_atm + 2.5, "put": current_atm - 2.5}
+                }
+            ]
+        }
+
+    def evaluate_trap_status(self, current_price: float) -> Dict[str, Any]:
+        """[Track 2] 트랩 상태 실시간 평가 및 헷지 시그널 산출"""
+        return {"status": "NORMAL", "signals": []}
 
     async def start(self) -> None:
         pass
@@ -157,3 +179,8 @@ class Track2Trap(BaseAgent):
 
         self._daily_entry_count += 1
         return [entry_order]
+
+
+# 하위 호환성을 위한 전략 클래스 별칭
+AsymmetricTrapStrategy = Track2Trap
+

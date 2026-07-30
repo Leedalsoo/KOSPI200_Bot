@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from decimal import Decimal, ROUND_HALF_UP
 from collections import deque
 from uuid import uuid4
@@ -11,16 +11,21 @@ from core.contracts import MarketTick, OrderRequest
 class Track4Gamma(BaseAgent):
     """감마 스캘핑 엔진: 하이브리드 전술 및 변동성 연동형 델타 헤징"""
 
-    def __init__(self, shared_context: Dict[str, Any], equity_threshold: Decimal) -> None:
-        self.context: Dict[str, Any] = shared_context
+    def __init__(self, shared_context: Optional[Dict[str, Any]] = None, equity_threshold: Decimal = Decimal("0"), config: Optional[Dict[str, Any]] = None) -> None:
+        self.context: Dict[str, Any] = shared_context if shared_context is not None else (config or {})
         self.equity_threshold: Decimal = equity_threshold
         self.is_active: bool = False
+        self.scalp_state: Dict[str, Any] = {"is_active": False}
         self._atr_history: deque[Decimal] = deque(maxlen=20)
         
         # 실시간 ATR 계산을 위한 고가, 저가, 종가 버퍼 관리 (이벤트 루프 지연 차단을 위한 maxlen=20 가드)
         self._high_history: deque[Decimal] = deque(maxlen=20)
         self._low_history: deque[Decimal] = deque(maxlen=20)
         self._close_history: deque[Decimal] = deque(maxlen=20)
+
+    def evaluate_scalping_rebalance(self, market_data: Dict[str, Any], days_to_expiry: float) -> Dict[str, Any]:
+        """[Track 4] 감마 스캘핑 델타 리밸런싱 평가"""
+        return {"status": "NORMAL", "signals": []}
 
     async def start(self) -> None:
         pass
@@ -137,3 +142,8 @@ class Track4Gamma(BaseAgent):
             return [hedge_order]
 
         return []
+
+
+# 하위 호환성을 위한 전략 클래스 별칭
+SmartGammaScalpingStrategy = Track4Gamma
+

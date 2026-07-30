@@ -459,6 +459,7 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
     global price_history_60, spread_history_120
     global strategy_realized_pnl  # Phase 2.4: 팩토리 재생성을 위해 global 선언 필수
     global SESSION_ID, already_rolled_this_month  # Phase 1.1 + 2.1: 세션 UUID 갱신 및 롤오버 플래그
+    global enabled_strategies  # 전략 1~8 개별 온오프 강제 토글 플래그
 
     # 🔑 [Phase 2.1] 세션 UUID 재생성 — 프론트엔드가 세션 경계를 감지할 수 있도록
     SESSION_ID = str(uuid.uuid4())
@@ -466,6 +467,7 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
 
     # 🛡️ [Phase 1.1] 만기 롤오버 1회 실행 플래그 리셋
     already_rolled_this_month = False
+    enabled_strategies = {f"track{i}": True for i in range(1, 9)}
 
     track3_entry_price = 0.0
     track3_entry_qty = 0
@@ -608,6 +610,13 @@ async def handler(websocket: Any) -> None:
                     if not autobot_active:
                         autobot_active = True
                         logger.info("🚀 [AUTO BOT START] 대시보드 커맨드 수신: 오토봇 알고리즘 매매가 활성화되었습니다!")
+
+                elif data.get("action") == "update_strategy_flags":
+                    flags = data.get("enabled_strategies", {})
+                    for k, v in flags.items():
+                        if k in enabled_strategies:
+                            enabled_strategies[k] = bool(v)
+                    logger.info("🎯 [STRATEGY CONTROL] 대시보드 커맨드 수신: 전략 활성화 상태 변경 %s", enabled_strategies)
 
                 # ── 🎛️ [대시보드 실시간 설정 수신] ──
                 elif data.get("action") == "update_settings":
@@ -1821,7 +1830,7 @@ async def simulation_loop() -> None:  # noqa: C901
 
             track3_override = False
             # ── 10.2.5 [NEW] Track 3: Statistical Arbitrage (1순위 제어권) - 활성화 ──
-            if autobot_active:
+            if autobot_active and enabled_strategies.get("track3", True):
                 price_history_60.append(current_price)
                 if len(price_history_60) == 60:
                     ma_60 = np.mean(price_history_60)
@@ -1902,14 +1911,15 @@ async def simulation_loop() -> None:  # noqa: C901
                                     # 선물 거래는 매 틱 MTM 정산되므로 청산 시 전체 차익을 더하면 이중 계상이 됨.
                                     track3_entry_qty = 0
                                     track3_net_qty = 0
+                                    pnl_str = f"+{realized_pnl:,.0f}원" if realized_pnl >= 0 else f"-{abs(realized_pnl):,.0f}원"
                                     event_logs.append({
                                         "seq": seq, "date": date_str, "time": time_str,
                                         "event": f"Track 3 Arb Close ({t_type})",
-                                        "details": f"{signal.get('reason')} / 실현손익: +₩{realized_pnl:,.0f}"
+                                        "details": f"{signal.get('reason')} / 실현손익: {pnl_str}"
                                     })
 
             # ── 10.2.1 [NEW] Track 5: Gap Protocol Mean Reversion Monitoring ──
-            if autobot_active and track5_strategy and track5_strategy.gap_state["is_active"]:
+            if autobot_active and enabled_strategies.get("track5", True) and track5_strategy and track5_strategy.gap_state["is_active"]:
                 gap_eval = track5_strategy.evaluate_mean_reversion(current_price)
                 if gap_eval.get("status") in ["PROFIT_TAKEN", "STOP_LOSS", "TIMEOUT"]:
                     for signal in gap_eval.get("signals", []):
@@ -1951,11 +1961,12 @@ async def simulation_loop() -> None:  # noqa: C901
                             insurance_budget_pool += allocated_budget
                             logger.info("💰 [CASH FLOW] Track 5 실현수익의 30%%(₩%s)를 테일 보험 예산 풀로 적립! (가용 예산: ₩%s)", f"{allocated_budget:,.0f}", f"{insurance_budget_pool:,.0f}")
                         
-                        logger.info("💰 [TRACK 5 GAP CLOSE] %s | 실현손익: +₩%s", reason, f"{realized_pnl:,.0f}")
+                        pnl_fmt = f"+{realized_pnl:,.0f}원" if realized_pnl >= 0 else f"-{abs(realized_pnl):,.0f}원"
+                        logger.info("💰 [TRACK 5 GAP CLOSE] %s | 실현손익: %s", reason, pnl_fmt)
                         event_logs.append({
                             "seq": seq, "date": date_str, "time": time_str,
                             "event": "Track 5 Gap Close",
-                            "details": f"{reason} / 실현손익: +₩{realized_pnl:,.0f}"
+                            "details": f"{reason} / 실현손익: {pnl_fmt}"
                         })
                     track5_active_qty = 0
 
@@ -1968,7 +1979,7 @@ async def simulation_loop() -> None:  # noqa: C901
                 is_week_end = (calendar_sim.current_time.weekday() == 4)
 
                 # 1) 전략 6 (데일리 보험 봇) 진입 평가 (데일리 센서 시그널 감시)
-                if track6_strategy and not track6_strategy.insurance_state["is_active"]:
+                if enabled_strategies.get("track6", True) and track6_strategy and not track6_strategy.insurance_state["is_active"]:
                     if daily_state.get("daily_vol_alert"):
                         t6_res = track6_strategy.evaluate_insurance_buy(
                             current_price=current_price,
@@ -2031,14 +2042,15 @@ async def simulation_loop() -> None:  # noqa: C901
                             strategy_pnl_tracker["Track6 (Daily)"] += net_profit
                             
                             logger.warning("💰 [DAILY INSURANCE CUTOFF] 15:15 데일리 보험 정산 청산 완료! (정산금액: ₩%s, 순손익: ₩%s)", f"{total_realized:,.0f}", f"{net_profit:,.0f}")
+                            pnl_fmt = f"+{total_realized:,.0f}원" if total_realized >= 0 else f"-{abs(total_realized):,.0f}원"
                             event_logs.append({
                                 "seq": seq, "date": date_str, "time": time_str,
                                 "event": "Track 6 Daily Insurance Close",
-                                "details": f"만기 강제청산 실행 / 정산이익: +₩{total_realized:,.0f}"
+                                "details": f"만기 강제청산 실행 / 정산이익: {pnl_fmt}"
                             })
 
                 # 3) 전략 7 (위클리 보험 봇) 진입 평가 (위클리 센서 시그널 감시)
-                if track7_strategy and not track7_strategy.insurance_state["is_active"]:
+                if enabled_strategies.get("track7", True) and track7_strategy and not track7_strategy.insurance_state["is_active"]:
                     if weekly_state.get("weekly_entry_ready"):
                         t7_res = track7_strategy.evaluate_insurance_buy(
                             current_price=current_price,
@@ -2085,10 +2097,12 @@ async def simulation_loop() -> None:  # noqa: C901
                             net_profit = realized_amount - track7_strategy.insurance_state.get("premium_spent", 350000.0)
                             strategy_pnl_tracker["Track7 (Weekly)"] += net_profit
                             logger.warning("🎉 [WEEKLY INSURANCE PROFIT REALIZATION] 위클리 옵션 동적 익절 청산 완료! (실현이익: ₩%s, 순손익: ₩%s)", f"{realized_amount:,.0f}", f"{net_profit:,.0f}")
+                            realized_fmt = f"+{realized_amount:,.0f}원" if realized_amount >= 0 else f"-{abs(realized_amount):,.0f}원"
+                            net_fmt = f"+{net_profit:,.0f}원" if net_profit >= 0 else f"-{abs(net_profit):,.0f}원"
                             event_logs.append({
                                 "seq": seq, "date": date_str, "time": time_str,
                                 "event": "Track 7 Weekly Insurance Profit Realization",
-                                "details": f"동적 장중 익절 성공! 실현이익: +₩{realized_amount:,.0f} (순손익: +₩{net_profit:,.0f})"
+                                "details": f"동적 장중 익절 성공! 실현이익: {realized_fmt} (순손익: {net_fmt})"
                             })
                     else:
                         t7_flat = track7_strategy.evaluate_expiry_cutoff(time_str_val, is_week_end)
@@ -2121,14 +2135,15 @@ async def simulation_loop() -> None:  # noqa: C901
                             strategy_pnl_tracker["Track7 (Weekly)"] += net_profit
                             
                             logger.warning("💰 [WEEKLY INSURANCE CUTOFF] 15:15 위클리 보험 정산 청산 완료! (정산금액: ₩%s, 순손익: ₩%s)", f"{total_realized:,.0f}", f"{net_profit:,.0f}")
+                            pnl_fmt = f"+{total_realized:,.0f}원" if total_realized >= 0 else f"-{abs(total_realized):,.0f}원"
                             event_logs.append({
                                 "seq": seq, "date": date_str, "time": time_str,
                                 "event": "Track 7 Weekly Insurance Close",
-                                "details": f"만기 강제청산 실행 / 정산이익: +₩{total_realized:,.0f}"
+                                "details": f"만기 강제청산 실행 / 정산이익: {pnl_fmt}"
                             })
 
                 # 5) [NEW] 전략 8 (월간 넓은 양매수 봇) 진입 평가
-                if track8_strategy and not track8_strategy.strangle_state["is_active"]:
+                if enabled_strategies.get("track8", True) and track8_strategy and not track8_strategy.strangle_state["is_active"]:
                     t8_res = track8_strategy.evaluate_entry(
                         dte=simulated_days_to_expiry,
                         budget=insurance_budget_pool,
@@ -2182,16 +2197,15 @@ async def simulation_loop() -> None:  # noqa: C901
                                                         # 자본에 정산금 회수 적용
                             current_capital += total_realized
                             net_profit = total_realized - signal.get("premium_spent")
-                            strategy_pnl_tracker["Track8 (Monthly)"] += net_profit
-                            logger.warning("💰 [MONTHLY STRANGLE CUTOFF] D-3 월간 양매수 청산 완료! (정산회수금: ₩%s, 순손익: ₩%s)", f"{total_realized:,.0f}", f"{net_profit:,.0f}")
+                            pnl_str = f"+{total_realized:,.0f}원" if total_realized >= 0 else f"-{abs(total_realized):,.0f}원"
                             event_logs.append({
                                  "seq": seq, "date": date_str, "time": time_str,
                                  "event": "Track 8 Monthly Strangle Cutoff",
-                                 "details": f"D-3 강제 청산 집행 / 정산회수: +₩{total_realized:,.0f}"
+                                 "details": f"D-3 강제 청산 집행 / 정산회수: {pnl_str}"
                             })
 
             # ── 10.3 [NEW] Track 1: Advanced Dual-Side Dynamic Strangle & Trend Alpha ──
-            if autobot_active and not track3_override:
+            if autobot_active and not track3_override and enabled_strategies.get("track1", True):
                 # 1) 가상의 market_data (지표 필터 및 Whipsaw 방어막 시간 정보) 조립
                 mock_market_data = {
                     "vkospi_expanding": active_vol > BASE_VOLATILITY * 1.1,
@@ -2290,7 +2304,7 @@ async def simulation_loop() -> None:  # noqa: C901
                         })
 
             # ── 10.4 [NEW] Track 2: Asymmetric Trap & Volatility Funding ──
-            if autobot_active and not track3_override:
+            if autobot_active and not track3_override and enabled_strategies.get("track2", True):
                 current_atm = round(current_price / 2.5) * 2.5
                 
                 # 만기 잔여일이 3일 이상일 때 트랩 설치를 트리거 (청산 후 재진입 가능)
@@ -2377,7 +2391,7 @@ async def simulation_loop() -> None:  # noqa: C901
                     pass
 
             # ── 10.5 [NEW] Track 4: Smart Gamma Scalping & D-3 Attack Mode ──
-            if autobot_active and not track3_override:
+            if autobot_active and not track3_override and enabled_strategies.get("track4", True):
                 current_atm = round(current_price / 2.5) * 2.5
                 
                 # 만기 잔여일이 3일 이상일 때 ATM 양매수 베이스캠프 주입 (청산 후 재진입 가능)
@@ -2476,10 +2490,11 @@ async def simulation_loop() -> None:  # noqa: C901
                             "이익 실현액: +₩%s. 오늘 장마감 전(15:15~15:20)에 신규 보험에 재가입합니다.",
                             pos_type, f"{realized_pnl:,.0f}"
                         )
+                        pnl_fmt = f"+{realized_pnl:,.0f}원" if realized_pnl >= 0 else f"-{abs(realized_pnl):,.0f}원"
                         event_logs.append({
                             "seq": seq, "date": date_str, "time": time_str,
                             "event": f"보험 이익 수취 청산 ({pos_type})",
-                            "details": f"Strike: {strike_val}, 실현이익: +₩{realized_pnl:,.0f}"
+                            "details": f"Strike: {strike_val}, 실현이익: {pnl_fmt}"
                         })
 
             # ── 11. 이익 50% 적립 / 손실 완충 대칭 알고리즘 ─────────────
@@ -2799,6 +2814,7 @@ async def simulation_loop() -> None:  # noqa: C901
                 "futuresQty":            int(current_position_qty - track3_net_qty),
                 "frictionCost":          round(daily_friction_cost, 2),
                 "budgetPool":            round(insurance_budget_pool, 2),
+                "enabledStrategies":     enabled_strategies,
                 "eventLogs":             event_logs[-30:],
             }
 
