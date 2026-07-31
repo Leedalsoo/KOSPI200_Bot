@@ -21,8 +21,8 @@ class GapProtocolStrategy:
         self.z_threshold = self.params.get("z_threshold", 1.5)
         # 옵션 펜스 압축률 (원래 너비에서 좁힐 거리 pt)
         self.fence_compress_pt = self.params.get("fence_compress_pt", 2.5)
-        # 갭 회귀 손절선 (포인트 단위)
-        self.stop_loss_pts = self.params.get("stop_loss_pts", 3.0)
+        # 갭 회귀 손절선 (포인트 단위: 1.5pt 하드 손절 가드)
+        self.stop_loss_pts = self.params.get("stop_loss_pts", 1.5)
         
         self.reset_state()
         logger.info("Gap Protocol Strategy (Strategy 5) Initialized.")

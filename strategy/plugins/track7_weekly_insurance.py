@@ -34,9 +34,11 @@ class WeeklyTailInsuranceBot:
                                current_price: float, 
                                budget: float, 
                                date_str: str, 
-                               is_new_week_start: bool) -> Dict[str, Any]:
+                               is_new_week_start: bool,
+                               active_vol: float = 1.0) -> Dict[str, Any]:
         """
         [주간 상장 첫날 및 예산 풀 범위 내 위클리 보험 진입 판단]
+        - VKOSPI / active_vol < 1.0 (극저변동성) 구간에서는 프리미엄 유출 방지를 위해 50% 예산 투입 절감
         """
         if self.insurance_state["is_active"]:
             return {"status": "ALREADY_ACTIVE", "signals": []}
@@ -45,8 +47,9 @@ class WeeklyTailInsuranceBot:
         if not is_new_week_start:
             return {"status": "NOT_NEW_WEEK", "signals": []}
 
-        # 2. 예산 확인 (콜/풋 각각 0.70pt라 가정하면 총 1.4pt = 35만 원 수준 확보 필수)
-        estimated_cost = 1.4 * 250000.0 * self.insurance_qty
+        # 2. VKOSPI / active_vol 극저변동성 구간 50% 절감 스케일 적용
+        vol_scale = 0.5 if active_vol < 1.0 else 1.0
+        estimated_cost = 1.4 * 250000.0 * self.insurance_qty * vol_scale
         if budget < estimated_cost:
             return {"status": "NO_BUDGET", "signals": []}
 

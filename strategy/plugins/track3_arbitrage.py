@@ -15,7 +15,7 @@ class StatisticalArbitrageStrategy:
     """
     def __init__(self, config: Dict[str, Any]):
         self.params = config.get("strategies", {}).get("strategy_3", {}).get("params", {})
-        self.z_entry_threshold = self.params.get("z_score_threshold", 1.5) # Relaxed from 2.5 to 1.5 for active entries
+        self.z_entry_threshold = self.params.get("z_score_threshold", 1.8) # Increased to 1.8 to avoid noise and cut friction fees
         self.z_exit_threshold = self.params.get("z_exit_threshold", 0.2) # Relaxed from 0.0 to 0.2 for quick rotation
         
         # 내부 상태 관리

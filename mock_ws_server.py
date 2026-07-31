@@ -2063,7 +2063,8 @@ async def simulation_loop() -> None:  # noqa: C901
                             current_price=current_price,
                             budget=insurance_budget_pool,
                             date_str=date_str,
-                            is_new_week_start=is_new_week_start
+                            is_new_week_start=is_new_week_start,
+                            active_vol=active_vol
                         )
                     else:
                         t7_res = {"status": "STANDBY"}
