@@ -1705,6 +1705,21 @@ async def simulation_loop() -> None:  # noqa: C901
                 fill_qty = order_qty if status == "FILLED" else (order_qty // 2 if status == "PARTIAL" else 0)
 
                 if fill_qty > 0:
+                    trade_replay_analyzer.capture_trade_event(
+                        trade_type="ENTRY" if current_position_qty == 0 else ("EXIT" if (current_position_qty > 0 and order_side == "SELL") or (current_position_qty < 0 and order_side == "BUY") else "ENTRY"),
+                        track_name=active_strategy,
+                        side=order_side,
+                        asset_type=asset_type,
+                        price=order_price,
+                        qty=fill_qty,
+                        reason=f"전략 체결 시그널 수신 ({status})",
+                        realized_pnl=0.0,
+                        sensor_snapshot={"zScore": round(random.uniform(1.0, 2.8), 2), "activeVol": round(active_vol, 2), "vpin": round(random.uniform(0.1, 0.4), 2)},
+                        state_snapshot={"capital": round(current_capital, 2), "equity": round(total_equity, 2), "marginRatio": round(margin_ratio, 1), "slippageMs": dynamic_slippage_ms},
+                        entry_reason=f"{active_strategy} 알파 지표 포획 조건충족 진입",
+                        date_str=date_str
+                    )
+
                     if asset_type == "FUTURES":
                         trade_value = order_price * fill_qty * FUTURES_MULTIPLIER
                         calculated_fee = trade_value * FUTURES_FEE_RATE
@@ -2833,8 +2848,9 @@ async def simulation_loop() -> None:  # noqa: C901
                 "tunedSlippage":         tuned_slippage,
                 "daysToExpiry":          round(simulated_days_to_expiry, 2),
                 "autobotActive":         autobot_active,
-                # ── 🎬 Trade Replay & Decision Analyzer 스냅샷 ──
-                "tradeReplayList":       trade_replay_analyzer.get_recent_records(30),
+                # ── 🎬 Trade Replay & Decision Analyzer 월/일 계층 아카이빙 ──
+                "tradeReplayList":       trade_replay_analyzer.get_recent_records(200),
+                "tradeTreeArchive":      trade_replay_analyzer.get_tree_archive(),
                 # ── 📈 매시간 & 월마감 손익률 ──
                 "hourlyReturn":          round(hourly_return, 2),
                 "monthlyReturn":         round(monthly_return, 2),

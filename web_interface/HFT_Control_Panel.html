@@ -1217,8 +1217,39 @@
     // ==============================================================================
     // 4.5 Trade Replay & Decision Analyzer (매매 리플레이 및 의사결정 분석기) 컴포넌트
     // ==============================================================================
-    const TradeReplayPanel = ({ tradeReplayList, selectedReplayTrade, setSelectedReplayTrade }) => {
-      const list = tradeReplayList || [];
+    // ==============================================================================
+    // 4.5 Trade Replay & Decision Analyzer (매매 리플레이 및 의사결정 분석기) 컴포넌트
+    // - 월별(Month) -> 일자별(Date) -> 저장된 거래 분석 스크롤 리스트 탐색 UI
+    // ==============================================================================
+    const TradeReplayPanel = ({ tradeReplayList, tradeTreeArchive, selectedReplayTrade, setSelectedReplayTrade }) => {
+      const tree = tradeTreeArchive || {};
+      const fullList = tradeReplayList || [];
+
+      // 계층 탐색 상태 (기본값: 전체/최신)
+      const months = Object.keys(tree).sort().reverse();
+      const [selectedMonth, setSelectedMonth] = useState(months[0] || 'ALL');
+      
+      const availableDates = selectedMonth !== 'ALL' && tree[selectedMonth] 
+        ? Object.keys(tree[selectedMonth]).sort().reverse() 
+        : [];
+      const [selectedDate, setSelectedDate] = useState(availableDates[0] || 'ALL');
+
+      // 선택된 월/일자에 따른 필터링된 거래 리스트
+      const getFilteredTrades = () => {
+        if (selectedMonth === 'ALL') return fullList;
+        if (!tree[selectedMonth]) return fullList;
+        if (selectedDate === 'ALL') {
+          // 해당 월의 모든 일자 합산
+          let allInMonth = [];
+          Object.values(tree[selectedMonth]).forEach(arr => {
+            allInMonth = allInMonth.concat(arr);
+          });
+          return allInMonth;
+        }
+        return tree[selectedMonth][selectedDate] || [];
+      };
+
+      const displayList = getFilteredTrades();
 
       return (
         <section style={{
@@ -1231,44 +1262,127 @@
           flexDirection: 'column',
           gap: '16px'
         }}>
+          {/* 상단 타이틀 및 스태츠 */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <h2 style={{ fontSize: '18px', fontWeight: 'bold', color: '#38BDF8', margin: 0 }}>
                 🎬 Trade Replay & Decision Analyzer
               </h2>
               <span style={{ fontSize: '11px', color: '#94A3B8', backgroundColor: '#0F172A', padding: '4px 10px', borderRadius: '12px', border: '1px solid #334155' }}>
-                매매 리플레이 & 의사결정 자동 분석기
+                매매 리플레이 & 계층형 사후 분석기
               </span>
             </div>
-            <span style={{ fontSize: '12px', color: '#64748B' }}>
-              총 {list.length}건 분석 수집됨 (최근 거래 클릭 시 7대 스냅샷 복기)
-            </span>
+            <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', gap: '16px' }}>
+              <span>누적 월: <strong style={{ color: '#F1F5F9' }}>{months.length}개월</strong></span>
+              <span>수집된 거래: <strong style={{ color: '#38BDF8' }}>{fullList.length}건</strong></span>
+            </div>
           </div>
 
-          {/* 리플레이 거래 목록 테이블 */}
-          <div style={{ overflowX: 'auto', maxHeight: '220px', borderRadius: '8px', border: '1px solid #334155', backgroundColor: '#0F172A' }}>
+          {/* 📅 월별(Month) & 일자별(Date) 계층 탐색 탭 컨트롤러 */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', padding: '12px', backgroundColor: '#0F172A', borderRadius: '10px', border: '1px solid #334155', alignItems: 'center' }}>
+            
+            {/* 1. 월(Month) 선택 selector */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#94A3B8' }}>📅 월(Month):</span>
+              <select
+                value={selectedMonth}
+                onChange={(e) => {
+                  setSelectedMonth(e.target.value);
+                  setSelectedDate('ALL');
+                }}
+                style={{
+                  backgroundColor: '#1E293B',
+                  color: '#38BDF8',
+                  border: '1px solid #38BDF8',
+                  borderRadius: '6px',
+                  padding: '4px 10px',
+                  fontSize: '12px',
+                  fontWeight: 800,
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="ALL">전체 월 (All Months)</option>
+                {months.map(m => (
+                  <option key={m} value={m}>{m}월</option>
+                ))}
+              </select>
+            </div>
+
+            {/* 2. 일자(Date) 칩/버튼 리스트 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', flex: 1 }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#94A3B8' }}>📆 일자(Date):</span>
+              <button
+                onClick={() => setSelectedDate('ALL')}
+                style={{
+                  padding: '4px 10px',
+                  fontSize: '11px',
+                  borderRadius: '4px',
+                  border: 'none',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  backgroundColor: selectedDate === 'ALL' ? '#38BDF8' : '#1E293B',
+                  color: selectedDate === 'ALL' ? '#0F172A' : '#94A3B8'
+                }}
+              >
+                전체 일자
+              </button>
+              {availableDates.map(d => {
+                const count = tree[selectedMonth]?.[d]?.length || 0;
+                const isSelected = selectedDate === d;
+                return (
+                  <button
+                    key={d}
+                    onClick={() => setSelectedDate(d)}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: '11px',
+                      borderRadius: '4px',
+                      border: isSelected ? '1px solid #38BDF8' : '1px solid #334155',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      backgroundColor: isSelected ? 'rgba(56, 189, 248, 0.2)' : '#1E293B',
+                      color: isSelected ? '#38BDF8' : '#CBD5E1'
+                    }}
+                  >
+                    {d} ({count}건)
+                  </button>
+                );
+              })}
+            </div>
+
+          </div>
+
+          {/* 📜 실시간 스크롤 가능한 거래 분석 목록 테이블 (Scrollable Table) */}
+          <div style={{
+            overflowX: 'auto',
+            overflowY: 'auto',
+            maxHeight: '350px',
+            borderRadius: '8px',
+            border: '1px solid #334155',
+            backgroundColor: '#0F172A'
+          }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
-              <thead>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
                 <tr style={{ backgroundColor: '#1E293B', color: '#94A3B8', borderBottom: '1px solid #334155' }}>
                   <th style={{ padding: '10px 12px' }}>시각</th>
                   <th style={{ padding: '10px 12px' }}>구분</th>
                   <th style={{ padding: '10px 12px' }}>전략 트랙</th>
                   <th style={{ padding: '10px 12px' }}>진입/청산가</th>
                   <th style={{ padding: '10px 12px' }}>실현 손익</th>
-                  <th style={{ padding: '10px 12px' }}>규칙 준수 자동 판정</th>
+                  <th style={{ padding: '10px 12px' }}>규칙 준수 판정</th>
                   <th style={{ padding: '10px 12px' }}>AI 타이밍 평가</th>
-                  <th style={{ padding: '10px 12px' }}>상세 복기</th>
+                  <th style={{ padding: '10px 12px' }}>상세 분석</th>
                 </tr>
               </thead>
               <tbody>
-                {list.length === 0 ? (
+                {displayList.length === 0 ? (
                   <tr>
-                    <td colSpan="8" style={{ padding: '24px', textAlign: 'center', color: '#64748B' }}>
-                      아직 체결된 리플레이 거래 데이터가 없습니다. 시뮬레이션 기동 시 매 거래가 자동 수집됩니다.
+                    <td colSpan="8" style={{ padding: '32px', textAlign: 'center', color: '#64748B' }}>
+                      선택한 월/일자에 축적된 리플레이 거래 데이터가 없습니다. 실시간 시뮬레이션 체결 시 즉시 수집됩니다.
                     </td>
                   </tr>
                 ) : (
-                  list.slice().reverse().map((item, idx) => {
+                  displayList.slice().reverse().map((item, idx) => {
                     const isProfit = item.realizedPnL >= 0;
                     const pnlColor = isProfit ? '#10B981' : '#EF4444';
                     const pnlText = isProfit ? `+${item.realizedPnL.toLocaleString()}원` : `-${Math.abs(item.realizedPnL).toLocaleString()}원`;
@@ -1276,7 +1390,11 @@
                     return (
                       <tr 
                         key={item.tradeId || idx}
-                        style={{ borderBottom: '1px solid #1E293B', cursor: 'pointer', backgroundColor: selectedReplayTrade?.tradeId === item.tradeId ? 'rgba(56, 189, 248, 0.1)' : 'transparent' }}
+                        style={{
+                          borderBottom: '1px solid #1E293B',
+                          cursor: 'pointer',
+                          backgroundColor: selectedReplayTrade?.tradeId === item.tradeId ? 'rgba(56, 189, 248, 0.15)' : 'transparent'
+                        }}
                         onClick={() => setSelectedReplayTrade(item)}
                       >
                         <td style={{ padding: '10px 12px', color: '#CBD5E1', fontFamily: 'monospace' }}>{item.timestamp}</td>
@@ -1299,7 +1417,7 @@
                             onClick={(e) => { e.stopPropagation(); setSelectedReplayTrade(item); }}
                             style={{ padding: '4px 10px', fontSize: '11px', borderRadius: '4px', backgroundColor: '#38BDF8', color: '#0F172A', border: 'none', fontWeight: 800, cursor: 'pointer' }}
                           >
-                            📸 스냅샷 복기
+                            📸 7대 스냅샷 복기
                           </button>
                         </td>
                       </tr>
@@ -1327,7 +1445,7 @@
                   <span style={{ fontSize: '16px', fontWeight: 900, color: '#38BDF8' }}>
                     📸 Trade Snapshot Analysis: [{selectedReplayTrade.trackName}]
                   </span>
-                  <span style={{ fontSize: '12px', color: '#94A3B8' }}>Trade ID: {selectedReplayTrade.tradeId}</span>
+                  <span style={{ fontSize: '12px', color: '#94A3B8' }}>Trade ID: {selectedReplayTrade.tradeId} ({selectedReplayTrade.dateStr})</span>
                 </div>
                 <button 
                   onClick={() => setSelectedReplayTrade(null)}
@@ -1442,6 +1560,7 @@
       const [eventLogs, setEventLogs] = useState([]);
       const [strategyPnL, setStrategyPnL] = useState({});
       const [tradeReplayList, setTradeReplayList] = useState([]);
+      const [tradeTreeArchive, setTradeTreeArchive] = useState({});
       const [selectedReplayTrade, setSelectedReplayTrade] = useState(null);
 
 
@@ -1659,6 +1778,9 @@
             }
             if (parsedData.tradeReplayList !== undefined) {
               setTradeReplayList(parsedData.tradeReplayList);
+            }
+            if (parsedData.tradeTreeArchive !== undefined) {
+              setTradeTreeArchive(parsedData.tradeTreeArchive);
             }
             if (parsedData.enabledStrategies !== undefined) {
               setEnabledStrategies(parsedData.enabledStrategies);
@@ -2288,6 +2410,7 @@
             <div style={{ gridColumn: '1 / -1', marginTop: '16px' }}>
               <TradeReplayPanel 
                 tradeReplayList={tradeReplayList}
+                tradeTreeArchive={tradeTreeArchive}
                 selectedReplayTrade={selectedReplayTrade}
                 setSelectedReplayTrade={setSelectedReplayTrade}
               />
