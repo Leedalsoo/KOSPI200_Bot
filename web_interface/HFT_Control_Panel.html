@@ -1986,7 +1986,7 @@
       }, [isConnected]);
 
       // 🛡️ [국면 표시 크기 강화] 초대형 배지 크기 및 화려한 섀도우 효과 부여
-      const getRegimeBadgeStyle = () => {
+      const getRegimeBadgeInfo = () => {
         let bgColor = 'rgba(59, 130, 246, 0.15)';
         let textColor = '#3B82F6';
         let label = 'NEUTRAL / 평온 횡보';
@@ -2004,7 +2004,7 @@
           shadow = '0 0 15px rgba(16, 185, 129, 0.4)';
         }
 
-        return {
+        const style = {
           padding: '8px 16px',
           borderRadius: '8px',
           fontSize: '14px',
@@ -2018,13 +2018,14 @@
           justifyContent: 'center',
           alignItems: 'center',
           transition: 'all 0.3s ease-in-out',
-          width: '250px', // 고정 폭
-          height: '55px', // 고정 높이
+          width: '250px',
+          height: '55px',
           flexShrink: 0,
           whiteSpace: 'nowrap',
-          boxSizing: 'border-box',
-          label: label // label 반환 추가
+          boxSizing: 'border-box'
         };
+
+        return { style, label };
       };
 
       // 호가 스프레드(호가공백) 지표 박스 스타일
@@ -2301,8 +2302,8 @@
 
               {/* 🛡️ [초대형 국면 배지] */}
               {(() => {
-                const badge = getRegimeBadgeStyle();
-                return <span style={badge}>{badge.label}</span>;
+                const info = getRegimeBadgeInfo();
+                return <span style={info.style}>{info.label}</span>;
               })()}
 
               {autobotActive ? (
