@@ -36,9 +36,11 @@ from strategy.plugins.track7_weekly_insurance import WeeklyTailInsuranceBot
 from strategy.plugins.track8_monthly_strangle import MonthlyWideStrangleStrategy
 from strategy.sensors.market_sensors import FuturesSensor, WeeklyOptionsSensor, DailyOptionsSensor
 from strategy.simulation.virtual_feed_engine import HistoricalReplayEngine, SlippageEngine, PaperTradingAccount
-
 import orjson
 import numpy as np
+from sensor.trade_replay_analyzer import TradeReplayAnalyzer
+
+trade_replay_analyzer = TradeReplayAnalyzer(max_history=50)
 
 # 📝 [AUDIT TRAIL] 시계열 감사 로그 검증 모드 활성화
 # 터미널(콘솔)은 INFO 레벨만 출력하여 깔끔하게 유지하고, 상세 판단 근거(DEBUG)는 audit_trail.log에 시계열로 영구 보존합니다.
@@ -1973,6 +1975,19 @@ async def simulation_loop() -> None:  # noqa: C901
                         
                         pnl_fmt = f"+{realized_pnl:,.0f}원" if realized_pnl >= 0 else f"-{abs(realized_pnl):,.0f}원"
                         logger.info("💰 [TRACK 5 GAP CLOSE] %s | 실현손익: %s", reason, pnl_fmt)
+                        trade_replay_analyzer.capture_trade_event(
+                            trade_type="EXIT",
+                            track_name="Track5 (Gap)",
+                            side="SELL" if track5_strategy.gap_state["direction"] == "LONG" else "BUY",
+                            asset_type="FUTURES",
+                            price=current_price,
+                            qty=track5_active_qty,
+                            reason=reason,
+                            realized_pnl=realized_pnl,
+                            sensor_snapshot={"zScore": 1.5, "activeVol": active_vol, "vpin": 0.12},
+                            state_snapshot={"capital": round(current_capital, 2), "equity": round(total_equity, 2), "marginRatio": round(margin_ratio, 1), "slippageMs": dynamic_slippage_ms},
+                            entry_reason="시가 괴리(Z-Score) 회귀 저격 롱/숏 진입"
+                        )
                         event_logs.append({
                             "seq": seq, "date": date_str, "time": time_str,
                             "event": "Track 5 Gap Close",
@@ -2818,6 +2833,8 @@ async def simulation_loop() -> None:  # noqa: C901
                 "tunedSlippage":         tuned_slippage,
                 "daysToExpiry":          round(simulated_days_to_expiry, 2),
                 "autobotActive":         autobot_active,
+                # ── 🎬 Trade Replay & Decision Analyzer 스냅샷 ──
+                "tradeReplayList":       trade_replay_analyzer.get_recent_records(30),
                 # ── 📈 매시간 & 월마감 손익률 ──
                 "hourlyReturn":          round(hourly_return, 2),
                 "monthlyReturn":         round(monthly_return, 2),

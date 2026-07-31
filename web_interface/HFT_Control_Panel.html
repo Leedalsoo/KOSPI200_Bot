@@ -1215,6 +1215,194 @@
     });
 
     // ==============================================================================
+    // 4.5 Trade Replay & Decision Analyzer (매매 리플레이 및 의사결정 분석기) 컴포넌트
+    // ==============================================================================
+    const TradeReplayPanel = ({ tradeReplayList, selectedReplayTrade, setSelectedReplayTrade }) => {
+      const list = tradeReplayList || [];
+
+      return (
+        <section style={{
+          backgroundColor: '#1E293B',
+          borderRadius: '16px',
+          border: '1px solid #334155',
+          padding: '24px',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '16px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: 'bold', color: '#38BDF8', margin: 0 }}>
+                🎬 Trade Replay & Decision Analyzer
+              </h2>
+              <span style={{ fontSize: '11px', color: '#94A3B8', backgroundColor: '#0F172A', padding: '4px 10px', borderRadius: '12px', border: '1px solid #334155' }}>
+                매매 리플레이 & 의사결정 자동 분석기
+              </span>
+            </div>
+            <span style={{ fontSize: '12px', color: '#64748B' }}>
+              총 {list.length}건 분석 수집됨 (최근 거래 클릭 시 7대 스냅샷 복기)
+            </span>
+          </div>
+
+          {/* 리플레이 거래 목록 테이블 */}
+          <div style={{ overflowX: 'auto', maxHeight: '220px', borderRadius: '8px', border: '1px solid #334155', backgroundColor: '#0F172A' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#1E293B', color: '#94A3B8', borderBottom: '1px solid #334155' }}>
+                  <th style={{ padding: '10px 12px' }}>시각</th>
+                  <th style={{ padding: '10px 12px' }}>구분</th>
+                  <th style={{ padding: '10px 12px' }}>전략 트랙</th>
+                  <th style={{ padding: '10px 12px' }}>진입/청산가</th>
+                  <th style={{ padding: '10px 12px' }}>실현 손익</th>
+                  <th style={{ padding: '10px 12px' }}>규칙 준수 자동 판정</th>
+                  <th style={{ padding: '10px 12px' }}>AI 타이밍 평가</th>
+                  <th style={{ padding: '10px 12px' }}>상세 복기</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" style={{ padding: '24px', textAlign: 'center', color: '#64748B' }}>
+                      아직 체결된 리플레이 거래 데이터가 없습니다. 시뮬레이션 기동 시 매 거래가 자동 수집됩니다.
+                    </td>
+                  </tr>
+                ) : (
+                  list.slice().reverse().map((item, idx) => {
+                    const isProfit = item.realizedPnL >= 0;
+                    const pnlColor = isProfit ? '#10B981' : '#EF4444';
+                    const pnlText = isProfit ? `+${item.realizedPnL.toLocaleString()}원` : `-${Math.abs(item.realizedPnL).toLocaleString()}원`;
+                    
+                    return (
+                      <tr 
+                        key={item.tradeId || idx}
+                        style={{ borderBottom: '1px solid #1E293B', cursor: 'pointer', backgroundColor: selectedReplayTrade?.tradeId === item.tradeId ? 'rgba(56, 189, 248, 0.1)' : 'transparent' }}
+                        onClick={() => setSelectedReplayTrade(item)}
+                      >
+                        <td style={{ padding: '10px 12px', color: '#CBD5E1', fontFamily: 'monospace' }}>{item.timestamp}</td>
+                        <td style={{ padding: '10px 12px', fontWeight: 800, color: item.tradeType === 'ENTRY' ? '#38BDF8' : '#F59E0B' }}>
+                          {item.tradeType} ({item.side})
+                        </td>
+                        <td style={{ padding: '10px 12px', color: '#E2E8F0', fontWeight: 600 }}>{item.trackName}</td>
+                        <td style={{ padding: '10px 12px', fontFamily: 'monospace', color: '#F1F5F9' }}>{item.price}pt ({item.qty}계약)</td>
+                        <td style={{ padding: '10px 12px', fontWeight: 800, color: pnlColor, fontFamily: 'monospace' }}>{pnlText}</td>
+                        <td style={{ padding: '10px 12px' }}>
+                          <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700, backgroundColor: 'rgba(16, 185, 129, 0.15)', color: item.ruleCompliance?.color || '#10B981', border: `1px solid ${item.ruleCompliance?.color || '#10B981'}` }}>
+                            {item.ruleCompliance?.badgeText || '✅ 규칙 준수'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 12px', color: '#A78BFA', fontWeight: 700 }}>
+                          {item.aiTimingAnalysis?.rating || 'OPTIMAL'}
+                        </td>
+                        <td style={{ padding: '10px 12px' }}>
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); setSelectedReplayTrade(item); }}
+                            style={{ padding: '4px 10px', fontSize: '11px', borderRadius: '4px', backgroundColor: '#38BDF8', color: '#0F172A', border: 'none', fontWeight: 800, cursor: 'pointer' }}
+                          >
+                            📸 스냅샷 복기
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 🔍 선택된 거래 7대 필수 스냅샷 상세 복기 모달/드로어 뷰어 */}
+          {selectedReplayTrade && (
+            <div style={{
+              backgroundColor: '#0F172A',
+              borderRadius: '12px',
+              border: '1px solid #38BDF8',
+              padding: '20px',
+              marginTop: '8px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1E293B', paddingBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '16px', fontWeight: 900, color: '#38BDF8' }}>
+                    📸 Trade Snapshot Analysis: [{selectedReplayTrade.trackName}]
+                  </span>
+                  <span style={{ fontSize: '12px', color: '#94A3B8' }}>Trade ID: {selectedReplayTrade.tradeId}</span>
+                </div>
+                <button 
+                  onClick={() => setSelectedReplayTrade(null)}
+                  style={{ backgroundColor: '#334155', color: '#FFF', border: 'none', borderRadius: '4px', padding: '4px 12px', cursor: 'pointer', fontWeight: 800 }}
+                >
+                  닫기 ✖
+                </button>
+              </div>
+
+              {/* 7대 스냅샷 정보 카드 그리드 */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+                
+                {/* 1 & 2. 진입 / 청산 이유 & 손익 */}
+                <div style={{ backgroundColor: '#1E293B', padding: '16px', borderRadius: '8px', border: '1px solid #334155' }}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#38BDF8' }}>🎯 진입·청산 이유 & 손익 결과</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px', color: '#E2E8F0' }}>
+                    <div><strong>진입 사유:</strong> <span style={{ color: '#F1F5F9' }}>{selectedReplayTrade.entryReason}</span></div>
+                    <div><strong>청산 사유:</strong> <span style={{ color: '#F1F5F9' }}>{selectedReplayTrade.exitReason}</span></div>
+                    <div><strong>실현 손익:</strong> <span style={{ fontWeight: 900, color: selectedReplayTrade.realizedPnL >= 0 ? '#10B981' : '#EF4444' }}>
+                      {selectedReplayTrade.realizedPnL >= 0 ? `+${selectedReplayTrade.realizedPnL.toLocaleString()}원` : `-${Math.abs(selectedReplayTrade.realizedPnL).toLocaleString()}원`}
+                    </span></div>
+                  </div>
+                </div>
+
+                {/* 3 & 4. 진입 당시 모든 센서값 스냅샷 */}
+                <div style={{ backgroundColor: '#1E293B', padding: '16px', borderRadius: '8px', border: '1px solid #334155' }}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#A78BFA' }}>🌡️ 진입 당시 센서 스냅샷 (Sensor Snapshot)</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', color: '#CBD5E1' }}>
+                    <div>Z-Score: <strong style={{ color: '#FFF' }}>{selectedReplayTrade.sensorSnapshot?.zScore || 0.0}</strong></div>
+                    <div>activeVol: <strong style={{ color: '#FFF' }}>{selectedReplayTrade.sensorSnapshot?.activeVol || 1.0}x</strong></div>
+                    <div>VPIN 독성: <strong style={{ color: '#FFF' }}>{selectedReplayTrade.sensorSnapshot?.vpin || 0.12}</strong></div>
+                    <div>마찰비용: <strong style={{ color: '#FFF' }}>₩{selectedReplayTrade.sensorSnapshot?.frictionCost || 0}</strong></div>
+                  </div>
+                </div>
+
+                {/* 5. 진입 스크린샷 (대시보드 상태 스냅샷) */}
+                <div style={{ backgroundColor: '#1E293B', padding: '16px', borderRadius: '8px', border: '1px solid #334155' }}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#F59E0B' }}>📸 진입 당시 대시보드 상태 (State Snapshot)</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', color: '#CBD5E1' }}>
+                    <div>계좌 자본금: <strong style={{ color: '#10B981' }}>₩{selectedReplayTrade.stateSnapshot?.capital?.toLocaleString() || 0}</strong></div>
+                    <div>증거금 비율: <strong style={{ color: '#FFF' }}>{selectedReplayTrade.stateSnapshot?.marginRatio || 0}%</strong></div>
+                    <div>네트워크 지연: <strong style={{ color: '#FFF' }}>{selectedReplayTrade.stateSnapshot?.slippageMs || 50}ms</strong></div>
+                    <div>상태 regime: <strong style={{ color: '#FFF' }}>{selectedReplayTrade.stateSnapshot?.regime || 'NORMAL'}</strong></div>
+                  </div>
+                </div>
+
+                {/* 6 & 7. 규칙 준수 판정 & AI 최적 타이밍 사후 분석 */}
+                <div style={{ backgroundColor: '#1E293B', padding: '16px', borderRadius: '8px', border: '1px solid #334155', gridColumn: 'span 2' }}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#10B981' }}>🤖 "규칙 준수 여부" & "AI 타이밍 사후 분석"</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ color: '#94A3B8' }}>규칙 준수 자동 판정:</span>
+                      <span style={{ padding: '2px 8px', borderRadius: '4px', fontWeight: 800, backgroundColor: 'rgba(16, 185, 129, 0.2)', color: selectedReplayTrade.ruleCompliance?.color || '#10B981' }}>
+                        {selectedReplayTrade.ruleCompliance?.badgeText}
+                      </span>
+                      <span style={{ color: '#CBD5E1' }}>({selectedReplayTrade.ruleCompliance?.details})</span>
+                    </div>
+                    <div style={{ backgroundColor: '#0F172A', padding: '10px', borderRadius: '6px', border: '1px solid #334155', color: '#E2E8F0' }}>
+                      <div style={{ fontWeight: 800, color: '#A78BFA', marginBottom: '4px' }}>
+                        💡 AI Counterfactual Advice: [{selectedReplayTrade.aiTimingAnalysis?.rating}]
+                      </div>
+                      <div>{selectedReplayTrade.aiTimingAnalysis?.advice}</div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+        </section>
+      );
+    };
+
+    // ==============================================================================
     // 5. 대시보드 통합 메인 레이아웃 컴포넌트 (초대형 국면 배지 및 호가공백 연출 추가)
     // ==============================================================================
     const Dashboard = () => {
@@ -1253,6 +1441,8 @@
       const [frictionCost, setFrictionCost] = useState(0);
       const [eventLogs, setEventLogs] = useState([]);
       const [strategyPnL, setStrategyPnL] = useState({});
+      const [tradeReplayList, setTradeReplayList] = useState([]);
+      const [selectedReplayTrade, setSelectedReplayTrade] = useState(null);
 
 
 
@@ -1466,6 +1656,9 @@
             }
             if (parsedData.strategyPnL !== undefined) {
               setStrategyPnL(parsedData.strategyPnL);
+            }
+            if (parsedData.tradeReplayList !== undefined) {
+              setTradeReplayList(parsedData.tradeReplayList);
             }
             if (parsedData.enabledStrategies !== undefined) {
               setEnabledStrategies(parsedData.enabledStrategies);
@@ -2090,6 +2283,15 @@
 
                 </div>
             </section>
+
+            {/* ── 🎬 Trade Replay & Decision Analyzer 패널 (화면 맨 아래 전체 폭 확장) ── */}
+            <div style={{ gridColumn: '1 / -1', marginTop: '16px' }}>
+              <TradeReplayPanel 
+                tradeReplayList={tradeReplayList}
+                selectedReplayTrade={selectedReplayTrade}
+                setSelectedReplayTrade={setSelectedReplayTrade}
+              />
+            </div>
 
             {/* ── 🎛️ 실시간 가상 테스트 환경 설정 패널 (전체 폭 확장) ── */}
             <div style={{ gridColumn: '1 / -1' }}>
