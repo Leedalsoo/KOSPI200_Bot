@@ -893,6 +893,10 @@ async def simulation_loop() -> None:  # noqa: C901
                         
                     current_month_str = month_str
                     sim_month_count += 1
+                    already_rolled_this_month = False
+                    calendar_sim.remaining_days = 20
+                    calendar_sim.simulated_days_to_expiry = 20.0
+                    simulated_days_to_expiry = 20.0
                     track5_investment_ratio = 0.02
                     track5_investment_ratio = SIM_CAPITAL_RATIO  # 대시보드 설정값 반영
                     insurance_budget_pool = total_equity * track5_investment_ratio
@@ -1015,11 +1019,10 @@ async def simulation_loop() -> None:  # noqa: C901
                 insurance_active_this_month = False
                 insurance_reentry_needed_today = False
                 
-                # 새로운 차월물 D-Day 리셋 (CalendarSimulator에서 이미 25~31일 랜덤 설정 완료)
-                simulated_days_to_expiry = calendar_sim.simulated_days_to_expiry
-                # 🛡️ [Phase 1.1] 다음 월물 시작 시 롤오버 플래그 해제 (remaining_days가 양수로 돌아올 때)
-                if simulated_days_to_expiry > 0.0:
-                    already_rolled_this_month = False
+                # 새로운 차월물 D-Day 리셋 (차월 20 영업일 설정)
+                calendar_sim.remaining_days = 20
+                calendar_sim.simulated_days_to_expiry = 20.0
+                simulated_days_to_expiry = 20.0
                 
                 # 롤오버 이벤트 기록
                 rollover_event_log.append({
