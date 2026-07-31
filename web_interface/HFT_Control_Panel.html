@@ -1008,8 +1008,8 @@
               const pnlColor = pnl === 0 ? '#94A3B8' : (isProfit ? '#10B981' : '#EF4444');
 
               // 해당 전략의 보유 옵션 수량 계산
-              const stratOptions = options.filter(pos => (pos.activeStrategy || '').includes(t.id.split(' ')[0]));
-              const totalOptQty = stratOptions.reduce((sum, item) => sum + parseInt(item.qty || 0), 0);
+              const stratOptions = options.filter(pos => pos && (pos.activeStrategy || '').includes(t.id.split(' ')[0]));
+              const totalOptQty = stratOptions.reduce((sum, item) => sum + parseInt((item && item.qty) || 0), 0);
 
               return (
                 <div 
@@ -2301,10 +2301,27 @@
               </div>
 
               {/* 🛡️ [초대형 국면 배지] */}
-              {(() => {
-                const info = getRegimeBadgeInfo();
-                return <span style={info.style}>{info.label}</span>;
-              })()}
+              <span style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: '900',
+                backgroundColor: regime === 'HIGH_VOL' ? 'rgba(239, 68, 68, 0.2)' : regime === 'NORMAL' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                color: regime === 'HIGH_VOL' ? '#EF4444' : regime === 'NORMAL' ? '#10B981' : '#3B82F6',
+                border: `2px solid ${regime === 'HIGH_VOL' ? '#EF4444' : regime === 'NORMAL' ? '#10B981' : '#3B82F6'}`,
+                letterSpacing: '0.075em',
+                boxShadow: regime === 'HIGH_VOL' ? '0 0 25px rgba(239, 68, 68, 0.6)' : regime === 'NORMAL' ? '0 0 15px rgba(16, 185, 129, 0.4)' : '0 0 10px rgba(59, 130, 246, 0.3)',
+                display: 'inline-flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                width: '250px',
+                height: '55px',
+                flexShrink: 0,
+                whiteSpace: 'nowrap',
+                boxSizing: 'border-box'
+              }}>
+                {regime === 'HIGH_VOL' ? 'HIGH VOL / 급변 폭풍' : regime === 'NORMAL' ? 'NORMAL / 보통 추세' : 'NEUTRAL / 평온 횡보'}
+              </span>
 
               {autobotActive ? (
                 <div style={{
