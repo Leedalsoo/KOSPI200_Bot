@@ -768,17 +768,18 @@
           border: '1px solid #334155',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-          height: '320px',
+          gridColumn: '1 / -1', // 가로 전체 폭 확장 (4x2 대칭 배치)
+          height: '300px',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden'
         }}>
           <h2 style={{ fontSize: '13px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.075em', color: '#94A3B8', margin: '0 0 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>🎯 Strategy Execution On/Off Control (전략1~8 개별 강제 제어)</span>
+              <span>🎯 Strategy Execution On/Off Control (전략 1~8 위아래 4개씩 개별 제어)</span>
             </span>
             <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#34D399', border: '1px solid #10B981', fontFamily: 'monospace' }}>
-              REALTIME TOGGLE
+              4x2 EQUAL MATRIX
             </span>
           </h2>
 
@@ -945,6 +946,137 @@
             </ScatterChart>
           </ResponsiveContainer>
         </div>
+      );
+    });
+
+    // ==============================================================================
+    // 3-C. [신설] 8대 전략 통합 4x2 그리드 매트릭스 대시보드 (위아래 4개씩 동일 크기 배치)
+    // ==============================================================================
+    const MasterMultiStrategyMatrixDashboard = memo(({ weights, strategyPnL, portfolioOptions, futuresQty }) => {
+      const pnlData = strategyPnL || {};
+      const weightData = weights || {};
+      const options = portfolioOptions || [];
+
+      const tracks = [
+        { id: "Track1 (Defense)", key: "track1", name: "Track 1: Tail Defense", desc: "테일 방어 양매수", tag: "DEFENSE" },
+        { id: "Track2 (Trap)", key: "track2", name: "Track 2: Asymmetric Trap", desc: "비대칭 트랩 세팅", tag: "TRAP" },
+        { id: "Track3 (Arbitrage)", key: "track3", name: "Track 3: Stat Arbitrage", desc: "선물/옵션 차익", tag: "ARB" },
+        { id: "Track4 (Gamma)", key: "track4", name: "Track 4: Gamma Scalping", desc: "동적 감마 스캘핑", tag: "GAMMA" },
+        { id: "Track5 (Gap)", key: "track5", name: "Track 5: Gap Protocol", desc: "시가 갭 평균복귀", tag: "GAP" },
+        { id: "Track6 (Daily)", key: "track6", name: "Track 6: Daily 0DTE", desc: "당일 옵션 헷지", tag: "0DTE" },
+        { id: "Track7 (Weekly)", key: "track7", name: "Track 7: Weekly Insurance", desc: "주간 테일 보험", tag: "WEEKLY" },
+        { id: "Track8 (Monthly)", key: "track8", name: "Track 8: Monthly Strangle", desc: "월간 넓은 양매수", tag: "MONTHLY" },
+      ];
+
+      return (
+        <section style={{
+          backgroundColor: '#1E293B',
+          borderRadius: '16px',
+          border: '1px solid #334155',
+          padding: '24px',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+          gridColumn: '1 / -1', // 가로 전체 폭 확장
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '16px'
+        }}>
+          {/* 패널 타이틀 */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 800, color: '#38BDF8', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                📊 8대 핵심 매매 전략 매트릭스 (4x2 Equal-Sized Grid)
+              </h2>
+              <span style={{ fontSize: '11px', color: '#94A3B8', backgroundColor: '#0F172A', padding: '3px 10px', borderRadius: '12px', border: '1px solid #334155', fontFamily: 'monospace' }}>
+                위아래 4개씩 정갈 대칭 배치
+              </span>
+            </div>
+            <div style={{ fontSize: '11px', color: '#64748B', fontFamily: 'monospace' }}>
+              ACTIVE TRACKS: <strong style={{ color: '#10B981' }}>8 / 8 RUNNING</strong>
+            </div>
+          </div>
+
+          {/* 4x2 그리드 컨테이너 (위 4개, 아래 4개 완벽 동등 크기) */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '14px'
+          }}>
+            {tracks.map((t, idx) => {
+              const pnl = pnlData[t.id] || 0.0;
+              const weight = weightData[t.id] || 0.0;
+              const isProfit = pnl >= 0;
+              const pnlColor = pnl === 0 ? '#94A3B8' : (isProfit ? '#10B981' : '#EF4444');
+
+              // 해당 전략의 보유 옵션 수량 계산
+              const stratOptions = options.filter(pos => (pos.activeStrategy || '').includes(t.id.split(' ')[0]));
+              const totalOptQty = stratOptions.reduce((sum, item) => sum + parseInt(item.qty || 0), 0);
+
+              return (
+                <div 
+                  key={t.id}
+                  style={{
+                    backgroundColor: '#0F172A',
+                    borderRadius: '12px',
+                    border: `1px solid ${pnl > 0 ? 'rgba(16, 185, 129, 0.4)' : pnl < 0 ? 'rgba(239, 68, 68, 0.4)' : '#334155'}`,
+                    padding: '14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    height: '135px', // 위아래 완전 동일 높이 고정
+                    boxSizing: 'border-box',
+                    position: 'relative',
+                    overflow: 'hidden',
+                    transition: 'all 0.2s ease-in-out'
+                  }}
+                >
+                  {/* 카드 상단: 전략 번호 & 태그 배지 */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 900, color: '#38BDF8', fontFamily: 'monospace' }}>
+                      TRACK 0{idx + 1}
+                    </span>
+                    <span style={{
+                      fontSize: '9px',
+                      fontWeight: 800,
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                      color: '#38BDF8',
+                      border: '1px solid rgba(56, 189, 248, 0.3)',
+                      fontFamily: 'monospace'
+                    }}>
+                      {t.tag}
+                    </span>
+                  </div>
+
+                  {/* 카드 중단: 전략명 & 설명 */}
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 800, color: '#F8FAFC', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {t.name.split(': ')[1]}
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#64748B', marginTop: '2px' }}>
+                      {t.desc}
+                    </div>
+                  </div>
+
+                  {/* 카드 하단: 실현 손익 및 비중 / 보유량 */}
+                  <div style={{ borderTop: '1px dashed #1E293B', paddingTop: '8px', marginTop: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                    <div>
+                      <div style={{ fontSize: '9px', color: '#94A3B8', textTransform: 'uppercase' }}>Strategy PnL</div>
+                      <div style={{ fontSize: '13px', fontWeight: 900, color: pnlColor, fontFamily: 'monospace' }}>
+                        {pnl > 0 ? `+₩${Math.round(pnl).toLocaleString('ko-KR')}` : pnl < 0 ? `-₩${Math.abs(Math.round(pnl)).toLocaleString('ko-KR')}` : '₩0'}
+                      </div>
+                    </div>
+
+                    <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '10px', color: '#CBD5E1' }}>
+                      <div>비중: <strong style={{ color: '#F59E0B' }}>{weight.toFixed(1)}%</strong></div>
+                      <div>포지션: <strong style={{ color: totalOptQty > 0 ? '#38BDF8' : '#64748B' }}>{totalOptQty}계약</strong></div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       );
     });
 
