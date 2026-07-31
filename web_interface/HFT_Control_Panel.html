@@ -2300,7 +2300,10 @@
               </div>
 
               {/* 🛡️ [초대형 국면 배지] */}
-              <span style={badgeInfo}>{badgeInfo.label}</span>
+              {(() => {
+                const badge = getRegimeBadgeStyle();
+                return <span style={badge}>{badge.label}</span>;
+              })()}
 
               {autobotActive ? (
                 <div style={{
