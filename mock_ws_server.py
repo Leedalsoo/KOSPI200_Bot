@@ -1907,6 +1907,21 @@ async def simulation_loop() -> None:  # noqa: C901
                                         portfolio_options.append({"type": "FUTURES", "side": "BUY", "strike": 0, "price": current_price, "qty": arb_qty, "activeStrategy": "Track3 (Arbitrage)", "tag_id": "ARB"})
                                         logger.info("⚡ [TRACK 3 ARB] %s - 스프레드 매수(선물 롱) %d계약 진입! (진입가: %.2f)", signal.get('reason'), arb_qty, current_price)
                                         
+                                    trade_replay_analyzer.capture_trade_event(
+                                        trade_type="ENTRY",
+                                        track_name="Track 3 (Arbitrage)",
+                                        side="SELL" if t_type == "SHORT_SPREAD" else "BUY",
+                                        asset_type="FUTURES",
+                                        price=current_price,
+                                        qty=arb_qty,
+                                        reason=signal.get('reason', 'Track 3 Arb Trigger'),
+                                        realized_pnl=0.0,
+                                        sensor_snapshot={"zScore": 1.8, "activeVol": round(active_vol, 2), "vpin": 0.15},
+                                        state_snapshot={"capital": round(current_capital, 2), "equity": round(total_equity, 2), "marginRatio": round(margin_ratio, 1), "slippageMs": dynamic_slippage_ms},
+                                        entry_reason="Track 3 Z-Score 1.8 차익거래 시그널 발생",
+                                        date_str=date_str
+                                    )
+
                                     event_logs.append({
                                         "seq": seq, "date": date_str, "time": time_str,
                                         "event": f"Track 3 Arb ({t_type})",
@@ -1927,6 +1942,21 @@ async def simulation_loop() -> None:  # noqa: C901
                                         realized_pnl = (current_price - track3_entry_price) * track3_entry_qty * FUTURES_MULTIPLIER
                                         portfolio_options = [p for p in portfolio_options if not (p.get("activeStrategy") == "Track3 (Arbitrage)" and p.get("type") == "FUTURES")]
                                         logger.info("💰 [TRACK 3 ARB CLOSE] %s - 롱 스프레드 청산! (틱 마진 MTM에 기반영)", signal.get('reason'))
+                                    
+                                    trade_replay_analyzer.capture_trade_event(
+                                        trade_type="EXIT",
+                                        track_name="Track 3 (Arbitrage)",
+                                        side="BUY" if t_type == "CLOSE_SHORT_SPREAD" else "SELL",
+                                        asset_type="FUTURES",
+                                        price=current_price,
+                                        qty=arb_qty,
+                                        reason=signal.get('reason', 'Track 3 Arb Close'),
+                                        realized_pnl=realized_pnl,
+                                        sensor_snapshot={"zScore": 0.2, "activeVol": round(active_vol, 2), "vpin": 0.15},
+                                        state_snapshot={"capital": round(current_capital, 2), "equity": round(total_equity, 2), "marginRatio": round(margin_ratio, 1), "slippageMs": dynamic_slippage_ms},
+                                        entry_reason="Track 3 Z-Score 1.8 차익거래 진입",
+                                        date_str=date_str
+                                    )
                                     
                                     # [CASH FLOW RULE] 실현이익의 30%를 테일 보험 예산으로 적립
                                     if realized_pnl > 0:
@@ -2045,6 +2075,20 @@ async def simulation_loop() -> None:  # noqa: C901
                                 "activeStrategy": "Track6 (Daily)", "is_insurance": True
                             })
                             logger.warning("🚨 [DAILY INSURANCE BUY] 데일리 극외가 양매수(0DTE) 가입 완료! 지출예산: ₩%s", f"{cost:,.0f}")
+                            trade_replay_analyzer.capture_trade_event(
+                                trade_type="ENTRY",
+                                track_name="Track 6 (Daily)",
+                                side="BUY",
+                                asset_type="OPTIONS",
+                                price=0.50,
+                                qty=int(signal.get("qty")),
+                                reason=signal.get('reason', '0DTE Insurance Buy'),
+                                realized_pnl=0.0,
+                                sensor_snapshot={"zScore": 0.0, "activeVol": round(active_vol, 2), "vpin": 0.12},
+                                state_snapshot={"capital": round(current_capital, 2), "equity": round(total_equity, 2), "marginRatio": round(margin_ratio, 1), "slippageMs": dynamic_slippage_ms},
+                                entry_reason="0DTE 데일리 양매수 헤지 가입",
+                                date_str=date_str
+                            )
                             event_logs.append({
                                 "seq": seq, "date": date_str, "time": time_str,
                                 "event": "Track 6 Daily Insurance Buy",
@@ -2082,6 +2126,20 @@ async def simulation_loop() -> None:  # noqa: C901
                             strategy_pnl_tracker["Track6 (Daily)"] += net_profit
                             
                             logger.warning("💰 [DAILY INSURANCE CUTOFF] 15:15 데일리 보험 정산 청산 완료! (정산금액: ₩%s, 순손익: ₩%s)", f"{total_realized:,.0f}", f"{net_profit:,.0f}")
+                            trade_replay_analyzer.capture_trade_event(
+                                trade_type="EXIT",
+                                track_name="Track 6 (Daily)",
+                                side="SELL",
+                                asset_type="OPTIONS",
+                                price=current_price,
+                                qty=signal.get("qty", 1),
+                                reason="15:15 데일리 만기 강제 정산",
+                                realized_pnl=net_profit,
+                                sensor_snapshot={"zScore": 0.0, "activeVol": round(active_vol, 2), "vpin": 0.12},
+                                state_snapshot={"capital": round(current_capital, 2), "equity": round(total_equity, 2), "marginRatio": round(margin_ratio, 1), "slippageMs": dynamic_slippage_ms},
+                                entry_reason="0DTE 데일리 극외가 양매수 가입",
+                                date_str=date_str
+                            )
                             pnl_fmt = f"+{total_realized:,.0f}원" if total_realized >= 0 else f"-{abs(total_realized):,.0f}원"
                             event_logs.append({
                                 "seq": seq, "date": date_str, "time": time_str,
@@ -2116,6 +2174,20 @@ async def simulation_loop() -> None:  # noqa: C901
                                 "activeStrategy": "Track7 (Weekly)", "is_insurance": True
                             })
                             logger.warning("🚨 [WEEKLY INSURANCE BUY] 위클리 극외가 양매수 가입 완료! 지출예산: ₩%s", f"{cost:,.0f}")
+                            trade_replay_analyzer.capture_trade_event(
+                                trade_type="ENTRY",
+                                track_name="Track 7 (Weekly)",
+                                side="BUY",
+                                asset_type="OPTIONS",
+                                price=0.70,
+                                qty=int(signal.get("qty")),
+                                reason=signal.get('reason', 'Weekly Insurance Buy'),
+                                realized_pnl=0.0,
+                                sensor_snapshot={"zScore": 0.0, "activeVol": round(active_vol, 2), "vpin": 0.12},
+                                state_snapshot={"capital": round(current_capital, 2), "equity": round(total_equity, 2), "marginRatio": round(margin_ratio, 1), "slippageMs": dynamic_slippage_ms},
+                                entry_reason="주간 테일 헤지 극외가 양매수 가입",
+                                date_str=date_str
+                            )
                             event_logs.append({
                                 "seq": seq, "date": date_str, "time": time_str,
                                 "event": "Track 7 Weekly Insurance Buy",
@@ -2138,6 +2210,20 @@ async def simulation_loop() -> None:  # noqa: C901
                             net_profit = realized_amount - track7_strategy.insurance_state.get("premium_spent", 350000.0)
                             strategy_pnl_tracker["Track7 (Weekly)"] += net_profit
                             logger.warning("🎉 [WEEKLY INSURANCE PROFIT REALIZATION] 위클리 옵션 동적 익절 청산 완료! (실현이익: ₩%s, 순손익: ₩%s)", f"{realized_amount:,.0f}", f"{net_profit:,.0f}")
+                            trade_replay_analyzer.capture_trade_event(
+                                trade_type="EXIT",
+                                track_name="Track 7 (Weekly)",
+                                side="SELL",
+                                asset_type="OPTIONS",
+                                price=current_price,
+                                qty=1,
+                                reason="위클리 옵션 평가이익 150% 동적 익절 청산",
+                                realized_pnl=net_profit,
+                                sensor_snapshot={"zScore": 0.0, "activeVol": round(active_vol, 2), "vpin": 0.12},
+                                state_snapshot={"capital": round(current_capital, 2), "equity": round(total_equity, 2), "marginRatio": round(margin_ratio, 1), "slippageMs": dynamic_slippage_ms},
+                                entry_reason="주간 테일 헤지 극외가 양매수 가입",
+                                date_str=date_str
+                            )
                             realized_fmt = f"+{realized_amount:,.0f}원" if realized_amount >= 0 else f"-{abs(realized_amount):,.0f}원"
                             net_fmt = f"+{net_profit:,.0f}원" if net_profit >= 0 else f"-{abs(net_profit):,.0f}원"
                             event_logs.append({

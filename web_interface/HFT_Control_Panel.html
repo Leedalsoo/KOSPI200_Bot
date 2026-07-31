@@ -1225,14 +1225,14 @@
       const tree = tradeTreeArchive || {};
       const fullList = tradeReplayList || [];
 
-      // 계층 탐색 상태 (기본값: 전체/최신)
+      // 계층 탐색 상태 (기본값: ALL - 전체 수집 거래 한눈에 전개)
       const months = Object.keys(tree).sort().reverse();
-      const [selectedMonth, setSelectedMonth] = useState(months[0] || 'ALL');
+      const [selectedMonth, setSelectedMonth] = useState('ALL');
       
       const availableDates = selectedMonth !== 'ALL' && tree[selectedMonth] 
         ? Object.keys(tree[selectedMonth]).sort().reverse() 
         : [];
-      const [selectedDate, setSelectedDate] = useState(availableDates[0] || 'ALL');
+      const [selectedDate, setSelectedDate] = useState('ALL');
 
       // 선택된 월/일자에 따른 필터링된 거래 리스트
       const getFilteredTrades = () => {
