@@ -10,7 +10,10 @@ from core.contracts import MarketTick, OrderRequest
 from infra.time_service import TimeService
 
 class Track2Trap(BaseAgent):
-    """데일리 함정(Trap) 기습 공격 및 4중 휩쏘 검증 엔진"""
+    """
+    [전략 2] 데일리 함정(Trap) 기습 공격 및 4중 휩쏘 검증 엔진 (Track 2 Asymmetric Trap)
+    - 자본 배분: 10% (비대칭 트랩 및 동적 헷지 모듈)
+    """
 
     def __init__(self, shared_context: Optional[Dict[str, Any]] = None, time_service: Optional[TimeService] = None, config: Optional[Dict[str, Any]] = None) -> None:
         self.context: Dict[str, Any] = shared_context if shared_context is not None else (config or {})

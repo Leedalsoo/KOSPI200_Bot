@@ -5,7 +5,8 @@ logger = logging.getLogger(__name__)
 
 class DailyTailInsuranceBot:
     """
-    [전략 6] 데일리 테일 보험 봇 (초단기 방패)
+    [전략 6] 데일리 테일 보험 봇 (Track 6 Daily 0DTE)
+    - 자본 배분: 매일 변동성 조건 만족 시 +0.1% 동적 부여
     - 역할:
       1. 내재변동성(active_vol)이 기준치 대비 1.3배 이상 폭발할 때 극외가격 양매수(0DTE 롱 스트랭글)를 매입.
       2. 독립 예산 풀(insurance_budget_pool) 범위 내에서만 매수하여 원본 자산을 지킴.
@@ -24,7 +25,7 @@ class DailyTailInsuranceBot:
         logger.info("Daily Tail Insurance Bot (Strategy 6) Initialized.")
 
     def reset_state(self) -> None:
-        self.insurance_state = {
+        self.insurance_state: Dict[str, Any] = {
             "is_active": False,
             "bought_date": None,
             "long_put_strike": 0.0,

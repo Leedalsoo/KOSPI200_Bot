@@ -1,13 +1,13 @@
 import logging
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
 class StatisticalArbitrageStrategy:
     """
     [전략 3] 통계적 차익거래 모듈 (Statistical Arbitrage / Pairs Trading)
-    - 자본 배분: 40% (시스템의 캐시카우 및 1순위 제어권)
+    - 자본 배분: 5% (통계적 무위험 현금 알파 수취 모듈)
     - 역할: 
       1. 현선물 스프레드의 롤링 Z-Score 실시간 계산.
       2. 스프레드가 통계적 임계치(예: +-2 시그마)를 이탈할 때 스프레드 매도/매수 진입.
@@ -19,9 +19,9 @@ class StatisticalArbitrageStrategy:
         self.z_exit_threshold = self.params.get("z_exit_threshold", 0.2) # Relaxed from 0.0 to 0.2 for quick rotation
         
         # 내부 상태 관리
-        self.active_position = None  # "SHORT_SPREAD" 또는 "LONG_SPREAD" 또는 None
+        self.active_position: Optional[str] = None  # "SHORT_SPREAD" 또는 "LONG_SPREAD" 또는 None
         self.cooldown_ticks = 0
-        logger.info("Statistical Arbitrage Strategy (Strategy 3) Initialized with 30% Capital Allocation.")
+        logger.info("Statistical Arbitrage Strategy (Strategy 3) Initialized with 5% Capital Allocation.")
 
     def calculate_z_score(self, spread_series: List[float]) -> float:
         """

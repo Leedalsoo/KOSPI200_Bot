@@ -46,14 +46,14 @@ class TelemetryPublisher:
                 "dayLabel": getattr(ctx, "sim_date", "2025-01-01")
             },
             "strategyWeights": getattr(ctx, "strategy_weights", {
-                "Track 1 (Defense)": 100, 
-                "Track 2 (Trap)": 0,
-                "Track 3 (Arbitrage)": 0,
-                "Track 4 (Gamma)": 0,
-                "Track 5 (Gap)": 0,
-                "Track 6 (Daily)": 0,
-                "Track 7 (Weekly)": 0,
-                "Track 8 (Monthly)": 0
+                "Track1 (Defense)": 30.0, 
+                "Track2 (Trap)": 10.0,
+                "Track3 (Arbitrage)": 5.0,
+                "Track4 (Gamma)": 10.0,
+                "Track5 (Gap)": 0.0,
+                "Track6 (Daily)": 0.0,
+                "Track7 (Weekly)": 0.0,
+                "Track8 (Monthly)": 5.0
             }),
             "strategyPnL": getattr(ctx, "strategy_pnl", {}),
             "payoffCoords": [],
@@ -70,9 +70,8 @@ class TelemetryPublisher:
         }
         
         try:
-            # 딕셔너리를 orjson으로 직렬화 후 문자열로 변환
+            # 딕셔너리를 orjson으로 직렬화 후 비동기 전송
             msg_bytes = orjson.dumps(packet)
-            msg_str = msg_bytes.decode('utf-8')
-            await self.broadcast_callback(msg_str)
+            await self.broadcast_callback(msg_bytes)
         except Exception as e:
             logger.error(f"Error serializing telemetry packet: {e}")

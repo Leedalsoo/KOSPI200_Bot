@@ -790,7 +790,7 @@ async def simulation_loop() -> None:  # noqa: C901
                     "bidAskSpread":          0.0,
                     "coord":                 {"x": seq, "y": round(total_equity, 2)},
                     "payoffCoords":          [],
-                    "strategyWeights":       {"Track1 (Defense)": 0.0, "Track2 (Trap)": 0.0, "Track3 (Arbitrage)": 0.0, "Track4 (Gamma)": 0.0, "Track5 (Gap)": 0.0, "Track6 (Daily)": 0.0, "Track7 (Weekly)": 0.0},
+                    "strategyWeights":       {"Track1 (Defense)": 30.0, "Track2 (Trap)": 10.0, "Track3 (Arbitrage)": 5.0, "Track4 (Gamma)": 10.0, "Track5 (Gap)": 0.0, "Track6 (Daily)": 0.0, "Track7 (Weekly)": 0.0, "Track8 (Monthly)": 5.0},
                     "capital":               round(current_capital, 2),
                     "reserve":               round(accumulated_reserve, 2),
                     "budgetPool":            round(insurance_budget_pool, 2),
@@ -1314,17 +1314,17 @@ async def simulation_loop() -> None:  # noqa: C901
 
             iv_sell_blocked = iv_explosion_active
 
-            # ── 4. [V2 STRESS TEST] 4대 전략 가중치 실제 반영 ──────────────────
-            # 스트레스 테스트(V2) 환경: Track1(30%)로 고정 수익 창출. Track2, Track3, Track4는 0%로 간섭 배제.
-            # 보험(5, 6, 7, 8)은 실 가동 여부 및 월별 투입 예산 비율 적용.
+            # ── 4. 8대 전략 표준 자본 배분 비율 (Capital Allocation Weights) 반영 ────────
+            # 고정 배분: Track1(30%), Track2(10%), Track3(5%), Track4(10%), Track8(5%)
+            # 조건부 배분: Track5(조건시 +0.1%), Track6(조건시 +0.1%), Track7(조건시 +0.5%)
             t1 = 30.0
-            t2 = 0.0
-            t3 = 0.0
-            t4 = 0.0
-            t5_pct = track5_investment_ratio * 100.0 if track5_investment_ratio > 0 else 0.0
-            t6_pct = track5_investment_ratio * 100.0 if track6_strategy and track6_strategy.insurance_state["is_active"] else 0.0
-            t7_pct = track5_investment_ratio * 100.0 if track7_strategy and track7_strategy.insurance_state["is_active"] else 0.0
-            t8_pct = track5_investment_ratio * 100.0 if track8_strategy and track8_strategy.strangle_state["is_active"] else 0.0
+            t2 = 10.0
+            t3 = 5.0
+            t4 = 10.0
+            t5_pct = 0.1 if (track5_strategy and track5_strategy.gap_state["is_active"]) else 0.0
+            t6_pct = 0.1 if (track6_strategy and track6_strategy.insurance_state["is_active"]) else 0.0
+            t7_pct = 0.5 if (track7_strategy and track7_strategy.insurance_state["is_active"]) else 0.0
+            t8_pct = 5.0
 
             strategy_weights = {
                 "Track1 (Defense)":    t1,

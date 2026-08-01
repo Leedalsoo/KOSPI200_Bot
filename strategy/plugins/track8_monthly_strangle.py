@@ -1,18 +1,19 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
 class MonthlyWideStrangleStrategy:
     """
     [전략 8] 월간 넓은 양매수 전략 (Monthly Wide Strangle)
+    - 자본 배분: 5% (월물 초입 롱 감마 및 거대 추세 사냥 모듈)
     - 역할:
       1. 월물 옵션 만기 초입(DTE >= 20.0)에 외가격 양매수 포지션을 구축하여 거대 추세와 롱 감마 수익 사냥.
-      2. 캐시카우(전략 3)의 실현 수익 30% 조건 적립금 범위 내에서만 자금 조달.
+      2. 자본 5% 범위 예산 내에서만 자금 조달.
       3. 지표상 취약한 하방 위주로 풋 수량을 더 가중하는 비대칭 스큐(Skew) 설계.
       4. 만기 D-3(DTE <= 3.0) 도달 시 일괄 청산(Flat)하고 감마 스캘핑(전략 4)으로 가치를 양도.
     """
-    def __init__(self, config: Dict[str, Any] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         self.config = config or {}
         self.min_budget_requirement = 200000.0  # 최소 20만 원 적립 한도 (월물 예산 풀 연동)
         self.strangle_state = {

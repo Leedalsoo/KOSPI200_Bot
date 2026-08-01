@@ -9,7 +9,10 @@ from core.base_agent import BaseAgent
 from core.contracts import MarketTick, OrderRequest
 
 class Track4Gamma(BaseAgent):
-    """감마 스캘핑 엔진: 하이브리드 전술 및 변동성 연동형 델타 헤징"""
+    """
+    [전략 4] 감마 스캘핑 엔진 (Track 4 Gamma Scalping)
+    - 자본 배분: 10% (동적 감마 스캘핑 및 ATM 베이스캠프 구축)
+    """
 
     def __init__(self, shared_context: Optional[Dict[str, Any]] = None, equity_threshold: Decimal = Decimal("0"), config: Optional[Dict[str, Any]] = None) -> None:
         self.context: Dict[str, Any] = shared_context if shared_context is not None else (config or {})

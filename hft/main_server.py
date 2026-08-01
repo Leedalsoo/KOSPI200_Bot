@@ -4,7 +4,15 @@ import os
 from datetime import datetime
 import orjson
 import websockets
-from typing import Set
+from typing import Set, Any
+
+try:
+    from websockets.server import WebSocketServerProtocol # type: ignore
+except ImportError:
+    try:
+        from websockets.legacy.server import WebSocketServerProtocol # type: ignore
+    except ImportError:
+        WebSocketServerProtocol = Any # type: ignore
 
 from .core.state import SessionContext
 from .core.market_feed import VirtualMarketFeed
@@ -20,7 +28,7 @@ class MockSimulationServer:
     핵심 계층(Feed, Strategy, Execution, Telemetry)을 조립하는 새로운 진입점 서버
     """
     def __init__(self):
-        self.connected_clients: Set[websockets.WebSocketServerProtocol] = set()
+        self.connected_clients: Set[Any] = set()
         self.context = SessionContext()
         
         self.feed = VirtualMarketFeed()
@@ -122,7 +130,7 @@ class MockSimulationServer:
         except Exception as e:
             logger.error(f"보고서 생성 실패: {e}")
 
-    async def ws_handler(self, websocket: websockets.WebSocketServerProtocol):
+    async def ws_handler(self, websocket: WebSocketServerProtocol):
         """클라이언트 접속 및 메시지 처리"""
         self.connected_clients.add(websocket)
         logger.info("Client connected to V2 server")

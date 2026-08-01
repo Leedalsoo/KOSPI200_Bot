@@ -6,7 +6,8 @@ logger = logging.getLogger(__name__)
 
 class GapProtocolStrategy:
     """
-    [전략 5] Gap Protocol: 시가 괴리 회귀 저격 로직
+    [전략 5] Gap Protocol: 시가 괴리 회귀 저격 로직 (Track 5 Gap Protocol)
+    - 자본 배분: 매일 시가 갭 조건 만족 시 +0.1% 동적 부여
     - 역할:
       1. 장 시작 직후(09:00:00) 시초가가 전일 종가 대비 과도하게 괴리(Gap)되어 시작할 때 발동.
       2. 통계적 괴리율(Z-Score)을 연산하여 임계점(1.5 시그마) 초과 시 진입.
@@ -28,7 +29,7 @@ class GapProtocolStrategy:
         logger.info("Gap Protocol Strategy (Strategy 5) Initialized.")
 
     def reset_state(self) -> None:
-        self.gap_state = {
+        self.gap_state: Dict[str, Any] = {
             "is_active": False,
             "direction": None,       # "SHORT" (갭상승 대응) 또는 "LONG" (갭하락 대응)
             "entry_price": 0.0,

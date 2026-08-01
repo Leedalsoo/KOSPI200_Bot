@@ -5,7 +5,8 @@ logger = logging.getLogger(__name__)
 
 class WeeklyTailInsuranceBot:
     """
-    [전략 7] 위클리 테일 보험 봇 (주간 방패)
+    [전략 7] 위클리 테일 보험 봇 (Track 7 Weekly Insurance)
+    - 자본 배분: 매주 상장 후 조건 만족 시 +0.5% 동적 부여
     - 역할:
       1. 매주 위클리 옵션 개장 첫날(새로운 주차 시작 시) 상하방이 넓은 극외가 양매수를 구축.
       2. 1주간 터질 수 있는 거시지표 이벤트나 추세 폭발 위험을 저비용으로 헤지.
@@ -22,7 +23,7 @@ class WeeklyTailInsuranceBot:
         logger.info("Weekly Tail Insurance Bot (Strategy 7) Initialized.")
 
     def reset_state(self) -> None:
-        self.insurance_state = {
+        self.insurance_state: Dict[str, Any] = {
             "is_active": False,
             "bought_date": None,
             "long_put_strike": 0.0,

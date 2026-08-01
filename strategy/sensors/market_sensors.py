@@ -14,7 +14,7 @@ class FuturesSensor:
       4. 야간 선물 연동 및 갭 보정값 제공.
     """
     def __init__(self) -> None:
-        self.oi_history = deque(maxlen=30)  # 미결제약정 최근 이력 버퍼
+        self.oi_history: deque[int] = deque(maxlen=30)  # 미결제약정 최근 이력 버퍼
         self.basis = 0.0
         self.oi_trend_alert = False
         logger.info("Futures Analytics Sensor initialized.")

@@ -5,8 +5,8 @@ logger = logging.getLogger(__name__)
 
 class DetailedProductionFenceEngine:
     """
-    [전략 1: 꼬리표 순환형 다이내믹 가두리 및 미아 포지션 선물 헷지 루프]
-    공방 일체형 펜스 엔진.
+    [전략 1] 꼬리표 순환형 다이내믹 가두리 및 미아 포지션 선물 헷지 루프 (Track 1 Tail Defense)
+    - 자본 배분: 30% (공방 일체형 핵심 테일 방어선)
     """
     def __init__(self, config: Dict[str, Any]):
         self.config = config.get("strategies", {}).get("strategy_1_1", {}).get("params", {})
@@ -85,7 +85,7 @@ class DetailedProductionFenceEngine:
 
     def on_tick(self, current_price: float, trend_signal: bool) -> List[Dict]:
         """[2단계] 틱 스트리밍 루프: 꼬리표 순환 및 미아 방어 헷지"""
-        signals = []
+        signals: List[Dict[str, Any]] = []
         if not self.active_fence:
             return signals
 
@@ -120,6 +120,8 @@ class DetailedProductionFenceEngine:
         return signals
 
     def check_opposite_90_reached(self, current_price: float) -> bool:
+        if not self.active_fence:
+            return False
         target_90_dist = self.fence_distance * 0.9
         if self.active_fence['type'] == 'PUT':
             target_90_price = self.base_price + target_90_dist
@@ -129,6 +131,8 @@ class DetailedProductionFenceEngine:
             return current_price <= target_90_price
 
     def check_returning_90_approaching(self, current_price: float) -> bool:
+        if not self.active_fence:
+            return False
         warning_dist = self.fence_distance * 0.9
         if self.active_fence['type'] == 'PUT':
             return current_price <= (self.base_price - warning_dist)
@@ -137,7 +141,9 @@ class DetailedProductionFenceEngine:
 
     def execute_fence_rotation(self, current_price: float) -> List[Dict]:
         """[꼬리표 순환 루프] 매수 청산 + 반대편 신규 매도"""
-        signals = []
+        signals: List[Dict[str, Any]] = []
+        if not self.active_fence:
+            return signals
         old_tag = self.active_fence['tag_id']
         old_type = self.active_fence['type']
         old_strike = self.active_fence['strike']
@@ -172,7 +178,9 @@ class DetailedProductionFenceEngine:
         return signals
 
     def check_hedge_exit_conditions(self, current_price: float) -> List[Dict]:
-        signals = []
+        signals: List[Dict[str, Any]] = []
+        if not self.active_fence:
+            return signals
         fence_strike = self.active_fence['strike']
         
         # 3단계: 100% 격돌 (선물+옵션 전량 청산)
@@ -200,7 +208,7 @@ class DetailedProductionFenceEngine:
             logger.info("✅ [1.5pt 반전] 위험 완화. 선물 헷지 단독 청산 해제.")
             signals.append({
                 "action": "FUTURES_UNWIND",
-                "type": self.active_hedge,
+                "type": str(self.active_hedge),
                 "reason": "1.5pt 반전 휩소 탈출"
             })
             self.active_hedge = None
