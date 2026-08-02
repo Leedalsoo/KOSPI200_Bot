@@ -268,32 +268,49 @@
         };
       }, [coords, uniqueDates]);
 
-      // 3. 동적 KOSPI 200 옵션 만기일 (둘째 주 목요일 및 c.dte === 'D-0') 인덱스 세트 추적
+      // 3. 동적 KOSPI 200 옵션 만기일 (매월 둘째 주 목요일, 휴일시 직전 영업일) 단일 정밀 인덱스 세트 추적
       const expiryIndicesSet = useMemo(() => {
         const set = new Set();
+        const holidays2025 = new Set([
+          '2025-01-01', '2025-01-28', '2025-01-29', '2025-01-30', '2025-03-01', '2025-03-03',
+          '2025-05-05', '2025-05-06', '2025-06-06', '2025-08-15', '2025-10-03', '2025-10-05',
+          '2025-10-06', '2025-10-07', '2025-10-08', '2025-10-09', '2025-12-25'
+        ]);
+
         (fixed25Dates || []).forEach((dStr, idx) => {
           if (!dStr || dStr.length < 10) return;
           const parts = dStr.split('-');
           const y = parseInt(parts[0], 10);
           const m = parseInt(parts[1], 10);
-          const d = parseInt(parts[2], 10);
+
           const firstDay = new Date(y, m - 1, 1);
           const dayOfWeek = firstDay.getDay(); // 0(일)~6(토)
           const daysToThurs = (4 - dayOfWeek + 7) % 7;
-          const firstThurs = 1 + daysToThurs;
-          const secondThurs = firstThurs + 7;
-          if (d === secondThurs) {
-            set.add(idx);
+          const firstThursDay = 1 + daysToThurs;
+          const secondThursDay = firstThursDay + 7;
+
+          let targetDate = new Date(y, m - 1, secondThursDay);
+          
+          while (true) {
+            const ty = targetDate.getFullYear();
+            const tm = String(targetDate.getMonth() + 1).padStart(2, '0');
+            const td = String(targetDate.getDate()).padStart(2, '0');
+            const tStr = `${ty}-${tm}-${td}`;
+            const dw = targetDate.getDay();
+
+            if (dw === 0 || dw === 6 || holidays2025.has(tStr)) {
+              targetDate.setDate(targetDate.getDate() - 1);
+            } else {
+              if (dStr === tStr) {
+                set.add(idx);
+              }
+              break;
+            }
           }
         });
-        (displayCoords || []).forEach(c => {
-          if (c && (c.dte === 'D-0' || c.dte === 'D-0.0' || (c.daysToExpiry !== undefined && c.daysToExpiry <= 0.05))) {
-            const idx = Math.floor(c.xVal);
-            if (idx >= 0 && idx < fixed25Dates.length) set.add(idx);
-          }
-        });
+
         return set;
-      }, [fixed25Dates, displayCoords]);
+      }, [fixed25Dates]);
 
       const clickedIndex = focusedTickSeq !== null ? (displayCoords || []).findIndex(c => c && c.x === focusedTickSeq) : undefined;
       const maxDomain = 24.5;

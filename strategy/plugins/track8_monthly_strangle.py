@@ -97,9 +97,9 @@ class MonthlyWideStrangleStrategy:
         if not self.strangle_state["is_active"]:
             return {"status": "STANDBY"}
             
-        # 만기 3일 전 도달 시 강제 청산 집행
-        if dte <= 3.0:
-            logger.warning("🏁 [MONTHLY STRANGLE CUTOFF] 만기 D-3일(%.2f) 도달로 월간 양매수 포지션 강제 청산(Flat) 집행!", dte)
+        # 만기 D-4일 도달 시 계좌 안전성 및 감마 폭발 방지를 위한 강제 청산 집행
+        if dte <= 4.0:
+            logger.warning("🏁 [MONTHLY STRANGLE CUTOFF] 만기 D-4일(%.2f) 도달로 월간 양매수/양매도 포지션 강제 청산(Flat) 집행!", dte)
             spent = self.strangle_state["premium_spent"]
             qty_call = self.strangle_state["qty_call"]
             qty_put = self.strangle_state["qty_put"]

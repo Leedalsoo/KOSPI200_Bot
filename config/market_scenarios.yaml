@@ -1,0 +1,41 @@
+# 🌤️ KOSPI 200 HFT Market Simulation Scenarios Configuration
+# 파이썬 소스 코드를 손대지 않고 원하는 테스트 장세를 자유롭게 스위칭하는 독립 구성 파일
+
+active_scenario: "MODERATE_TREND"  # 선택 가능한 옵션: CALM, MODERATE_TREND, HIGH_VOLATILITY, CRASH_FLASH
+
+scenarios:
+  CALM:
+    name: "평온 횡보 장세"
+    description: "낮은 변동성 (4~8pt 미세 횡보) - 소형 틱 차익거래 중심"
+    base_volatility: 1.0
+    trend_drift_range: [-0.03, 0.03]
+    gap_magnitude_percent: [0.1, 0.5]
+    biweekly_shock_range: [4.0, 8.0]
+    shock_interval_days: 12
+
+  MODERATE_TREND:
+    name: "중간 변동성 + 추세 장세"
+    description: "중간 변동성(10~18pt) 및 일정한 방향성(상승/하락) 추세 드라이브 장세"
+    base_volatility: 1.75
+    trend_drift_range: [0.08, 0.22]     # 틱당 0.08~0.22pt 일정한 추세 이동
+    gap_magnitude_percent: [0.5, 1.3]    # 0.5% ~ 1.3% 시초가 갭 발생
+    biweekly_shock_range: [8.0, 15.0]    # 8.0 ~ 15.0pt 중간 추세 스파이크
+    shock_interval_days: 5               # 5 영업일 주기 추세 변동
+
+  HIGH_VOLATILITY:
+    name: "고변동성 추세 장세"
+    description: "VKOSPI 폭등 및 급격한 시초가 오버나잇 갭 발생 장세"
+    base_volatility: 2.85
+    trend_drift_range: [-0.35, 0.35]
+    gap_magnitude_percent: [1.2, 2.5]
+    biweekly_shock_range: [15.0, 25.0]
+    shock_interval_days: 3
+
+  CRASH_FLASH:
+    name: "극단 스트레스 장세"
+    description: "플래시 크래시 & 서킷브레이커 극단 시장 폭락"
+    base_volatility: 4.5
+    trend_drift_range: [-0.80, -0.30]
+    gap_magnitude_percent: [2.5, 5.0]
+    biweekly_shock_range: [25.0, 40.0]
+    shock_interval_days: 1

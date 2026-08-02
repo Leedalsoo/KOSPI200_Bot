@@ -1239,15 +1239,33 @@ async def simulation_loop() -> None:  # noqa: C901
 
 
                 else:
-                    # 🌤️ [CALM MODE] 평온 약추세 장세: 작은 무작위 변동 + 매우 약한 방향성 드리프트
-                    drift = 0.0  # 기본 드리프트 없음
-                    if not hasattr(calendar_sim, '_calm_drift'):
-                        calendar_sim._calm_drift = random.choice([-0.015, 0.0, 0.015])  # 약한 추세 방향 고정
-                    drift = calendar_sim._calm_drift
-                    # 5% 확률로 아주 가끔 추세 반전 (자연스러운 횡보/약추세)
-                    if random.random() < 0.005:
-                        calendar_sim._calm_drift *= -1
-                    base_change = random.uniform(-0.18, 0.18) + drift  # 틱당 최대 0.18pt 변동 (기존 0.5pt 대비 대폭 축소)
+                    # 🌤️ [CONFIGURABLE MARKET SCENARIO] config/market_scenarios.yaml 독립 시나리오 주입
+                    # 1. 파일에서 현재 선택된 시나리오 파라미터 로드 (기본: MODERATE_TREND)
+                    if not hasattr(calendar_sim, '_market_scenario'):
+                        scenario_file = os.path.join("config", "market_scenarios.yaml")
+                        active_sc = "MODERATE_TREND"
+                        drift_min, drift_max = 0.08, 0.22
+                        if os.path.exists(scenario_file):
+                            try:
+                                import yaml
+                                with open(scenario_file, "r", encoding="utf-8") as f:
+                                    sc_conf = yaml.safe_load(f)
+                                    active_sc = sc_conf.get("active_scenario", "MODERATE_TREND")
+                                    sc_info = sc_conf.get("scenarios", {}).get(active_sc, {})
+                                    drift_range = sc_info.get("trend_drift_range", [0.08, 0.22])
+                                    drift_min, drift_max = drift_range[0], drift_range[1]
+                                    logger.info("⚙️ [SCENARIO INJECTOR] 시나리오 모드: '%s' (%s) 주입 완료!", active_sc, sc_info.get('name', '중간 추세'))
+                            except Exception as ex:
+                                logger.warning("⚠️ [SCENARIO INJECTOR] 설정 파일 읽기 실패, 기본 MODERATE_TREND 모드 적용: %s", ex)
+                        
+                        calendar_sim._market_scenario = active_sc
+                        calendar_sim._sc_drift = random.choice([random.uniform(drift_min, drift_max), -random.uniform(drift_min, drift_max)])
+                    
+                    drift = calendar_sim._sc_drift
+                    # 10% 확률로 장중 추세 속도 미세 조율, 1% 확률로 드물게 추세 반전
+                    if random.random() < 0.01:
+                        calendar_sim._sc_drift *= -1
+                    base_change = random.uniform(-0.25, 0.25) + drift
 
                 current_price += base_change * active_vol
 
@@ -1684,7 +1702,7 @@ async def simulation_loop() -> None:  # noqa: C901
 
                 # 만기 D-3 ~ D-5 전략 1 신규 매도 진입 금지(Blackout)
                 is_blackout_rejection = False
-                if active_strategy == "Track1 (Defense)" and simulated_days_to_expiry <= 3.0:
+                if active_strategy == "Track1 (Defense)" and simulated_days_to_expiry <= 4.0:
                     if asset_type == "OPTIONS" and order_side == "SELL":
                         is_blackout_rejection = True
 
@@ -2508,8 +2526,8 @@ async def simulation_loop() -> None:  # noqa: C901
             if autobot_active and not track3_override and (t2_enabled or t2_has_pos):
                 current_atm = round(current_price / 2.5) * 2.5
                 
-                # 신규 트랩 설치는 t2_enabled 일 때만 실행
-                if t2_enabled and simulated_days_to_expiry >= 3.0 and not track2_strategy.trap_state["is_active"]:
+                # 신규 트랩 설치는 t2_enabled 및 D-4(4.0) 이상 일 때만 실행
+                if t2_enabled and simulated_days_to_expiry >= 4.0 and not track2_strategy.trap_state["is_active"]:
                     trap_eval = track2_strategy.build_asymmetric_trap(current_atm)
                     if trap_eval.get("status") == "SUCCESS":
                         trap_qty = 0 if total_equity < 15_000_000.0 else max(1, int(total_equity / 30_000_000.0))
@@ -2592,8 +2610,8 @@ async def simulation_loop() -> None:  # noqa: C901
             if autobot_active and not track3_override and (t4_enabled or t4_has_pos):
                 current_atm = round(current_price / 2.5) * 2.5
                 
-                # 신규 베이스캠프 양매수 구축은 t4_enabled 일 때만 실행
-                if t4_enabled and simulated_days_to_expiry >= 3.0 and not track4_strategy.scalp_state.get("is_active"):
+                # 신규 베이스캠프 양매수 구축은 t4_enabled 및 D-4(4.0) 이상 일 때만 실행
+                if t4_enabled and simulated_days_to_expiry >= 4.0 and not track4_strategy.scalp_state.get("is_active"):
                     gamma_qty = 0 if total_equity < 15_000_000.0 else max(1, int(total_equity / 30_000_000.0))
                     if gamma_qty > 0:
                         track4_strategy.scalp_state["is_active"] = True
