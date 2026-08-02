@@ -84,7 +84,7 @@
 
   <script type="text/babel">
     const { useState, useEffect, useCallback, useRef, memo, useMemo } = React;
-    const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ScatterChart, Scatter, ReferenceLine, ResponsiveContainer, Brush, Cell } = Recharts;
+    const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ScatterChart, Scatter, ReferenceLine, ReferenceArea, ResponsiveContainer, Brush, Cell } = Recharts;
 
 
     const MAX_POINTS = 30000;
@@ -188,54 +188,51 @@
     // ==============================================================================
     // 2. 수익률 추이 차트 컴포넌트
     // ==============================================================================
-    // 2. 실시간 누적 수익률 차트 컴포넌트 (20영업일 domain 0~19 고정 등간격 X축 및 왼쪽부터 차오르는 손익곡선)
+    // 2. 실시간 누적 수익률 차트 컴포넌트 (25영업일 domain 0~24 고정 등간격 X축 및 한 달물 전체 생애주기 조망)
     // ==============================================================================
     const ProfitChart = memo(({ coords, focusedTickSeq }) => {
-      // 1. coords 내의 모든 영업일(date) 유니크 목록 추적
+      // 1. coords 내의 모든 영업일(date) 유니크 목록 추적 (엄격한 알파벳/날짜 오름차순 100% 정렬!)
       const uniqueDates = useMemo(() => {
-        const dates = [];
+        const datesSet = new Set();
         (coords || []).forEach(c => {
-          if (c && c.date && !dates.includes(c.date)) {
-            dates.push(c.date);
-          }
+          if (c && c.date) datesSet.add(c.date);
         });
-        return dates;
+        return Array.from(datesSet).sort((a, b) => a.localeCompare(b));
       }, [coords]);
 
-      // 2. 20개 고정 영업일 틱 날짜 배열(20개) 및 각 데이터 포인트의 수치형 dayIndex 매핑
-      const { fixed20Dates, displayCoords, ticks20 } = useMemo(() => {
+      // 2. 25개 고정 영업일 틱 날짜 배열(25개) 및 각 데이터 포인트의 수치형 dayIndex 매핑
+      const { fixed25Dates, displayCoords, ticks25 } = useMemo(() => {
         if (!coords || coords.length === 0) {
-          return { fixed20Dates: [], displayCoords: [], ticks20: [] };
+          return { fixed25Dates: [], displayCoords: [], ticks25: [] };
         }
 
         const totalDays = uniqueDates.length;
-        let target20Days = [...uniqueDates];
+        let target25Days = [...uniqueDates];
 
-        if (totalDays > 20) {
-          // 20영업일 초과 시 (차월 시작): 최근 20영업일 롤링 유지
-          target20Days = uniqueDates.slice(-20);
-        } else if (totalDays < 20) {
-          // 20영업일 미만 (테스트 시작 초기): 첫 날짜 기준으로 20개 영업일을 미리 20개 등간격 틱으로 형성!
-          const firstDateStr = uniqueDates[0] || '2025-01-02';
+        if (totalDays > 25) {
+          target25Days = uniqueDates.slice(-25);
+        } else if (totalDays < 25) {
+          const firstDateStr = uniqueDates[0] || '2025-01-10';
           const baseDate = new Date(firstDateStr);
-          while (target20Days.length < 20) {
+          while (target25Days.length < 25) {
             baseDate.setDate(baseDate.getDate() + 1);
             if (baseDate.getDay() !== 0 && baseDate.getDay() !== 6) {
               const y = baseDate.getFullYear();
               const m = String(baseDate.getMonth() + 1).padStart(2, '0');
               const d = String(baseDate.getDate()).padStart(2, '0');
-              target20Days.push(`${y}-${m}-${d}`);
+              const dateStr = `${y}-${m}-${d}`;
+              if (!target25Days.includes(dateStr)) target25Days.push(dateStr);
             }
           }
         }
+        
+        target25Days.sort((a, b) => a.localeCompare(b));
 
-        // 날짜별 수치 인덱스 Map (date -> 0~19)
         const dateToIdxMap = new Map();
-        target20Days.forEach((dStr, idx) => {
+        target25Days.forEach((dStr, idx) => {
           dateToIdxMap.set(dStr, idx);
         });
 
-        // 영업일별 틱 개수 집계
         const dateGroups = new Map();
         coords.forEach(c => {
           if (c && c.date && dateToIdxMap.has(c.date)) {
@@ -252,7 +249,6 @@
             const currentInDay = (dateCounters.get(c.date) || 0);
             dateCounters.set(c.date, currentInDay + 1);
 
-            // 0~19 수치 공간에서 해당 영업일 지점에 위치하도록 xVal 할당
             const fractionalOffset = totalInDay > 1 ? (currentInDay / (totalInDay - 1)) * 0.95 : 0;
             mappedCoords.push({
               ...c,
@@ -261,38 +257,149 @@
           }
         });
 
-        const ticksArr = Array.from({ length: 20 }, (_, i) => i);
+        mappedCoords.sort((a, b) => a.xVal - b.xVal);
+
+        const ticksArr = Array.from({ length: 25 }, (_, i) => i);
 
         return {
-          fixed20Dates: target20Days,
-          displayCoords: mappedCoords.length > 0 ? mappedCoords : coords,
-          ticks20: ticksArr
+          fixed25Dates: target25Days,
+          displayCoords: mappedCoords,
+          ticks25: ticksArr
         };
       }, [coords, uniqueDates]);
 
+      // 3. 동적 KOSPI 200 옵션 만기일 (둘째 주 목요일 및 c.dte === 'D-0') 인덱스 세트 추적
+      const expiryIndicesSet = useMemo(() => {
+        const set = new Set();
+        (fixed25Dates || []).forEach((dStr, idx) => {
+          if (!dStr || dStr.length < 10) return;
+          const parts = dStr.split('-');
+          const y = parseInt(parts[0], 10);
+          const m = parseInt(parts[1], 10);
+          const d = parseInt(parts[2], 10);
+          const firstDay = new Date(y, m - 1, 1);
+          const dayOfWeek = firstDay.getDay(); // 0(일)~6(토)
+          const daysToThurs = (4 - dayOfWeek + 7) % 7;
+          const firstThurs = 1 + daysToThurs;
+          const secondThurs = firstThurs + 7;
+          if (d === secondThurs) {
+            set.add(idx);
+          }
+        });
+        (displayCoords || []).forEach(c => {
+          if (c && (c.dte === 'D-0' || c.dte === 'D-0.0' || (c.daysToExpiry !== undefined && c.daysToExpiry <= 0.05))) {
+            const idx = Math.floor(c.xVal);
+            if (idx >= 0 && idx < fixed25Dates.length) set.add(idx);
+          }
+        });
+        return set;
+      }, [fixed25Dates, displayCoords]);
+
       const clickedIndex = focusedTickSeq !== null ? (displayCoords || []).findIndex(c => c && c.x === focusedTickSeq) : undefined;
+      const maxDomain = 24.5;
 
       return (
         <div style={{ width: '100%', height: '300px', position: 'relative', overflow: 'hidden' }}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={displayCoords} activeTooltipIndex={clickedIndex} margin={{ top: 25, right: 30, left: 10, bottom: 20 }}>
+              {/* 🎨 1. 짝수 영업일 교대 배경 밴드 */}
+              {ticks25.map((dayIdx) => {
+                if (dayIdx % 2 === 0 && dayIdx < fixed25Dates.length && !expiryIndicesSet.has(dayIdx)) {
+                  return (
+                    <ReferenceArea
+                      key={`band-${dayIdx}`}
+                      x1={dayIdx}
+                      x2={Math.min(dayIdx + 1, maxDomain)}
+                      fill="rgba(30, 41, 59, 0.45)"
+                      fillOpacity={0.6}
+                      ifOverflow="extendDomain"
+                    />
+                  );
+                }
+                return null;
+              })}
+
+              {/* 🚨 1-B. [동적 신설] 실제 KOSPI 200 옵션 만기일(D-0) 전용 황금색 하이라이트 배경 영역 */}
+              {Array.from(expiryIndicesSet).map((dayIdx) => (
+                <ReferenceArea
+                  key={`expiry-day-area-${dayIdx}`}
+                  x1={dayIdx}
+                  x2={Math.min(dayIdx + 1, maxDomain)}
+                  fill="rgba(245, 158, 11, 0.20)"
+                  stroke="rgba(245, 158, 11, 0.5)"
+                  strokeWidth={1}
+                  strokeDasharray="2 2"
+                  ifOverflow="extendDomain"
+                />
+              ))}
+
+              {/* 🎨 2. 영업일 수직 경계 구분선 */}
+              {ticks25.map((dayIdx) => {
+                if (expiryIndicesSet.has(dayIdx)) return null; // 만기일은 굵은 황금선으로 대체
+                return (
+                  <ReferenceLine
+                    key={`sep-${dayIdx}`}
+                    x={dayIdx}
+                    stroke="#38BDF8"
+                    strokeWidth={1}
+                    strokeDasharray="3 3"
+                    opacity={0.3}
+                  />
+                );
+              })}
+
+              {/* 🚨 2-B. [동적 신설] 실제 D-0 만기일 (EXPIRY DAY) 수직 굵은 황금 레퍼런스 라인 & 라벨 */}
+              {Array.from(expiryIndicesSet).map((dayIdx) => (
+                <ReferenceLine
+                  key={`expiry-day-line-${dayIdx}`}
+                  x={dayIdx}
+                  stroke="#F59E0B"
+                  strokeWidth={2.5}
+                  label={{
+                    value: '🚨 D-0 만기일 (EXPIRY DAY)',
+                    fill: '#F59E0B',
+                    fontSize: 11,
+                    fontWeight: '900',
+                    position: 'top',
+                    dy: -8
+                  }}
+                />
+              ))}
+
               <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" opacity={0.3} />
               <XAxis
                 type="number"
                 dataKey="xVal"
-                domain={[0, 19.5]}
-                ticks={ticks20}
+                domain={[0, maxDomain]}
+                ticks={ticks25}
                 stroke="#94A3B8"
                 tickLine={false}
                 axisLine={{ stroke: '#334155' }}
-                tick={{ fontSize: 10, fill: '#94A3B8' }}
-                tickFormatter={(val) => {
+                tick={({ x, y, payload }) => {
+                  const val = payload.value;
                   const idx = Math.floor(val);
-                  if (idx >= 0 && idx < fixed20Dates.length) {
-                    const dateStr = fixed20Dates[idx];
-                    return dateStr && dateStr.length >= 10 ? dateStr.slice(5) : dateStr; // "MM-DD" 월일 형태로 20개 날짜 쫙 표기
+                  const isExpiry = expiryIndicesSet.has(idx);
+                  let dateLabel = '';
+                  if (idx >= 0 && idx < fixed25Dates.length) {
+                    const dateStr = fixed25Dates[idx];
+                    dateLabel = dateStr && dateStr.length >= 10 ? dateStr.slice(5) : dateStr;
                   }
-                  return '';
+                  if (!dateLabel) return null;
+                  return (
+                    <g transform={`translate(${x},${y})`}>
+                      <text
+                        x={0}
+                        y={0}
+                        dy={12}
+                        textAnchor="middle"
+                        fill={isExpiry ? '#F59E0B' : '#94A3B8'}
+                        fontSize={isExpiry ? 10 : 9}
+                        fontWeight={isExpiry ? 900 : 400}
+                      >
+                        {isExpiry ? `🚨${dateLabel}(D-0만기)` : dateLabel}
+                      </text>
+                    </g>
+                  );
                 }}
               />
               <YAxis
@@ -314,6 +421,10 @@
         </div>
       );
     });
+
+
+
+
 
 
     // ==============================================================================
@@ -618,7 +729,7 @@
                                 <span>행사가: {pos.strike}</span>
                               </span>
                               <span>
-                                {pos.price}P | <span style={{ color: pos.side === 'BUY' ? '#EF4444' : '#3B82F6', fontWeight: 600 }}>{pos.side === 'BUY' ? `매수` : `매도`} {pos.qty}</span>계약
+                                {typeof pos.price === 'number' ? pos.price.toFixed(2) : (Number(pos.price) || 0).toFixed(2)}P | <span style={{ color: pos.side === 'BUY' ? '#EF4444' : '#3B82F6', fontWeight: 600 }}>{pos.side === 'BUY' ? `매수` : `매도`} {pos.qty}</span>계약
                                 {pos.is_locked && <span style={{ marginLeft: '4px', fontSize: '9px', padding: '1px 3px', backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#EF4444', borderRadius: '3px', border: '1px solid #EF4444' }}>HedgeLock</span>}
                               </span>
                             </div>
@@ -647,7 +758,7 @@
                       <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontFamily: 'monospace', color: '#E2E8F0' }}>
                         <span>[{ins.type || "OPT"}] 행사가: <span style={{ color: '#F59E0B', fontWeight: 700 }}>{ins.strike}</span></span>
                         <span>
-                          프리미엄: {ins.price}P | <span style={{ color: '#EF4444', fontWeight: 700 }}>매수 {ins.qty}</span>계약
+                          프리미엄: {typeof ins.price === 'number' ? ins.price.toFixed(2) : (Number(ins.price) || 0).toFixed(2)}P | <span style={{ color: '#EF4444', fontWeight: 700 }}>매수 {ins.qty}</span>계약
                         </span>
                       </div>
                     ))}
@@ -1143,7 +1254,7 @@
                       stratFutures.map((f, i) => (
                         <div key={`fut-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: f.side === 'BUY' ? '#EF4444' : '#3B82F6' }}>
                           <span>[선물] <strong style={{ textDecoration: 'underline' }}>{f.side === 'BUY' ? '매수' : '매도'}</strong> {f.qty}계약</span>
-                          <span>@{f.price}P {f.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: '#334155', borderRadius: '3px', color: '#94A3B8' }}>{f.tag_id}</span>}</span>
+                          <span>@{typeof f.price === 'number' ? f.price.toFixed(2) : (Number(f.price) || 0).toFixed(2)}P {f.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: '#334155', borderRadius: '3px', color: '#94A3B8' }}>{f.tag_id}</span>}</span>
                         </div>
                       ))
                     ) : (
@@ -1155,7 +1266,7 @@
                       stratCalls.map((c, i) => (
                         <div key={`call-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#EF4444' }}>
                           <span>[CALL] {c.side === 'BUY' ? '매수' : '매도'} K:{c.strike}</span>
-                          <span>{c.price}P ({c.qty}계약) {c.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(239, 68, 68, 0.2)', borderRadius: '3px', color: '#EF4444', border: '1px solid #EF4444' }}>{c.tag_id}</span>}</span>
+                          <span>{typeof c.price === 'number' ? c.price.toFixed(2) : (Number(c.price) || 0).toFixed(2)}P ({c.qty}계약) {c.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(239, 68, 68, 0.2)', borderRadius: '3px', color: '#EF4444', border: '1px solid #EF4444' }}>{c.tag_id}</span>}</span>
                         </div>
                       ))
                     ) : (
@@ -1167,7 +1278,7 @@
                       stratPuts.map((p, i) => (
                         <div key={`put-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#3B82F6' }}>
                           <span>[PUT] {p.side === 'BUY' ? '매수' : '매도'} K:{p.strike}</span>
-                          <span>{p.price}P ({p.qty}계약) {p.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: '3px', color: '#3B82F6', border: '1px solid #3B82F6' }}>{p.tag_id}</span>}</span>
+                          <span>{typeof p.price === 'number' ? p.price.toFixed(2) : (Number(p.price) || 0).toFixed(2)}P ({p.qty}계약) {p.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: '3px', color: '#3B82F6', border: '1px solid #3B82F6' }}>{p.tag_id}</span>}</span>
                         </div>
                       ))
                     ) : (
@@ -1778,7 +1889,7 @@
     const Dashboard = () => {
       const [isConnected, setIsConnected] = useState(false);
       // 내부 가상 시간을 Date 객체로 통합 관리하여 프론트엔드 자체 자율 타이머 구동
-      const [virtualDateTime, setVirtualDateTime] = useState(new Date("2025-01-01T09:00:00"));
+      const [virtualDateTime, setVirtualDateTime] = useState(new Date("2025-01-10T09:00:00"));
       const [regime, setRegime] = useState('NEUTRAL');
       const [bidAskSpread, setBidAskSpread] = useState(0.05); // 🛡️ 호가공백 상태
       const [coords, setCoords] = useState([]);
@@ -2558,6 +2669,10 @@
 
             {/* 🛡️ 실시간 파생상품 옵션 & 선물 보유 자산 현황 판넬 — 🔇 HIDDEN (나중에 활용 가능) */}
             {false && <ActivePositionsMonitor portfolioOptions={portfolioOptions} futuresQty={futuresQty} />}
+
+
+
+
 
             {/* 📜 [신설] 전략별 체결 & 청산 완료 히스토리 판넬 (Completed Trades History) */}
             <CompletedTradesHistory eventLogs={eventLogs} />

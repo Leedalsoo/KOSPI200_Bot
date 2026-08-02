@@ -76,20 +76,20 @@ TRADING_DAY_EVENTS = {
 }
 
 class CalendarSimulator:
-    def __init__(self, start_date_str: str = "2025-01-01"):
-        # 역사적 영업일 대신 2025-01-01부터 1일씩 진짜 전진하는 리얼 달력 시뮬레이션
+    def __init__(self, start_date_str: str = "2025-01-10"):
+        # 1월 만기일(1/9 목) 직후인 2025-01-10(금)부터 시작하여 꽉 찬 1개월 옵션 만기 주기 백테스트
         self.current_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         self.current_time = self.current_date.replace(hour=9, minute=0, second=0)
         self.seconds_per_tick = 30  # 1틱당 30초씩 시간 전진
         
-        # 🛡️ 만기 잔여일 정수 관리 (초기 D-20 설정)
-        self.remaining_days = 20
+        # 🛡️ 동적 KOSPI 200 옵션 만기일(둘째 주 목요일) 및 잔여 영업일 연산
+        self.current_expiry = self.get_next_kospi200_expiry(self.current_date.date())
+        self.remaining_days = self.calc_remaining_trading_days(self.current_date.date(), self.current_expiry)
         self.simulated_days_to_expiry = float(self.remaining_days)
 
         # 시작 가상 일시 기록
         self.start_datetime_str = self.current_time.strftime("%Y-%m-%d %H:%M:%S")
-        expiry_dt = self.current_time + timedelta(days=self.remaining_days)
-        self.expiry_datetime_str = expiry_dt.strftime("%Y-%m-%d 15:30:00")
+        self.expiry_datetime_str = datetime.combine(self.current_expiry, datetime.min.time()).strftime("%Y-%m-%d 15:30:00")
 
     def is_korean_holiday(self, d: date) -> bool:
         """토요일, 일요일 및 한국 대표 법정공휴일 판정"""
@@ -133,15 +133,46 @@ class CalendarSimulator:
         }
         return m_d in fixed_holidays
 
+    def get_next_kospi200_expiry(self, from_date: date) -> date:
+        """현재 날짜 기준 KOSPI 200 옵션 만기일 (매월 2번째 목요일, 공휴일 시 직전 영업일) 정밀 산출"""
+        def calc_second_thursday(y: int, m: int) -> date:
+            first_day = date(y, m, 1)
+            days_to_thurs = (3 - first_day.weekday()) % 7
+            first_thurs = first_day + timedelta(days=days_to_thurs)
+            second_thurs = first_thurs + timedelta(days=7)
+            
+            target = second_thurs
+            while self.is_korean_holiday(target):
+                target -= timedelta(days=1)
+            return target
+
+        exp = calc_second_thursday(from_date.year, from_date.month)
+        if from_date > exp:
+            y = from_date.year + 1 if from_date.month == 12 else from_date.year
+            m = 1 if from_date.month == 12 else from_date.month + 1
+            exp = calc_second_thursday(y, m)
+        return exp
+
+    def calc_remaining_trading_days(self, from_date: date, expiry_date: date) -> int:
+        """from_date부터 expiry_date까지의 실제 KRX 영업일수 (남은 DTE 정수) 계산"""
+        if from_date >= expiry_date:
+            return 0
+        curr = from_date
+        count = 0
+        while curr < expiry_date:
+            curr += timedelta(days=1)
+            if not self.is_korean_holiday(curr):
+                count += 1
+        return count
+
     def tick(self, elapsed_real_seconds: float = 0.1) -> Tuple[str, str, bool, bool]:
         # 1초당 300초 전진 비율
         advance_seconds = max(1, int(elapsed_real_seconds * 300.0))
         self.current_time += timedelta(seconds=advance_seconds)
 
-        # 주말 및 공휴일인 경우 즉시 다음 영업일 개장 시각(09:00)으로 워프 처리하여 무한 멈춤 방어
+        # 주말 및 공휴일인 경우 즉시 다음 영업일 개장 시각(09:00)으로 워프 처리
         date_changed = False
         while self.is_korean_holiday(self.current_time.date()):
-            # [수정] 휴일이나 주말을 건너뛸 때는 영업일 기준 잔여일(D-Day)을 차감하지 않습니다.
             self.current_date += timedelta(days=1)
             self.current_time = self.current_date.replace(hour=9, minute=0, second=0)
             date_changed = True
@@ -162,17 +193,13 @@ class CalendarSimulator:
         start_of_day = self.current_time.replace(hour=9, minute=0, second=0)
         elapsed_sec = (self.current_time - start_of_day).total_seconds()
         
-        # 주말 및 공휴일 판정 (워프 루프 덕분에 기본 False이나 안전망 차원 유지)
         is_holiday = self.is_korean_holiday(self.current_time.date())
-        
-        # 정규 거래 장이 열리는 시간인지 판정 (휴일이 아니고 09:00:00 ~ 15:30:00)
         is_market_open = (not is_holiday) and (0 <= elapsed_sec <= 23400)
 
         if is_market_open:
             day_progress = min(1.0, max(0.0, elapsed_sec / 23400.0))
             self.simulated_days_to_expiry = max(0.0, round(self.remaining_days - day_progress, 2))
         else:
-            # 장외 시간 및 휴일에는 소수점 감산 없이 정수 유지
             self.simulated_days_to_expiry = max(0.0, float(self.remaining_days))
 
         # 15:30:00 하루 마감 및 날짜 변경
@@ -180,23 +207,22 @@ class CalendarSimulator:
 
         if self.current_time >= day_end:
             date_changed = True
-            self.remaining_days -= 1
-            if self.remaining_days < 0:
-                self.remaining_days = 20
             
             # 다음 달력 날짜로 하루 전진
             self.current_date += timedelta(days=1)
             self.current_time = self.current_date.replace(hour=9, minute=0, second=0)
 
-            # 다음 날이 또 주말/공휴일이라면 영업일이 나올 때까지 연속 워프
+            # 주말/공휴일 워프
             while self.is_korean_holiday(self.current_time.date()):
-                # 휴일/주말 워프 중에는 D-Day를 깎지 않습니다. (영업일 기준)
                 self.current_date += timedelta(days=1)
                 self.current_time = self.current_date.replace(hour=9, minute=0, second=0)
 
-        # 만기일 동적 계산
-        expiry_dt = self.current_time + timedelta(days=self.remaining_days)
-        self.expiry_datetime_str = expiry_dt.strftime("%Y-%m-%d 15:30:00")
+            # 영업일 이동 후 만기일 및 남은 영업일수(DTE) 실시간 재계산
+            self.current_expiry = self.get_next_kospi200_expiry(self.current_date.date())
+            self.remaining_days = self.calc_remaining_trading_days(self.current_date.date(), self.current_expiry)
+
+        # 만기일 동적 스트링 갱신
+        self.expiry_datetime_str = datetime.combine(self.current_expiry, datetime.min.time()).strftime("%Y-%m-%d 15:30:00")
 
         date_str = self.current_time.strftime("%Y-%m-%d")
         time_str = self.current_time.strftime("%H:%M:%S")
@@ -251,7 +277,7 @@ total_equity: float = initial_capital
 # 🛡️ [캘린더 및 HWM / 보험 및 외부 감시 상태 정의]
 daily_hwm: float = initial_capital
 highest_equity_today: float = initial_capital
-calendar_sim = CalendarSimulator("2025-01-01")
+calendar_sim = CalendarSimulator("2025-01-10")
 overnight_insurance_bought_today: bool = False
 insurance_active_this_month: bool = False
 insurance_reentry_needed_today: bool = False
@@ -425,6 +451,8 @@ RUNTIME_MODE = os.environ.get("RUNTIME_MODE", "SIMULATION")
 if len(sys.argv) > 1 and sys.argv[1].upper() in ["SIMULATION", "PAPER", "LIVE"]:
     RUNTIME_MODE = sys.argv[1].upper()
 
+DASHBOARD_AUTH_TOKEN = os.environ.get("DASHBOARD_AUTH_TOKEN", "").strip()
+
 def _recalc_margin(options_portfolio, futures_qty, price, capital, margin_haircut=1.0):
     sell_call_qty = sum(int(p.get("qty", 0)) for p in options_portfolio if p.get("side") == "SELL" and p.get("type") == "CALL")
     buy_call_qty = sum(int(p.get("qty", 0)) for p in options_portfolio if p.get("side") == "BUY" and p.get("type") == "CALL")
@@ -497,7 +525,7 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
         last_tracked_hour = -1
         
         # 최초 기동이거나 롤오버(월 단위 리셋) 시에만 달력과 지수 위치 초기화
-        calendar_sim = CalendarSimulator("2025-01-01")
+        calendar_sim = CalendarSimulator("2025-01-10")
         current_price    = round(random.uniform(300.0, 400.0), 2)
         prev_price       = current_price
     else:
@@ -619,7 +647,43 @@ async def handler(websocket: Any) -> None:
         async for message in websocket:
             try:
                 data = orjson.loads(message)
+
+                # ── 🔑 [PAPER / LIVE 모드 토큰 인증 검증] ──────────────────────────
+                if RUNTIME_MODE in ("PAPER", "LIVE") and DASHBOARD_AUTH_TOKEN:
+                    provided_token = data.get("auth_token", "")
+                    if provided_token != DASHBOARD_AUTH_TOKEN:
+                        logger.warning("⛔ [AUTH FAILED] RUNTIME_MODE=%s 에서 인증 토큰 검증 실패!", RUNTIME_MODE)
+                        await websocket.send(orjson.dumps({
+                            "type": "auth_rejected",
+                            "reason": "invalid_auth_token"
+                        }).decode('utf-8'))
+                        continue
+
+                # ── 🔐 [RUNTIME_MODE 액션 권한 매트릭스] ─────────────────────────
+                # SIMULATION : 모든 액션 허용 (로컬 테스트 편의)
+                # PAPER/LIVE : 봇 시작·전략 토글만 허용, 시뮬레이션 설정 변경·시나리오 주입 차단
+                _ACTION_PERMISSIONS: Dict[str, set] = {
+                    "SIMULATION": {"start_bot", "update_settings", "update_strategy_flags", "inject_scenario"},
+                    "PAPER":      {"start_bot", "update_strategy_flags"},
+                    "LIVE":       {"start_bot", "update_strategy_flags"},
+                }
+                _req_action = data.get("action")
+                if _req_action:
+                    _allowed = _ACTION_PERMISSIONS.get(RUNTIME_MODE, set())
+                    if _req_action not in _allowed:
+                        logger.warning(
+                            "⛔ [ACL BLOCKED] action='%s' RUNTIME_MODE=%s 에서 차단됨 (허용: %s)",
+                            _req_action, RUNTIME_MODE, sorted(_allowed)
+                        )
+                        await websocket.send(orjson.dumps({
+                            "type": "action_rejected",
+                            "action": _req_action,
+                            "reason": f"not_allowed_in_{RUNTIME_MODE.lower()}_mode"
+                        }).decode('utf-8'))
+                        continue
+
                 if data.get("action") == "start_bot":
+
                     if not autobot_active:
                         autobot_active = True
                         logger.info("🚀 [AUTO BOT START] 대시보드 커맨드 수신: 오토봇 알고리즘 매매가 활성화되었습니다!")
@@ -854,6 +918,8 @@ async def simulation_loop() -> None:  # noqa: C901
                 })
                 
                 sim_day_in_month += 1
+                if simulated_days_to_expiry > 0.5:
+                    already_rolled_this_month = False
 
                 # ── 🌤️ [CALM MODE] 2주 간격 (4~8pt 자율선택) 약충격 주입 (평온 약추세 장세 테스트) ──
                 extreme_vol_day_countdown -= 1
@@ -892,13 +958,9 @@ async def simulation_loop() -> None:  # noqa: C901
                         
                     current_month_str = month_str
                     sim_month_count += 1
-                    already_rolled_this_month = False
-                    calendar_sim.remaining_days = 20
-                    calendar_sim.simulated_days_to_expiry = 20.0
-                    simulated_days_to_expiry = 20.0
                     
-                    logger.info("📅 [MONTHLY TRANSITION] 새로운 월(%s) 시작! 루프 %d. 차월 세션 정상 진입 (이월 자본금: ₩%s | 시작 지수: %.2fpt)", 
-                                month_str, sim_month_count, f"{total_equity:,.0f}", current_price)
+                    logger.info("📅 [MONTHLY TRANSITION] 새로운 달력 월(%s) 진입! 루프 %d. (현재 진행중 옵션 만기일: %s | 자본금: ₩%s)", 
+                                month_str, sim_month_count, calendar_sim.current_expiry.strftime("%Y-%m-%d"), f"{total_equity:,.0f}")
 
                 
                 # [전략 5] 시초가 갭 괴리 감지 및 역방향 저격 진입 판단 (장세 지표 연동 동적 Z-Score 적용)
@@ -1014,10 +1076,11 @@ async def simulation_loop() -> None:  # noqa: C901
                 insurance_active_this_month = False
                 insurance_reentry_needed_today = False
                 
-                # 새로운 차월물 D-Day 리셋 (차월 20 영업일 설정)
-                calendar_sim.remaining_days = 20
-                calendar_sim.simulated_days_to_expiry = 20.0
-                simulated_days_to_expiry = 20.0
+                # 새로운 차월물 D-Day 동적 정밀 리셋 (실제 차월 KRX 영업일수 계산)
+                calendar_sim.current_expiry = calendar_sim.get_next_kospi200_expiry(calendar_sim.current_date.date())
+                calendar_sim.remaining_days = calendar_sim.calc_remaining_trading_days(calendar_sim.current_date.date(), calendar_sim.current_expiry)
+                calendar_sim.simulated_days_to_expiry = float(calendar_sim.remaining_days)
+                simulated_days_to_expiry = float(calendar_sim.remaining_days)
                 
                 # 롤오버 이벤트 기록
                 rollover_event_log.append({
@@ -1369,8 +1432,9 @@ async def simulation_loop() -> None:  # noqa: C901
             # ── 6. PnL 원 신호 생성 ──────────────────────────────────────
             raw_pnl = 0.0
 
-            # ── 7. 증거금 비율 산출 ──────────────────────────────────────
-            # (루프 시작 시 계산된 used_margin 및 margin_ratio 값 재사용)
+            # ── 7. 증거금 비율 산출 (지연 제거: 최신 포지션/가격 기반 실시간 재계산) ──
+            margin_haircut = 2.0 if (HARDENED_STRESS_MODE and iv_explosion_active) else 1.0
+            used_margin, margin_ratio = _recalc_margin(portfolio_options, current_position_qty, current_price, current_capital, margin_haircut)
 
             if margin_ratio > 90.0:
                 risk_level = "DANGER"
@@ -1804,11 +1868,13 @@ async def simulation_loop() -> None:  # noqa: C901
             calculated_fee += covered_fee
 
             # ── 10.2 MarginDietGuard / ZeroLossGuard 비상 청산 감지 ───────────
-            # (루프 시작 시 계산된 used_margin 및 margin_ratio 값 재사용)
+            # (지연 제거: 비상 청산 감지 직전 실시간 마진/손익 재계산)
+            margin_haircut = 2.0 if (HARDENED_STRESS_MODE and iv_explosion_active) else 1.0
+            used_margin, margin_ratio = _recalc_margin(portfolio_options, current_position_qty, current_price, current_capital, margin_haircut)
             
             if autobot_active and emergency_cooldown_ticks == 0 and (margin_ratio > 92.0 or total_equity < (daily_hwm * 0.70)):
                 if len(portfolio_options) > 0 or current_position_qty != 0:
-                    logger.warning("🚨 [EMERGENCY PROTECTION] MarginDietGuard/ZeroLossGuard 트리거! 전체 포지션 강제 청산 집행.")
+                    logger.warning("🚨 [EMERGENCY PROTECTION] MarginDietGuard/ZeroLossGuard 트리거! 위험 매도/선물 포지션 비상 청산 집행 (Track 1 테일 보험 제외).")
                     guard_trigger_count += 1
                     emergency_cooldown_ticks = 15
                     
@@ -1822,8 +1888,19 @@ async def simulation_loop() -> None:  # noqa: C901
                     liq_fee += futures_liq_value * FUTURES_FEE_RATE
                     
                     calculated_fee += liq_fee
-                    portfolio_options.clear()
+                    
+                    # 🛡️ Track 1 (Defense) 넓은 양매수(BUY) 테일 보험 포지션은 절대로 지우지 않고 보존!
+                    t1_long_buys = [p for p in portfolio_options if p.get("activeStrategy") == "Track1 (Defense)" and p.get("side") == "BUY"]
+                    portfolio_options = t1_long_buys
                     current_position_qty = 0
+                    
+                    # 만약 t1_long_buys가 전혀 없으면 즉시 넓은 양매수 재건!
+                    if not t1_long_buys and track1_strategy:
+                        rebuild_sigs = track1_strategy.on_market_open(current_price)
+                        for sig in rebuild_sigs:
+                            if sig.get("action") == "TAIL_DEFENSE_BUILD":
+                                portfolio_options.append({"type": "CALL", "side": "BUY", "strike": sig.get("call_strike"), "price": 1.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1 (Defense)", "tag_id": "TAIL"})
+                                portfolio_options.append({"type": "PUT", "side": "BUY", "strike": sig.get("put_strike"), "price": 1.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1 (Defense)", "tag_id": "TAIL"})
                     
                     # 🛡️ 청산 후 재진입 가능하도록 전략 상태 초기화
                     if track2_strategy:
@@ -1890,12 +1967,12 @@ async def simulation_loop() -> None:  # noqa: C901
                                     if t_type == "SHORT_SPREAD":
                                         current_position_qty -= arb_qty
                                         track3_net_qty = -arb_qty
-                                        portfolio_options.append({"type": "FUTURES", "side": "SELL", "strike": 0, "price": current_price, "qty": arb_qty, "activeStrategy": "Track3 (Arbitrage)", "tag_id": "ARB"})
+                                        portfolio_options.append({"type": "FUTURES", "side": "SELL", "strike": 0, "price": round(current_price, 2), "qty": arb_qty, "activeStrategy": "Track3 (Arbitrage)", "tag_id": "ARB"})
                                         logger.info("⚡ [TRACK 3 ARB] %s - 스프레드 매도(선물 숏) %d계약 진입! (진입가: %.2f)", signal.get('reason'), arb_qty, current_price)
                                     elif t_type == "LONG_SPREAD":
                                         current_position_qty += arb_qty
                                         track3_net_qty = arb_qty
-                                        portfolio_options.append({"type": "FUTURES", "side": "BUY", "strike": 0, "price": current_price, "qty": arb_qty, "activeStrategy": "Track3 (Arbitrage)", "tag_id": "ARB"})
+                                        portfolio_options.append({"type": "FUTURES", "side": "BUY", "strike": 0, "price": round(current_price, 2), "qty": arb_qty, "activeStrategy": "Track3 (Arbitrage)", "tag_id": "ARB"})
                                         logger.info("⚡ [TRACK 3 ARB] %s - 스프레드 매수(선물 롱) %d계약 진입! (진입가: %.2f)", signal.get('reason'), arb_qty, current_price)
                                         
                                     trade_replay_analyzer.capture_trade_event(
@@ -2103,10 +2180,9 @@ async def simulation_loop() -> None:  # noqa: C901
                             # 수수료 정산
                             calculated_fee += signal.get("qty") * 2 * current_price * OPTIONS_MULTIPLIER * OPTIONS_FEE_RATE
                             
-                            # 자본 정산
-                            current_capital += total_realized
+                            # 자본 정산 (이중계상 방지: current_capital 중복 가산 제거, strategy_realized_pnl에만 누적 기록)
                             net_profit = total_realized - track6_strategy.insurance_state["premium_spent"]
-                            strategy_pnl_tracker["Track6 (Daily)"] += net_profit
+                            strategy_realized_pnl["Track6 (Daily)"] += net_profit  # ← strategy_pnl_tracker는 line 2711에서 자동 계산
                             
                             logger.warning("💰 [DAILY INSURANCE CUTOFF] 15:15 데일리 보험 정산 청산 완료! (정산금액: ₩%s, 순손익: ₩%s)", f"{total_realized:,.0f}", f"{net_profit:,.0f}")
                             trade_replay_analyzer.capture_trade_event(
@@ -2188,9 +2264,9 @@ async def simulation_loop() -> None:  # noqa: C901
                                         portfolio_options.remove(pos)
                                     except ValueError:
                                         pass
-                            current_capital += realized_amount
+                            # 이중계상 방지: current_capital 중복 가산 제거
                             net_profit = realized_amount - track7_strategy.insurance_state.get("premium_spent", 350000.0)
-                            strategy_pnl_tracker["Track7 (Weekly)"] += net_profit
+                            strategy_realized_pnl["Track7 (Weekly)"] += net_profit  # ← 이중계상 방지: tracker는 line 2711에서 자동 계산
                             logger.warning("🎉 [WEEKLY INSURANCE PROFIT REALIZATION] 위클리 옵션 동적 익절 청산 완료! (실현이익: ₩%s, 순손익: ₩%s)", f"{realized_amount:,.0f}", f"{net_profit:,.0f}")
                             trade_replay_analyzer.capture_trade_event(
                                 trade_type="EXIT",
@@ -2238,10 +2314,9 @@ async def simulation_loop() -> None:  # noqa: C901
                             # 수수료 정산
                             calculated_fee += signal.get("qty") * 2 * current_price * OPTIONS_MULTIPLIER * OPTIONS_FEE_RATE
                             
-                            # 자본 정산
-                            current_capital += total_realized
+                            # 자본 정산 (이중계상 방지: current_capital 중복 가산 제거)
                             net_profit = total_realized - track7_strategy.insurance_state["premium_spent"]
-                            strategy_pnl_tracker["Track7 (Weekly)"] += net_profit
+                            strategy_realized_pnl["Track7 (Weekly)"] += net_profit  # ← tracker는 line 2711에서 자동 계산
                             
                             logger.warning("💰 [WEEKLY INSURANCE CUTOFF] 15:15 위클리 보험 정산 청산 완료! (정산금액: ₩%s, 순손익: ₩%s)", f"{total_realized:,.0f}", f"{net_profit:,.0f}")
                             pnl_fmt = f"+{total_realized:,.0f}원" if total_realized >= 0 else f"-{abs(total_realized):,.0f}원"
@@ -2302,9 +2377,9 @@ async def simulation_loop() -> None:  # noqa: C901
                                         pass
                             # 수수료 차감
                             calculated_fee += (signal.get("qty_call") + signal.get("qty_put")) * current_price * OPTIONS_MULTIPLIER * OPTIONS_FEE_RATE
-                                                        # 자본에 정산금 회수 적용
-                            current_capital += total_realized
+                            # 자본에 정산금 회수 적용 (이중계상 방지: current_capital 중복 가산 제거)
                             net_profit = total_realized - signal.get("premium_spent")
+                            strategy_realized_pnl["Track8 (Monthly)"] += net_profit  # ← 기존 미갱신 버그 수정: tracker는 line 2711에서 자동 계산
                             pnl_str = f"+{total_realized:,.0f}원" if total_realized >= 0 else f"-{abs(total_realized):,.0f}원"
                             event_logs.append({
                                  "seq": seq, "date": date_str, "time": time_str,
@@ -2313,7 +2388,9 @@ async def simulation_loop() -> None:  # noqa: C901
                             })
 
             # ── 10.3 [NEW] Track 1: Advanced Dual-Side Dynamic Strangle & Trend Alpha ──
-            if autobot_active and not track3_override and enabled_strategies.get("track1", True):
+            t1_has_pos = any(p.get("activeStrategy") == "Track1 (Defense)" for p in portfolio_options)
+            t1_enabled = enabled_strategies.get("track1", True)
+            if autobot_active and not track3_override and (t1_enabled or t1_has_pos):
                 # 1) 가상의 market_data (지표 필터 및 Whipsaw 방어막 시간 정보) 조립
                 mock_market_data = {
                     "vkospi_expanding": active_vol > BASE_VOLATILITY * 1.1,
@@ -2327,17 +2404,34 @@ async def simulation_loop() -> None:  # noqa: C901
                 
                 # 2) 전략 평가 (evaluate_strategy)
                 current_atm = round(current_price / 2.5) * 2.5
+                
+                # 🛡️ [TRACK 1] 신규 상시 억제막 구축은 t1_enabled 일 때만 실행 (토글 OFF 시 신규 진입만 차단)
+                if t1_enabled:
+                    t1_buys = [p for p in portfolio_options if p.get("activeStrategy") == "Track1 (Defense)" and p.get("side") == "BUY"]
+                    if not t1_buys and track1_strategy:
+                        call_k = round((current_price + 7.5) / 2.5) * 2.5
+                        put_k = round((current_price - 7.5) / 2.5) * 2.5
+                        portfolio_options.append({"type": "CALL", "side": "BUY", "strike": call_k, "price": 1.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1 (Defense)", "tag_id": "TAIL"})
+                        portfolio_options.append({"type": "PUT", "side": "BUY", "strike": put_k, "price": 1.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1 (Defense)", "tag_id": "TAIL"})
+                        logger.info("🛡️ [TRACK 1] 넓은 양매수(CALL %s / PUT %s) 상시 보유 상태 재구축 완료!", call_k, put_k)
+
+                    t1_sells = [p for p in portfolio_options if p.get("activeStrategy") == "Track1 (Defense)" and p.get("side") == "SELL"]
+                    if not t1_sells and track1_strategy:
+                        put_fence_k = round((current_price - 7.5) / 2.5) * 2.5
+                        portfolio_options.append({"type": "PUT", "side": "SELL", "strike": put_fence_k, "price": 2.00, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1 (Defense)", "tag_id": 1})
+                        logger.info("🚧 [TRACK 1] 풋 가두리 매도 (행사가: %s) 상시 보유 상태 재구축 완료!", put_fence_k)
+
                 eval_result = track1_strategy.evaluate_strategy(
                     current_underlying=current_price,
                     current_atm=current_atm,
                     market_data=mock_market_data
                 )
                 
-                # 3) 반환된 Signal 처리 (꼬리표 순환, 헷지 제어, 전량 청산)
+                # 3) 반환된 Signal 처리 (기존 포지션의 헷지, 언와인드, FLATTEN 등 리스크 방어로직은 항상 작동)
                 for signal in eval_result.get("signals", []):
                     action = signal.get("action")
                     
-                    if action == "TAIL_DEFENSE_BUILD":
+                    if action == "TAIL_DEFENSE_BUILD" and t1_enabled:
                         call_k = signal.get("call_strike")
                         put_k = signal.get("put_strike")
                         qty_val = signal.get("qty", BASE_TRACK1_QTY)
@@ -2345,7 +2439,7 @@ async def simulation_loop() -> None:  # noqa: C901
                         portfolio_options.append({"type": "PUT", "side": "BUY", "strike": put_k, "price": 1.50, "qty": qty_val, "activeStrategy": "Track1 (Defense)", "tag_id": "TAIL"})
                         logger.info("🛡️ [TRACK 1] 테일 방어 양매수 구축 완료")
                         
-                    elif action == "FENCE_BUILD":
+                    elif action == "FENCE_BUILD" and t1_enabled:
                         opt_type = signal.get("type")
                         opt_strike = signal.get("strike")
                         tag_id = signal.get("tag_id")
@@ -2354,7 +2448,6 @@ async def simulation_loop() -> None:  # noqa: C901
                         logger.info("🚧 [TRACK 1] 신규 %s 가두리(매도) 형성 (꼬리표 #%s)", opt_type, tag_id)
                         
                     elif action == "FENCE_CLEAR":
-                        # 기존 꼬리표 매도 포지션을 찾아 청산 (장부에서 제거)
                         tag_id = signal.get("tag_id")
                         portfolio_options = [p for p in portfolio_options if not (p.get("activeStrategy") == "Track1 (Defense)" and p.get("tag_id") == tag_id)]
                         logger.info("🔄 [TRACK 1] 꼬리표 #%s 순환 청산 완료 (이익 확정)", tag_id)
@@ -2380,9 +2473,9 @@ async def simulation_loop() -> None:  # noqa: C901
                         order_side = signal.get("type")
                         qty_val = 1
                         if order_side == "BUY":
-                            current_position_qty += qty_val  # 매수(BUY)하여 기존 숏(SELL) 헷지 청산
+                            current_position_qty += qty_val
                         else:
-                            current_position_qty -= qty_val  # 매도(SELL)하여 기존 롱(BUY) 헷지 청산
+                            current_position_qty -= qty_val
                             
                         portfolio_options = [p for p in portfolio_options if not (p.get("activeStrategy") == "Track1 (Defense)" and p.get("type") == "FUTURES")]
                             
@@ -2394,14 +2487,12 @@ async def simulation_loop() -> None:  # noqa: C901
                         })
                         
                     elif action == "FLATTEN_ALL":
-                        # 선물 헷지 물량 청산 (현재 1계약 물려있는 것 원상복구)
                         hedge_side = track1_strategy.active_hedge
                         if hedge_side == "BUY":
                             current_position_qty -= 1
                         elif hedge_side == "SELL":
                             current_position_qty += 1
                             
-                        # 옵션 장부에서 가두리(매도) 포지션 및 선물 포지션 전량 날림 (테일 보험은 유지)
                         portfolio_options = [p for p in portfolio_options if not (p.get("activeStrategy") == "Track1 (Defense)" and (p.get("side") == "SELL" or p.get("type") == "FUTURES"))]
                         
                         logger.critical("💥 [TRACK 1 FLATTEN] 100%% 격돌! 선물 헷지 및 가두리 포지션 전량 피난 청산 완료.")
@@ -2412,58 +2503,55 @@ async def simulation_loop() -> None:  # noqa: C901
                         })
 
             # ── 10.4 [NEW] Track 2: Asymmetric Trap & Volatility Funding ──
-            if autobot_active and not track3_override and enabled_strategies.get("track2", True):
+            t2_has_pos = any(p.get("activeStrategy") == "Track2 (Trap)" for p in portfolio_options)
+            t2_enabled = enabled_strategies.get("track2", True)
+            if autobot_active and not track3_override and (t2_enabled or t2_has_pos):
                 current_atm = round(current_price / 2.5) * 2.5
                 
-                # 만기 잔여일이 3일 이상일 때 트랩 설치를 트리거 (청산 후 재진입 가능)
-                if simulated_days_to_expiry >= 3.0 and not track2_strategy.trap_state["is_active"]:
-
+                # 신규 트랩 설치는 t2_enabled 일 때만 실행
+                if t2_enabled and simulated_days_to_expiry >= 3.0 and not track2_strategy.trap_state["is_active"]:
                     trap_eval = track2_strategy.build_asymmetric_trap(current_atm)
                     if trap_eval.get("status") == "SUCCESS":
                         trap_qty = 0 if total_equity < 15_000_000.0 else max(1, int(total_equity / 30_000_000.0))
-                        if trap_qty == 0:
-                            continue
-                        for signal in trap_eval.get("signals", []):
-                            action = signal.get("action")
-                            # 매도 포지션(외가격) - 프리미엄 수취
-                            if action == "EXECUTE_SHORT_LEG":
-                                strikes = signal.get("strikes", {})
-                                for opt_type, strike_val in strikes.items():
-                                    portfolio_options.append({
-                                        "type": opt_type.upper(), "side": "SELL",
-                                        "strike": strike_val, "price": 0.50, "qty": trap_qty,
-                                        "activeStrategy": "Track2 (Trap)"
-                                    })
-                                logger.info("🕸️ [TRACK 2 FUNDING] 외가격 매도(보험료 수취) 세팅 완료 - %s", strikes)
-                            
-                            # 비대칭 양매수(함정) - 폭발 이익용
-                            elif action == "EXECUTE_LONG_TRAP_LEG":
-                                strikes = signal.get("strikes", {})
-                                for opt_type, strike_val in strikes.items():
-                                    portfolio_options.append({
-                                        "type": opt_type.upper(), "side": "BUY",
-                                        "strike": strike_val, "price": 1.20, "qty": trap_qty,
-                                        "activeStrategy": "Track2 (Trap)"
-                                    })
-                                logger.info("🕸️ [TRACK 2 TRAP] 비대칭 양매수 함정 세팅 완료 - %s", strikes)
-                                
-                        event_logs.append({
-                            "seq": seq, "date": date_str, "time": time_str,
-                            "event": "Track 2 함정(Trap) 구축 완료",
-                            "details": f"ATM: {current_atm}, 설치 수량: {trap_qty}계약"
-                        })
+                        if trap_qty > 0:
+                            for signal in trap_eval.get("signals", []):
+                                action = signal.get("action")
+                                if action == "EXECUTE_SHORT_LEG":
+                                    strikes = signal.get("strikes", {})
+                                    for opt_type, strike_val in strikes.items():
+                                        portfolio_options.append({
+                                            "type": opt_type.upper(), "side": "SELL",
+                                            "strike": strike_val, "price": 0.50, "qty": trap_qty,
+                                            "activeStrategy": "Track2 (Trap)"
+                                        })
+                                    logger.info("🕸️ [TRACK 2 FUNDING] 외가격 매도(보험료 수취) 세팅 완료 - %s", strikes)
+                                elif action == "EXECUTE_LONG_TRAP_LEG":
+                                    strikes = signal.get("strikes", {})
+                                    for opt_type, strike_val in strikes.items():
+                                        portfolio_options.append({
+                                            "type": opt_type.upper(), "side": "BUY",
+                                            "strike": strike_val, "price": 1.20, "qty": trap_qty,
+                                            "activeStrategy": "Track2 (Trap)"
+                                        })
+                                    logger.info("🕸️ [TRACK 2 TRAP] 비대칭 양매수 함정 세팅 완료 - %s", strikes)
+                                    
+                            event_logs.append({
+                                "seq": seq, "date": date_str, "time": time_str,
+                                "event": "Track 2 함정(Trap) 구축 완료",
+                                "details": f"ATM: {current_atm}, 설치 수량: {trap_qty}계약"
+                            })
                 
                 if track2_unwind_cooldown_ticks > 0:
                     track2_unwind_cooldown_ticks -= 1
 
-                # 매 틱마다 상태 트래킹 및 선물 헷지 방어(90% 마지노선 도달 시)
+                # 기존 트랩 포지션의 선물 헷지 및 방어로직은 t2_enabled와 무관하게 항상 동작
                 track2_status = track2_strategy.evaluate_trap_status(current_price)
                 if track2_status.get("status") == "HEDGE_TRIGGERED":
                     for signal in track2_status.get("signals", []):
                         action = signal.get("action")
                         if action == "FUTURES_ORDER":
                             if track2_unwind_cooldown_ticks > 0:
-                                pass  # 휩소 방지 쿨다운 적용 중 (불필요한 수수료/슬리피지 차단)
+                                pass
                             else:
                                 order_side = signal.get("type")
                                 qty_val = 1
@@ -2479,14 +2567,14 @@ async def simulation_loop() -> None:  # noqa: C901
                                     "details": signal.get("reason")
                                 })
                         elif action == "FUTURES_UNWIND":
-                            track2_unwind_cooldown_ticks = 5  # 언와인드 후 5틱 휩소 쿨다운 설정
+                            track2_unwind_cooldown_ticks = 5
                             target = signal.get("target")
                             qty_val = 1
                             if target == "PUT_SIDE":
-                                current_position_qty += qty_val  # 기존 숏 청산
+                                current_position_qty += qty_val
                                 logger.info("🛡️ [TRACK 2 UNWIND] %s - 풋 방어 헷지 매수(청산)!", signal.get('reason'))
                             else:
-                                current_position_qty -= qty_val  # 기존 롱 청산
+                                current_position_qty -= qty_val
                                 logger.info("🛡️ [TRACK 2 UNWIND] %s - 콜 방어 헷지 매도(청산)!", signal.get('reason'))
                             
                             event_logs.append({
@@ -2499,12 +2587,13 @@ async def simulation_loop() -> None:  # noqa: C901
                     pass
 
             # ── 10.5 [NEW] Track 4: Smart Gamma Scalping & D-3 Attack Mode ──
-            if autobot_active and not track3_override and enabled_strategies.get("track4", True):
+            t4_has_pos = any(p.get("activeStrategy") == "Track4 (Gamma)" for p in portfolio_options)
+            t4_enabled = enabled_strategies.get("track4", True)
+            if autobot_active and not track3_override and (t4_enabled or t4_has_pos):
                 current_atm = round(current_price / 2.5) * 2.5
                 
-                # 만기 잔여일이 3일 이상일 때 ATM 양매수 베이스캠프 주입 (청산 후 재진입 가능)
-                if simulated_days_to_expiry >= 3.0 and not track4_strategy.scalp_state.get("is_active"):
-
+                # 신규 베이스캠프 양매수 구축은 t4_enabled 일 때만 실행
+                if t4_enabled and simulated_days_to_expiry >= 3.0 and not track4_strategy.scalp_state.get("is_active"):
                     gamma_qty = 0 if total_equity < 15_000_000.0 else max(1, int(total_equity / 30_000_000.0))
                     if gamma_qty > 0:
                         track4_strategy.scalp_state["is_active"] = True
@@ -2515,11 +2604,12 @@ async def simulation_loop() -> None:  # noqa: C901
                             "type": "PUT", "side": "BUY", "strike": current_atm, "price": 4.50, "qty": gamma_qty, "activeStrategy": "Track4 (Gamma)"
                         })
                         logger.info("🎯 [TRACK 4 BASECAMP] ATM 스트래들 양매수(콜/풋) 베이스캠프 구축 완료! (수량: %d)", gamma_qty)
-                    event_logs.append({
-                        "seq": seq, "date": date_str, "time": time_str,
-                        "event": "Track 4 Basecamp", "details": f"ATM: {current_atm} 양매수 진입"
-                    })
+                        event_logs.append({
+                            "seq": seq, "date": date_str, "time": time_str,
+                            "event": "Track 4 Basecamp", "details": f"ATM: {current_atm} 양매수 진입"
+                        })
                 
+                # 기존 포지션의 감마 스캘핑 리밸런싱은 t4_enabled와 무관하게 계속 실행
                 if track4_strategy.scalp_state.get("is_active"):
                     track4_status = track4_strategy.evaluate_scalping_rebalance(mock_market_data, simulated_days_to_expiry)
                     for signal in track4_status.get("signals", []):
@@ -2579,9 +2669,12 @@ async def simulation_loop() -> None:  # noqa: C901
                         continue  # 알 수 없는 타입 건너뜀
 
                     if trigger:
-                        # 1. 평가이익 계산 및 실현 (지수 기반 내재가치 정직 수취)
+                        # 1. 평가이익 계산 및 실현 (지수 기반 내재가치 정직 수취 — 이중계상 방지: current_capital 중복 가산 제거)
                         realized_pnl = intrinsic * qty_val * OPTIONS_MULTIPLIER
-                        current_capital += realized_pnl
+                        # strategy_realized_pnl 누적 (activeStrategy로 Track 판별)
+                        _ins_strat = pos.get("activeStrategy", "Track1 (Defense)")
+                        _ins_key = next((k for k in strategy_realized_pnl if k.split(' ')[0] in _ins_strat), "Track1 (Defense)")
+                        strategy_realized_pnl[_ins_key] += realized_pnl
                         
                         # 2. 보험 포지션 청산 (이익 수취 완료)
                         try:
