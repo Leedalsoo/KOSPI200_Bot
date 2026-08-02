@@ -143,7 +143,7 @@ class GapProtocolStrategy:
             self.gap_state["liquidity_provided"] = 1
             signals.append({
                 "action": "PROVIDE_LIQUIDITY_LIMIT",
-                "reason": f"💦 [LIQUIDITY PROVISION] 갭 회귀 1차 수익(+0.3pt 돌파). 지정가(Maker) 매수/매도 대기로 유동성 공급 및 분할 수익 수취 시작.",
+                "reason": "💦 [LIQUIDITY PROVISION] 갭 회귀 1차 수익(+0.3pt 돌파). 지정가(Maker) 매수/매도 대기로 유동성 공급 및 분할 수익 수취 시작.",
                 "pnl": current_pnl,
                 "limit_price": current_price
             })
@@ -153,7 +153,7 @@ class GapProtocolStrategy:
             self.gap_state["liquidity_provided"] = 2
             signals.append({
                 "action": "PROVIDE_LIQUIDITY_LIMIT",
-                "reason": f"💦 [LIQUIDITY PROVISION] 갭 회귀 2차 수익(+0.6pt 돌파). 지정가(Maker)로 추가 유동성 공급 및 분할 수익 수취.",
+                "reason": "💦 [LIQUIDITY PROVISION] 갭 회귀 2차 수익(+0.6pt 돌파). 지정가(Maker)로 추가 유동성 공급 및 분할 수익 수취.",
                 "pnl": current_pnl,
                 "limit_price": current_price
             })
