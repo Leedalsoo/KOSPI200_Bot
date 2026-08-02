@@ -321,8 +321,8 @@ used_margin: float = 0.0
 
 # 🛡️ [합성 옵션 포트폴리오 — 초기 숏 스트랭글 탑재]
 portfolio_options: List[Dict[str, Any]] = [
-    {"type": "PUT",  "side": "SELL", "strike": 345.0, "price": 2.20, "qty": BASE_TRACK1_QTY},
-    {"type": "CALL", "side": "SELL", "strike": 355.0, "price": 2.50, "qty": BASE_TRACK1_QTY},
+    {"type": "PUT",  "side": "SELL", "strike": 345.0, "price": 2.20, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1 (Defense)", "tag_id": 1},
+    {"type": "CALL", "side": "SELL", "strike": 355.0, "price": 2.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1 (Defense)", "tag_id": 2},
 ]
 
 # 🛡️ [IV 이동평균 추적 — IVExplosionGuard 기반 블랙스완 감지]
@@ -536,19 +536,24 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
     current_position_qty = 0
     used_margin      = 0.0
 
-    # 포지션 리셋 — 새 시작가 기준 숏 스트랭글로 복원 (동적 간격 적용)
-    sp = current_price
-    init_width = calculate_dynamic_strangle_width(BASE_VOLATILITY)
-    portfolio_options = [
-        {"type": "PUT",  "side": "SELL", "strike": round((sp - init_width) / 2.5) * 2.5, "price": 2.20, "qty": BASE_TRACK1_QTY},
-        {"type": "CALL", "side": "SELL", "strike": round((sp + init_width) / 2.5) * 2.5, "price": 2.50, "qty": BASE_TRACK1_QTY},
-    ]
-
-    iv_history   = deque(maxlen=50)
-    
     # ── [NEW] Track 1: DetailedProductionFenceEngine ──
     track1_strategy = DetailedProductionFenceEngine(config={})
-    # 엔진 내부에서 초기화 시그널을 던지므로 여기서 수동으로 세팅하지 않음.
+    
+    # 💥 [CRITICAL FIX] 장 시작 직후 Track 1 넓은 양매수(Long Strangle) 구축 및 풋매도 가두리 주입
+    t1_open_signals = track1_strategy.on_market_open(current_price)
+    portfolio_options = []
+    for sig in t1_open_signals:
+        act = sig.get("action")
+        if act == "TAIL_DEFENSE_BUILD":
+            call_k = sig.get("call_strike")
+            put_k = sig.get("put_strike")
+            portfolio_options.append({"type": "CALL", "side": "BUY", "strike": call_k, "price": 1.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1 (Defense)", "tag_id": "TAIL"})
+            portfolio_options.append({"type": "PUT", "side": "BUY", "strike": put_k, "price": 1.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1 (Defense)", "tag_id": "TAIL"})
+        elif act == "FENCE_BUILD":
+            opt_type = sig.get("type")
+            opt_strike = sig.get("strike")
+            tag_id = sig.get("tag_id")
+            portfolio_options.append({"type": opt_type, "side": "SELL", "strike": opt_strike, "price": 2.00, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1 (Defense)", "tag_id": tag_id})
     
     # ── [NEW] Track 2: Asymmetric Trap Strategy ──
     track2_strategy = AsymmetricTrapStrategy(config={})
@@ -1735,9 +1740,6 @@ async def simulation_loop() -> None:  # noqa: C901
                             "price": float(order_price),
                             "qty": int(fill_qty),
                         })
-                        if len(portfolio_options) > 20:
-                            portfolio_options.pop(2)
-                            
                         # 슬리피지 비용 누적
                         slippage_cost = abs(order_price - raw_price) * fill_qty * OPTIONS_MULTIPLIER
                     
@@ -2800,23 +2802,24 @@ async def simulation_loop() -> None:  # noqa: C901
                 return
 
             # ── 12. 포지션 자연 반대매매 시뮬레이션 ─────────────────────
-            if random.random() < 0.05 and current_position_qty != 0:
-                current_position_qty -= (1 if current_position_qty > 0 else -1)
-
-            # ── 13. 합성 옵션 페이오프 연산 (극외가~극내가 전구간) ────────
+            # ── 13. 합성 옵션 페이오프 연산 (세션 기준 앵커 고정형 X축) ────────
             payoff_coords = []
-            strike_range_start = current_price - 60.0
-            strike_range_end   = current_price + 60.0
+            base_anchor = round(current_price / 5.0) * 5.0
+            strike_range_start = base_anchor - 50.0
+            strike_range_end   = base_anchor + 50.0
             strike = round(strike_range_start / 2.5) * 2.5
 
             while strike <= strike_range_end:
                 total_pnl = 0.0
                 for pos in portfolio_options:
-                    k       = float(pos["strike"])
-                    premium = float(pos["price"])
-                    qty     = int(pos["qty"])
-                    side    = pos["side"]
-                    p_type  = pos["type"]
+                    p_type = pos.get("type")
+                    if p_type not in ("CALL", "PUT"):
+                        continue
+                    k       = float(pos.get("strike", base_anchor))
+                    premium = float(pos.get("entryPrice", pos.get("price", 0.0)))
+                    qty     = int(pos.get("qty", 1))
+                    side    = pos.get("side", "BUY")
+                    
                     expiry_val = max(0.0, strike - k) if p_type == "CALL" else max(0.0, k - strike)
                     pnl = ((expiry_val - premium) if side == "BUY" else (premium - expiry_val)) * OPTIONS_MULTIPLIER * qty
                     total_pnl += pnl

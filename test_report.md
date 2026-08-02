@@ -1,13 +1,13 @@
 # 📊 KOSPI200 HFT 가상 테스트 세션 통합 분석 보고서
-통합 보고서 최종 갱신 시각: 2026-08-02 02:23:02
+통합 보고서 최종 갱신 시각: 2026-08-02 12:12:45
 총 구동 세션 수: 1개 세션
 
 ---
 
 
 ## 🔁 [SESSION #1] 상세 분석 보고서
-- **적용된 실제 투자 일자 (Trading Date)**: **2025-01-02, 2025-01-03, 2025-01-06, 2025-01-07, 2025-01-08, 2025-01-09**
-- **테스트 규모**: 총 4085 틱 스트리밍
+- **적용된 실제 투자 일자 (Trading Date)**: **2025-01-02, 2025-01-03, 2025-01-06, 2025-01-07, 2025-01-08, 2025-01-09, 2025-01-10, 2025-01-13, 2025-01-14, 2025-01-15, 2025-01-16, 2025-01-17, 2025-01-20, 2025-01-21, 2025-01-22, 2025-01-23, 2025-01-24, 2025-01-27, 2025-01-31, 2025-02-03, 2025-02-04, 2025-02-05, 2025-02-06, 2025-02-07, 2025-02-10, 2025-02-11, 2025-02-12, 2025-02-13, 2025-02-14, 2025-02-17, 2025-02-18, 2025-02-19, 2025-02-20, 2025-02-21, 2025-02-24, 2025-02-25, 2025-02-26, 2025-02-27, 2025-02-28, 2025-03-04**
+- **테스트 규모**: 총 30983 틱 스트리밍
 
 ### 🧪 [V2 STRESS TEST] 가상 테스트 환경 및 예산 강제 주입 현황
 - **테스트 목적**: 월 단위 방어막(Insurance) 스트레스 테스트 및 비선형 맷집 검증
@@ -20,137 +20,775 @@
 
 ### 📅 역사적 시장 국면 및 비상 감시(Watchdog/Risk Engine) 이벤트 로그
 - **[2025-01-02 09:00:00]** 영업일 2025-01-02 개장: 평가 자산: ₩25,000,000 / Track 7 할당 자본(0.5%): ₩125,000
-- **[2025-01-02 09:00:00]** Track 5 Gap Trigger (ENTER_GAP_LONG): Gap Down Z-Score (-1.24) breached threshold. Longing index for mean reversion. / 수량: 1계약
-- **[2025-01-02 09:00:00]** Track 2 함정(Trap) 구축 완료: ATM: 300.0, 설치 수량: 1계약
-- **[2025-01-02 09:00:00]** Track 4 Basecamp: ATM: 300.0 양매수 진입
-- **[2025-01-02 09:14:30]** Track 5 Gap Close: Timeout (15 minutes elapsed since open). Liquidating remaining gap position. / 실현손익: -60,483원
-- **[2025-01-02 09:34:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 300.61
-- **[2025-01-02 09:38:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.02). / 실현손익: +3,150원
-- **[2025-01-02 09:48:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.94) exceeded upper threshold (+1.8). Selling spread. / 진입가: 300.78
-- **[2025-01-02 09:59:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.01). / 실현손익: +15,151원
-- **[2025-01-02 10:11:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.95) breached lower threshold (-1.8). Buying spread. / 진입가: 300.38
-- **[2025-01-02 10:32:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.13). / 실현손익: -99,653원
-- **[2025-01-02 11:05:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.89) exceeded upper threshold (+1.8). Selling spread. / 진입가: 299.63
-- **[2025-01-02 11:34:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.10). / 실현손익: -93,464원
-- **[2025-01-02 12:15:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.84) breached lower threshold (-1.8). Buying spread. / 진입가: 299.63
-- **[2025-01-02 12:30:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.18). / 실현손익: +40,552원
-- **[2025-01-02 12:48:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 299.36
-- **[2025-01-02 13:20:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.14). / 실현손익: -213,080원
-- **[2025-01-02 14:01:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.15) exceeded upper threshold (+1.8). Selling spread. / 진입가: 297.96
-- **[2025-01-02 14:10:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +77,397원
-- **[2025-01-02 14:20:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.26) breached lower threshold (-1.8). Buying spread. / 진입가: 297.30
-- **[2025-01-02 14:46:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.03). / 실현손익: -206,913원
-- **[2025-01-02 15:09:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 295.93
-- **[2025-01-02 15:15:00]** OTM 옵션 보험 추가 매입: Strikes: P:280.0, C:310.0, Qty: +1, Cost: ₩75,000
-- **[2025-01-03 09:00:00]** 영업일 2025-01-03 개장: 평가 자산: ₩24,925,112 / Track 7 할당 자본(0.5%): ₩124,626
-- **[2025-01-03 09:00:00]** Track 5 Gap Trigger (ENTER_GAP_SHORT): Gap Up Z-Score (+2.51) exceeded threshold. Shorting index for mean reversion. / 수량: 1계약
-- **[2025-01-03 09:14:30]** Track 5 Gap Close: Timeout (15 minutes elapsed since open). Liquidating remaining gap position. / 실현손익: +19,794원
-- **[2025-01-03 09:21:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.20). / 실현손익: -664,168원
-- **[2025-01-03 11:20:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.85) exceeded upper threshold (+1.8). Selling spread. / 진입가: 299.39
-- **[2025-01-03 11:28:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.05). / 실현손익: +20,585원
-- **[2025-01-03 11:48:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.86) breached lower threshold (-1.8). Buying spread. / 진입가: 299.56
-- **[2025-01-03 11:52:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.16). / 실현손익: +44,766원
-- **[2025-01-03 12:02:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.64) exceeded upper threshold (+1.8). Selling spread. / 진입가: 300.21
-- **[2025-01-03 12:28:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.16). / 실현손익: -195,152원
-- **[2025-01-03 12:49:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.02) breached lower threshold (-1.8). Buying spread. / 진입가: 301.07
-- **[2025-01-03 13:03:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.12). / 실현손익: +106,431원
-- **[2025-01-03 13:14:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.92) breached lower threshold (-1.8). Buying spread. / 진입가: 301.21
-- **[2025-01-03 13:30:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.15). / 실현손익: +59,284원
-- **[2025-01-03 13:41:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.02) breached lower threshold (-1.8). Buying spread. / 진입가: 301.02
-- **[2025-01-03 13:44:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: +54,298원
-- **[2025-01-03 14:32:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 301.58
-- **[2025-01-03 14:36:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.06). / 실현손익: +40,114원
-- **[2025-01-03 14:48:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.41) breached lower threshold (-1.8). Buying spread. / 진입가: 301.19
-- **[2025-01-03 15:20:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.02). / 실현손익: -179,947원
-- **[2025-01-06 09:00:00]** 영업일 2025-01-06 개장: 평가 자산: ₩24,922,442 / Track 7 할당 자본(0.5%): ₩124,612
-- **[2025-01-06 09:02:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.94) exceeded upper threshold (+1.8). Selling spread. / 진입가: 300.62
-- **[2025-01-06 09:32:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.07). / 실현손익: +9,277원
-- **[2025-01-06 09:55:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.84) exceeded upper threshold (+1.8). Selling spread. / 진입가: 300.96
-- **[2025-01-06 09:58:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: +42,582원
-- **[2025-01-06 10:15:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.26) exceeded upper threshold (+1.8). Selling spread. / 진입가: 301.22
-- **[2025-01-06 10:18:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.13). / 실현손익: +49,151원
-- **[2025-01-06 10:44:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.22) exceeded upper threshold (+1.8). Selling spread. / 진입가: 301.48
-- **[2025-01-06 10:59:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.11). / 실현손익: -46,494원
-- **[2025-01-06 11:12:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.86) exceeded upper threshold (+1.8). Selling spread. / 진입가: 302.11
-- **[2025-01-06 11:32:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.05). / 실현손익: -97,001원
-- **[2025-01-06 11:42:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.13) breached lower threshold (-1.8). Buying spread. / 진입가: 302.39
-- **[2025-01-06 12:22:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.06). / 실현손익: -87,823원
-- **[2025-01-06 12:32:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.33) exceeded upper threshold (+1.8). Selling spread. / 진입가: 302.63
-- **[2025-01-06 12:49:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.10). / 실현손익: +55,152원
-- **[2025-01-06 13:32:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.84) exceeded upper threshold (+1.8). Selling spread. / 진입가: 302.98
-- **[2025-01-06 13:39:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.39). / 실현손익: +49,137원
-- **[2025-01-06 13:49:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-3.28) breached lower threshold (-1.8). Buying spread. / 진입가: 302.46
-- **[2025-01-06 14:33:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.02). / 실현손익: -201,878원
-- **[2025-01-06 14:43:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.16) exceeded upper threshold (+1.8). Selling spread. / 진입가: 301.81
-- **[2025-01-06 15:05:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +19,493원
-- **[2025-01-07 09:00:00]** 영업일 2025-01-07 개장: 평가 자산: ₩24,922,692 / Track 7 할당 자본(0.5%): ₩124,613
-- **[2025-01-07 09:30:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.86) exceeded upper threshold (+1.8). Selling spread. / 진입가: 301.45
-- **[2025-01-07 09:49:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.20). / 실현손익: -21,165원
-- **[2025-01-07 10:05:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.91) breached lower threshold (-1.8). Buying spread. / 진입가: 301.29
-- **[2025-01-07 10:14:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: +42,200원
-- **[2025-01-07 10:24:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.12) exceeded upper threshold (+1.8). Selling spread. / 진입가: 301.99
-- **[2025-01-07 10:39:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.02). / 실현손익: -10,521원
-- **[2025-01-07 11:47:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.25) breached lower threshold (-1.8). Buying spread. / 진입가: 302.80
-- **[2025-01-07 12:40:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.19). / 실현손익: -145,798원
-- **[2025-01-07 13:12:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.95) exceeded upper threshold (+1.8). Selling spread. / 진입가: 302.09
-- **[2025-01-07 13:27:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.00). / 실현손익: +67,984원
-- **[2025-01-07 13:39:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.82) breached lower threshold (-1.8). Buying spread. / 진입가: 301.62
-- **[2025-01-07 13:48:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.13). / 실현손익: +3,627원
-- **[2025-01-07 14:12:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.05) exceeded upper threshold (+1.8). Selling spread. / 진입가: 301.86
-- **[2025-01-07 14:28:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.18). / 실현손익: +15,555원
-- **[2025-01-07 14:50:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.90) breached lower threshold (-1.8). Buying spread. / 진입가: 301.78
-- **[2025-01-07 14:53:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.02). / 실현손익: +43,579원
-- **[2025-01-07 15:03:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.15) breached lower threshold (-1.8). Buying spread. / 진입가: 301.67
-- **[2025-01-07 15:09:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.31). / 실현손익: +68,894원
-- **[2025-01-07 15:21:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.98) exceeded upper threshold (+1.8). Selling spread. / 진입가: 302.15
-- **[2025-01-08 09:00:00]** 영업일 2025-01-08 개장: 평가 자산: ₩24,918,710 / Track 7 할당 자본(0.5%): ₩124,594
-- **[2025-01-08 09:02:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: +16,135원
-- **[2025-01-08 09:30:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.90) exceeded upper threshold (+1.8). Selling spread. / 진입가: 302.39
-- **[2025-01-08 09:49:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.03). / 실현손익: -69,558원
-- **[2025-01-08 11:01:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.92) breached lower threshold (-1.8). Buying spread. / 진입가: 303.22
-- **[2025-01-08 11:46:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.20). / 실현손익: -155,028원
-- **[2025-01-08 11:56:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.85) exceeded upper threshold (+1.8). Selling spread. / 진입가: 302.70
-- **[2025-01-08 12:26:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.20). / 실현손익: +15,831원
-- **[2025-01-08 12:37:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.99) exceeded upper threshold (+1.8). Selling spread. / 진입가: 303.09
-- **[2025-01-08 12:48:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.06). / 실현손익: +27,365원
-- **[2025-01-08 13:12:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.84) breached lower threshold (-1.8). Buying spread. / 진입가: 302.83
-- **[2025-01-08 13:20:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.00). / 실현손익: +60,809원
-- **[2025-01-08 13:42:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.38) exceeded upper threshold (+1.8). Selling spread. / 진입가: 303.20
-- **[2025-01-08 14:33:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.06). / 실현손익: -370,438원
-- **[2025-01-08 14:43:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.98) breached lower threshold (-1.8). Buying spread. / 진입가: 304.77
-- **[2025-01-08 15:01:00]** 보험 이익 수취 청산 (CALL): Strike: 310.0, 실현이익: +0원
-- **[2025-01-08 15:02:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +79,915원
-- **[2025-01-08 15:21:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.89) exceeded upper threshold (+1.8). Selling spread. / 진입가: 305.73
-- **[2025-01-09 09:00:00]** 영업일 2025-01-09 개장: 평가 자산: ₩24,915,286 / Track 7 할당 자본(0.5%): ₩124,576
-- **[2025-01-09 09:02:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.06). / 실현손익: +3,873원
-- **[2025-01-09 09:16:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.97) breached lower threshold (-1.8). Buying spread. / 진입가: 305.73
-- **[2025-01-09 09:33:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.11). / 실현손익: +88,673원
-- **[2025-01-09 10:18:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.54) breached lower threshold (-1.8). Buying spread. / 진입가: 306.28
-- **[2025-01-09 10:26:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.16). / 실현손익: +52,751원
+- **[2025-01-02 09:00:00]** Track 2 함정(Trap) 구축 완료: ATM: 335.0, 설치 수량: 1계약
+- **[2025-01-02 09:00:00]** Track 4 Basecamp: ATM: 335.0 양매수 진입
+- **[2025-01-02 09:34:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.18) breached lower threshold (-1.8). Buying spread. / 진입가: 335.68
+- **[2025-01-02 09:37:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.31). / 실현손익: +36,656원
+- **[2025-01-02 09:50:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.12) breached lower threshold (-1.8). Buying spread. / 진입가: 335.71
+- **[2025-01-02 09:59:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.12). / 실현손익: +26,485원
+- **[2025-01-02 10:40:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.93) breached lower threshold (-1.8). Buying spread. / 진입가: 336.13
+- **[2025-01-02 10:53:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +54,113원
+- **[2025-01-02 11:09:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.88) exceeded upper threshold (+1.8). Selling spread. / 진입가: 336.92
+- **[2025-01-02 11:14:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: +67,767원
+- **[2025-01-02 11:47:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.05) breached lower threshold (-1.8). Buying spread. / 진입가: 336.64
+- **[2025-01-02 11:59:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.12). / 실현손익: +83,983원
+- **[2025-01-02 12:17:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.84) exceeded upper threshold (+1.8). Selling spread. / 진입가: 337.42
+- **[2025-01-02 12:34:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.00). / 실현손익: -75,399원
+- **[2025-01-02 12:47:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.88) breached lower threshold (-1.8). Buying spread. / 진입가: 337.57
+- **[2025-01-02 13:39:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: -161,759원
+- **[2025-01-02 13:49:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.09) exceeded upper threshold (+1.8). Selling spread. / 진입가: 337.26
+- **[2025-01-02 14:06:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +64,949원
+- **[2025-01-02 14:39:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.04) exceeded upper threshold (+1.8). Selling spread. / 진입가: 337.24
+- **[2025-01-02 14:53:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.14). / 실현손익: +52,310원
+- **[2025-01-02 15:15:00]** OTM 옵션 보험 추가 매입: Strikes: P:322.5, C:352.5, Qty: +1, Cost: ₩75,000
+- **[2025-01-03 09:00:00]** 영업일 2025-01-03 개장: 평가 자산: ₩24,928,487 / Track 7 할당 자본(0.5%): ₩124,642
+- **[2025-01-03 09:31:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.82) exceeded upper threshold (+1.8). Selling spread. / 진입가: 336.65
+- **[2025-01-03 09:40:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.29). / 실현손익: +48,000원
+- **[2025-01-03 09:50:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.28) exceeded upper threshold (+1.8). Selling spread. / 진입가: 336.71
+- **[2025-01-03 09:59:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.12). / 실현손익: +41,395원
+- **[2025-01-03 10:09:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.22) breached lower threshold (-1.8). Buying spread. / 진입가: 336.16
+- **[2025-01-03 10:33:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.12). / 실현손익: -67,983원
+- **[2025-01-03 11:11:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.86) exceeded upper threshold (+1.8). Selling spread. / 진입가: 335.73
+- **[2025-01-03 11:16:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.10). / 실현손익: +58,818원
+- **[2025-01-03 11:26:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.84) exceeded upper threshold (+1.8). Selling spread. / 진입가: 335.68
+- **[2025-01-03 11:28:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.00). / 실현손익: +53,266원
+- **[2025-01-03 11:42:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.82) exceeded upper threshold (+1.8). Selling spread. / 진입가: 335.79
+- **[2025-01-03 11:52:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.18). / 실현손익: +9,805원
+- **[2025-01-03 12:02:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.95) breached lower threshold (-1.8). Buying spread. / 진입가: 335.45
+- **[2025-01-03 12:55:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: -333,303원
+- **[2025-01-03 13:49:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.28) exceeded upper threshold (+1.8). Selling spread. / 진입가: 333.23
+- **[2025-01-03 14:34:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.18). / 실현손익: -128,669원
+- **[2025-01-03 14:47:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.06) breached lower threshold (-1.8). Buying spread. / 진입가: 333.44
+- **[2025-01-03 15:19:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.11). / 실현손익: -96,313원
+- **[2025-01-03 15:29:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.20) exceeded upper threshold (+1.8). Selling spread. / 진입가: 333.39
+- **[2025-01-06 09:00:00]** 영업일 2025-01-06 개장: 평가 자산: ₩24,944,048 / Track 7 할당 자본(0.5%): ₩124,720
+- **[2025-01-06 09:14:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +62,317원
+- **[2025-01-06 09:46:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.91) exceeded upper threshold (+1.8). Selling spread. / 진입가: 333.35
+- **[2025-01-06 09:50:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.02). / 실현손익: +70,241원
+- **[2025-01-06 10:06:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.92) breached lower threshold (-1.8). Buying spread. / 진입가: 332.54
+- **[2025-01-06 10:42:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.11). / 실현손익: -339,690원
+- **[2025-01-06 10:56:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.05
+- **[2025-01-06 11:11:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: +67,828원
+- **[2025-01-06 12:37:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.11) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.92
+- **[2025-01-06 12:42:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.00). / 실현손익: +53,495원
+- **[2025-01-06 13:23:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.89) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.88
+- **[2025-01-06 13:29:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.06). / 실현손익: +18,736원
+- **[2025-01-06 13:40:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.91) exceeded upper threshold (+1.8). Selling spread. / 진입가: 330.17
+- **[2025-01-06 13:48:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.24). / 실현손익: +41,486원
+- **[2025-01-06 13:58:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.57) breached lower threshold (-1.8). Buying spread. / 진입가: 329.70
+- **[2025-01-06 14:02:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +82,789원
+- **[2025-01-06 14:18:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 330.30
+- **[2025-01-06 14:31:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.07). / 실현손익: +7,696원
+- **[2025-01-07 09:00:00]** 영업일 2025-01-07 개장: 평가 자산: ₩24,924,743 / Track 7 할당 자본(0.5%): ₩124,624
+- **[2025-01-07 09:00:00]** Track 5 Gap Trigger (ENTER_GAP_SHORT): Gap Up Z-Score (+3.89) exceeded threshold. Shorting index for mean reversion. / 수량: 1계약
+- **[2025-01-07 09:00:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (10.62) exceeded upper threshold (+1.8). Selling spread. / 진입가: 335.48
+- **[2025-01-07 09:14:30]** Track 5 Gap Close: Timeout (15 minutes elapsed since open). Liquidating remaining gap position. / 실현손익: -112,630원
+- **[2025-01-07 09:21:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.18). / 실현손익: -71,172원
+- **[2025-01-07 10:39:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.10) exceeded upper threshold (+1.8). Selling spread. / 진입가: 334.31
+- **[2025-01-07 11:19:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.11). / 실현손익: -523원
+- **[2025-01-07 11:37:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.86) breached lower threshold (-1.8). Buying spread. / 진입가: 334.24
+- **[2025-01-07 11:45:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +41,845원
+- **[2025-01-07 11:56:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.90) exceeded upper threshold (+1.8). Selling spread. / 진입가: 334.69
+- **[2025-01-07 12:03:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.07). / 실현손익: +44,395원
+- **[2025-01-07 12:46:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.90) breached lower threshold (-1.8). Buying spread. / 진입가: 334.93
+- **[2025-01-07 12:50:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.04). / 실현손익: +52,347원
+- **[2025-01-07 13:08:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.91) exceeded upper threshold (+1.8). Selling spread. / 진입가: 335.52
+- **[2025-01-07 13:17:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.13). / 실현손익: +6,382원
+- **[2025-01-07 13:28:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.18) breached lower threshold (-1.8). Buying spread. / 진입가: 335.27
+- **[2025-01-07 13:41:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.11). / 실현손익: +32,107원
+- **[2025-01-07 14:14:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.84) exceeded upper threshold (+1.8). Selling spread. / 진입가: 336.27
+- **[2025-01-07 14:36:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.20). / 실현손익: -162,267원
+- **[2025-01-07 14:57:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.90) breached lower threshold (-1.8). Buying spread. / 진입가: 337.08
+- **[2025-01-07 15:23:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.13). / 실현손익: +44,027원
+- **[2025-01-08 09:00:00]** 영업일 2025-01-08 개장: 평가 자산: ₩24,941,889 / Track 7 할당 자본(0.5%): ₩124,709
+- **[2025-01-08 09:00:00]** Track 5 Gap Trigger (ENTER_GAP_SHORT): Gap Up Z-Score (+2.08) exceeded threshold. Shorting index for mean reversion. / 수량: 1계약
+- **[2025-01-08 09:03:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (3.69) exceeded upper threshold (+1.8). Selling spread. / 진입가: 340.23
+- **[2025-01-08 09:03:30]** Track 2 함정(Trap) 구축 완료: ATM: 340.0, 설치 수량: 1계약
+- **[2025-01-08 09:03:30]** Track 4 Basecamp: ATM: 340.0 양매수 진입
+- **[2025-01-08 09:14:30]** Track 5 Gap Close: Timeout (15 minutes elapsed since open). Liquidating remaining gap position. / 실현손익: -103,305원
+- **[2025-01-08 09:22:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.12). / 실현손익: -99,373원
+- **[2025-01-08 10:32:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.11) exceeded upper threshold (+1.8). Selling spread. / 진입가: 339.61
+- **[2025-01-08 10:45:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.06). / 실현손익: +68,375원
+- **[2025-01-08 11:34:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.23) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.90
+- **[2025-01-08 11:49:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.02). / 실현손익: +49,309원
+- **[2025-01-08 11:59:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.14) exceeded upper threshold (+1.8). Selling spread. / 진입가: 339.16
+- **[2025-01-08 12:27:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: -167,792원
+- **[2025-01-08 12:55:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.27) breached lower threshold (-1.8). Buying spread. / 진입가: 340.24
+- **[2025-01-08 13:52:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.01). / 실현손익: -231,931원
+- **[2025-01-08 14:03:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 339.44
+- **[2025-01-08 14:41:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: -62,914원
+- **[2025-01-08 14:53:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.91) breached lower threshold (-1.8). Buying spread. / 진입가: 339.34
+- **[2025-01-09 09:00:00]** 영업일 2025-01-09 개장: 평가 자산: ₩24,931,679 / Track 7 할당 자본(0.5%): ₩124,658
+- **[2025-01-09 09:05:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.00). / 실현손익: -329,855원
+- **[2025-01-09 09:15:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.36) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.02
+- **[2025-01-09 10:10:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.17). / 실현손익: -113,350원
+- **[2025-01-09 10:20:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.93) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.80
+- **[2025-01-09 10:23:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.40). / 실현손익: +53,999원
+- **[2025-01-09 10:33:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-3.29) breached lower threshold (-1.8). Buying spread. / 진입가: 338.37
+- **[2025-01-09 11:03:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.14). / 실현손익: -33,487원
+- **[2025-01-09 12:07:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.14) breached lower threshold (-1.8). Buying spread. / 진입가: 337.62
+- **[2025-01-09 12:37:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: -252,195원
+- **[2025-01-09 12:56:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.84) exceeded upper threshold (+1.8). Selling spread. / 진입가: 336.73
+- **[2025-01-09 13:21:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.09). / 실현손익: +39,969원
+- **[2025-01-09 13:33:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 336.16
+- **[2025-01-09 13:47:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.20). / 실현손익: +19,798원
+- **[2025-01-09 14:24:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.81) breached lower threshold (-1.8). Buying spread. / 진입가: 335.50
+- **[2025-01-09 14:30:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.18). / 실현손익: +54,661원
+- **[2025-01-09 14:40:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.36) breached lower threshold (-1.8). Buying spread. / 진입가: 335.14
+- **[2025-01-09 14:57:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.07). / 실현손익: -59,645원
+- **[2025-01-09 15:10:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.85) exceeded upper threshold (+1.8). Selling spread. / 진입가: 334.83
+- **[2025-01-09 15:22:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +89,680원
+- **[2025-01-10 09:00:00]** 영업일 2025-01-10 개장: 평가 자산: ₩24,918,036 / Track 7 할당 자본(0.5%): ₩124,590
+- **[2025-01-10 10:12:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.11) exceeded upper threshold (+1.8). Selling spread. / 진입가: 332.92
+- **[2025-01-10 10:18:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.07). / 실현손익: +89,104원
+- **[2025-01-10 10:47:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.83) exceeded upper threshold (+1.8). Selling spread. / 진입가: 332.17
+- **[2025-01-10 10:52:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: +72,888원
+- **[2025-01-10 11:19:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.94) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.49
+- **[2025-01-10 11:43:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.16). / 실현손익: +40,893원
+- **[2025-01-10 11:56:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.88) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.70
+- **[2025-01-10 12:04:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.14). / 실현손익: +51,383원
+- **[2025-01-10 12:21:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.90) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.76
+- **[2025-01-10 12:24:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.13). / 실현손익: +36,079원
+- **[2025-01-10 12:41:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.17) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.86
+- **[2025-01-10 13:03:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.05). / 실현손익: -39,223원
+- **[2025-01-10 13:17:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.21) exceeded upper threshold (+1.8). Selling spread. / 진입가: 332.44
+- **[2025-01-10 13:25:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.02). / 실현손익: +8,731원
+- **[2025-01-10 13:35:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.56) breached lower threshold (-1.8). Buying spread. / 진입가: 331.99
+- **[2025-01-10 14:03:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: -139,732원
+- **[2025-01-10 15:07:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.96) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.77
+- **[2025-01-13 09:00:00]** 영업일 2025-01-13 개장: 평가 자산: ₩24,904,552 / Track 7 할당 자본(0.5%): ₩124,523
+- **[2025-01-13 09:17:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.01). / 실현손익: -136,931원
+- **[2025-01-13 09:27:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.82) breached lower threshold (-1.8). Buying spread. / 진입가: 332.21
+- **[2025-01-13 09:41:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.20). / 실현손익: +72,415원
+- **[2025-01-13 09:53:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.82) exceeded upper threshold (+1.8). Selling spread. / 진입가: 332.99
+- **[2025-01-13 10:13:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: -93,513원
+- **[2025-01-13 10:33:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.07) exceeded upper threshold (+1.8). Selling spread. / 진입가: 334.33
+- **[2025-01-13 10:46:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.07). / 실현손익: -51,956원
+- **[2025-01-13 11:41:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.96) breached lower threshold (-1.8). Buying spread. / 진입가: 335.34
+- **[2025-01-13 11:48:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.19). / 실현손익: +94,517원
+- **[2025-01-13 11:58:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.98) breached lower threshold (-1.8). Buying spread. / 진입가: 335.45
+- **[2025-01-13 12:08:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.10). / 실현손익: +74,584원
+- **[2025-01-13 12:18:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.03) breached lower threshold (-1.8). Buying spread. / 진입가: 335.23
+- **[2025-01-13 12:26:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +74,623원
+- **[2025-01-13 12:51:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.26) exceeded upper threshold (+1.8). Selling spread. / 진입가: 335.83
+- **[2025-01-13 13:11:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.04). / 실현손익: -47,263원
+- **[2025-01-13 13:37:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.98) breached lower threshold (-1.8). Buying spread. / 진입가: 336.30
+- **[2025-01-13 14:12:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: -45,504원
+- **[2025-01-13 14:43:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.81) breached lower threshold (-1.8). Buying spread. / 진입가: 335.63
+- **[2025-01-13 15:01:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.36). / 실현손익: -42,724원
+- **[2025-01-13 15:11:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.02) exceeded upper threshold (+1.8). Selling spread. / 진입가: 335.67
+- **[2025-01-14 09:00:00]** 영업일 2025-01-14 개장: 평가 자산: ₩24,935,246 / Track 7 할당 자본(0.5%): ₩124,676
+- **[2025-01-14 09:01:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.08). / 실현손익: +28,306원
+- **[2025-01-14 09:33:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.27) breached lower threshold (-1.8). Buying spread. / 진입가: 335.82
+- **[2025-01-14 09:56:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.02). / 실현손익: -61,661원
+- **[2025-01-14 10:58:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.00) breached lower threshold (-1.8). Buying spread. / 진입가: 336.21
+- **[2025-01-14 11:18:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: -18,983원
+- **[2025-01-14 11:58:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.81) breached lower threshold (-1.8). Buying spread. / 진입가: 335.80
+- **[2025-01-14 12:16:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.15). / 실현손익: -65,771원
+- **[2025-01-14 13:34:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.15) exceeded upper threshold (+1.8). Selling spread. / 진입가: 335.86
+- **[2025-01-14 14:01:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.06). / 실현손익: -101,667원
+- **[2025-01-14 14:36:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.28) breached lower threshold (-1.8). Buying spread. / 진입가: 336.84
+- **[2025-01-14 14:41:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.19). / 실현손익: +53,840원
+- **[2025-01-14 14:55:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.83) exceeded upper threshold (+1.8). Selling spread. / 진입가: 337.46
+- **[2025-01-14 15:25:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.18). / 실현손익: -266,871원
+- **[2025-01-15 09:00:00]** 영업일 2025-01-15 개장: 평가 자산: ₩24,930,902 / Track 7 할당 자본(0.5%): ₩124,655
+- **[2025-01-15 09:00:00]** Track 5 Gap Trigger (ENTER_GAP_LONG): Gap Down Z-Score (-2.01) breached threshold. Longing index for mean reversion. / 수량: 1계약
+- **[2025-01-15 09:05:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.52) breached lower threshold (-1.8). Buying spread. / 진입가: 336.22
+- **[2025-01-15 09:14:30]** Track 5 Gap Close: Timeout (15 minutes elapsed since open). Liquidating remaining gap position. / 실현손익: +132,205원
+- **[2025-01-15 09:27:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: -17,967원
+- **[2025-01-15 10:52:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 337.64
+- **[2025-01-15 10:58:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.28). / 실현손익: +10,920원
+- **[2025-01-15 11:33:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.91) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.62
+- **[2025-01-15 11:44:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.02). / 실현손익: -45,061원
+- **[2025-01-15 11:54:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.92) breached lower threshold (-1.8). Buying spread. / 진입가: 338.75
+- **[2025-01-15 12:37:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: -48,017원
+- **[2025-01-15 12:48:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.84) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.79
+- **[2025-01-15 12:58:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.07). / 실현손익: +31,988원
+- **[2025-01-15 13:08:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.00) breached lower threshold (-1.8). Buying spread. / 진입가: 338.31
+- **[2025-01-15 13:22:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: +11,369원
+- **[2025-01-15 13:56:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.95) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.48
+- **[2025-01-15 14:05:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.03). / 실현손익: +53,705원
+- **[2025-01-15 14:15:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.96) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.88
+- **[2025-01-15 14:27:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.00). / 실현손익: +24,796원
+- **[2025-01-15 14:39:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.87) exceeded upper threshold (+1.8). Selling spread. / 진입가: 339.50
+- **[2025-01-15 14:49:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: -15,277원
+- **[2025-01-15 15:18:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.82) breached lower threshold (-1.8). Buying spread. / 진입가: 339.77
+- **[2025-01-16 09:00:00]** 영업일 2025-01-16 개장: 평가 자산: ₩24,928,041 / Track 7 할당 자본(0.5%): ₩124,640
+- **[2025-01-16 09:12:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +49,848원
+- **[2025-01-16 09:41:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.10) exceeded upper threshold (+1.8). Selling spread. / 진입가: 340.32
+- **[2025-01-16 09:46:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +37,916원
+- **[2025-01-16 09:56:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (3.00) exceeded upper threshold (+1.8). Selling spread. / 진입가: 340.64
+- **[2025-01-16 10:31:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: -289,343원
+- **[2025-01-16 10:49:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.84) breached lower threshold (-1.8). Buying spread. / 진입가: 342.05
+- **[2025-01-16 11:05:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.04). / 실현손익: +72,215원
+- **[2025-01-16 11:28:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 342.05
+- **[2025-01-16 11:45:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.14). / 실현손익: +11,615원
+- **[2025-01-16 11:56:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.85) exceeded upper threshold (+1.8). Selling spread. / 진입가: 342.38
+- **[2025-01-16 12:21:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.08). / 실현손익: -88,792원
+- **[2025-01-16 13:11:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.93) breached lower threshold (-1.8). Buying spread. / 진입가: 342.91
+- **[2025-01-16 13:20:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.01). / 실현손익: +42,695원
+- **[2025-01-16 13:35:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.13) exceeded upper threshold (+1.8). Selling spread. / 진입가: 343.35
+- **[2025-01-16 14:02:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.11). / 실현손익: -59,169원
+- **[2025-01-16 14:21:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.90) breached lower threshold (-1.8). Buying spread. / 진입가: 343.56
+- **[2025-01-16 15:15:00]** OTM 옵션 보험 추가 매입: Strikes: P:327.5, C:357.5, Qty: +1, Cost: ₩75,000
+- **[2025-01-16 15:15:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.18). / 실현손익: -201,148원
+- **[2025-01-17 09:00:00]** 영업일 2025-01-17 개장: 평가 자산: ₩24,849,802 / Track 7 할당 자본(0.5%): ₩124,249
+- **[2025-01-17 09:02:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.05) breached lower threshold (-1.8). Buying spread. / 진입가: 342.14
+- **[2025-01-17 09:05:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.00). / 실현손익: +22,746원
+- **[2025-01-17 09:21:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.08) exceeded upper threshold (+1.8). Selling spread. / 진입가: 341.95
+- **[2025-01-17 09:55:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: -271,700원
+- **[2025-01-17 10:50:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.93) breached lower threshold (-1.8). Buying spread. / 진입가: 342.82
+- **[2025-01-17 11:12:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.06). / 실현손익: -79,137원
+- **[2025-01-17 11:56:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.85) exceeded upper threshold (+1.8). Selling spread. / 진입가: 341.90
+- **[2025-01-17 12:00:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.24). / 실현손익: +70,847원
+- **[2025-01-17 12:10:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.90) breached lower threshold (-1.8). Buying spread. / 진입가: 341.25
+- **[2025-01-17 12:15:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.13). / 실현손익: +11,140원
+- **[2025-01-17 12:26:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.88) exceeded upper threshold (+1.8). Selling spread. / 진입가: 341.39
+- **[2025-01-17 12:38:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: +69,468원
+- **[2025-01-17 13:32:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.13) exceeded upper threshold (+1.8). Selling spread. / 진입가: 340.70
+- **[2025-01-17 13:48:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.13). / 실현손익: +70,093원
+- **[2025-01-17 14:02:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.86) breached lower threshold (-1.8). Buying spread. / 진입가: 339.88
+- **[2025-01-17 14:12:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.19). / 실현손익: -39원
+- **[2025-01-17 14:22:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.86) exceeded upper threshold (+1.8). Selling spread. / 진입가: 340.16
+- **[2025-01-17 14:35:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: +72,981원
+- **[2025-01-20 09:00:00]** 영업일 2025-01-20 개장: 평가 자산: ₩24,852,368 / Track 7 할당 자본(0.5%): ₩124,262
+- **[2025-01-20 09:13:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.10) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.70
+- **[2025-01-20 09:35:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: +62,251원
+- **[2025-01-20 09:45:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.88) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.80
+- **[2025-01-20 10:26:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.20). / 실현손익: -149,510원
+- **[2025-01-20 10:40:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.17) breached lower threshold (-1.8). Buying spread. / 진입가: 339.27
+- **[2025-01-20 11:05:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: -1,830원
+- **[2025-01-20 11:18:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.04) exceeded upper threshold (+1.8). Selling spread. / 진입가: 339.82
+- **[2025-01-20 11:41:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.02). / 실현손익: -65,304원
+- **[2025-01-20 12:50:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.81) breached lower threshold (-1.8). Buying spread. / 진입가: 341.33
+- **[2025-01-20 13:01:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.22). / 실현손익: +79,609원
+- **[2025-01-20 13:11:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.15) breached lower threshold (-1.8). Buying spread. / 진입가: 341.49
+- **[2025-01-20 13:16:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.06). / 실현손익: +48,958원
+- **[2025-01-20 13:29:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.87) exceeded upper threshold (+1.8). Selling spread. / 진입가: 342.22
+- **[2025-01-20 13:33:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.04). / 실현손익: +48,773원
+- **[2025-01-20 14:12:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 342.96
+- **[2025-01-20 14:16:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.16). / 실현손익: +19,061원
+- **[2025-01-20 14:45:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.02) breached lower threshold (-1.8). Buying spread. / 진입가: 343.23
+- **[2025-01-20 14:57:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.19). / 실현손익: +62,107원
+- **[2025-01-20 15:07:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.32) breached lower threshold (-1.8). Buying spread. / 진입가: 343.15
+- **[2025-01-20 15:21:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +37,595원
+- **[2025-01-21 09:00:00]** 영업일 2025-01-21 개장: 평가 자산: ₩24,847,564 / Track 7 할당 자본(0.5%): ₩124,238
+- **[2025-01-21 09:00:00]** 2주간격 7.3pt 약충격 주입: 평온 장세 테스트: 2주 간격 1회 하루 등락폭 7.3포인트 자율 가변 약충격
+- **[2025-01-21 09:01:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-3.58) breached lower threshold (-1.8). Buying spread. / 진입가: 342.52
+- **[2025-01-21 09:16:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.11). / 실현손익: -168,484원
+- **[2025-01-21 09:40:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.91) exceeded upper threshold (+1.8). Selling spread. / 진입가: 342.52
+- **[2025-01-21 10:03:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.02). / 실현손익: -378,710원
+- **[2025-01-21 10:38:30]** Track 1 Hedge (BUY): 선물 헷지 #1 발동
+- **[2025-01-21 10:43:00]** Track 1 FLATTEN: 100% 방어선 격돌
+- **[2025-01-21 10:53:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.00) breached lower threshold (-1.8). Buying spread. / 진입가: 348.26
+- **[2025-01-21 11:29:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: -1,201,408원
+- **[2025-01-21 11:44:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 346.10
+- **[2025-01-21 12:04:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.17). / 실현손익: -125,737원
+- **[2025-01-21 12:56:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.83) exceeded upper threshold (+1.8). Selling spread. / 진입가: 343.95
+- **[2025-01-21 13:14:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.08). / 실현손익: -29,574원
+- **[2025-01-21 14:31:30]** 보험 이익 수취 청산 (CALL): Strike: 357.5, 실현이익: +0원
+- **[2025-01-21 14:50:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.94) breached lower threshold (-1.8). Buying spread. / 진입가: 355.68
+- **[2025-01-21 15:11:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.16). / 실현손익: +1,007,844원
+- **[2025-01-21 15:15:00]** OTM 옵션 보험 부분 축소: 보험 Qty -1 감소 (Target: 0)
+- **[2025-01-21 15:21:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-3.79) breached lower threshold (-1.8). Buying spread. / 진입가: 360.57
+- **[2025-01-22 09:00:00]** 영업일 2025-01-22 개장: 평가 자산: ₩24,763,106 / Track 7 할당 자본(0.5%): ₩123,816
+- **[2025-01-22 09:32:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: -146,543원
+- **[2025-01-22 10:11:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.84) breached lower threshold (-1.8). Buying spread. / 진입가: 359.16
+- **[2025-01-22 10:31:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.14). / 실현손익: -58,195원
+- **[2025-01-22 11:44:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.86) exceeded upper threshold (+1.8). Selling spread. / 진입가: 358.46
+- **[2025-01-22 12:27:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.03). / 실현손익: -155,994원
+- **[2025-01-22 12:45:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.87) exceeded upper threshold (+1.8). Selling spread. / 진입가: 359.81
+- **[2025-01-22 13:01:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: -48,207원
+- **[2025-01-22 13:31:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.89) breached lower threshold (-1.8). Buying spread. / 진입가: 360.45
+- **[2025-01-22 14:01:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.04). / 실현손익: -798원
+- **[2025-01-22 14:17:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.00) breached lower threshold (-1.8). Buying spread. / 진입가: 359.78
+- **[2025-01-22 14:32:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.14). / 실현손익: -29,851원
+- **[2025-01-22 15:01:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.82) exceeded upper threshold (+1.8). Selling spread. / 진입가: 359.43
+- **[2025-01-22 15:18:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.02). / 실현손익: +51,192원
+- **[2025-01-22 15:28:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.12) exceeded upper threshold (+1.8). Selling spread. / 진입가: 359.59
+- **[2025-01-23 09:00:00]** 영업일 2025-01-23 개장: 평가 자산: ₩24,860,533 / Track 7 할당 자본(0.5%): ₩124,303
+- **[2025-01-23 09:06:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.12). / 실현손익: +57,513원
+- **[2025-01-23 09:42:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.34) breached lower threshold (-1.8). Buying spread. / 진입가: 358.72
+- **[2025-01-23 10:02:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.19). / 실현손익: -79,144원
+- **[2025-01-23 10:21:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.82) exceeded upper threshold (+1.8). Selling spread. / 진입가: 358.19
+- **[2025-01-23 11:06:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.18). / 실현손익: -435,392원
+- **[2025-01-23 11:16:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.33) breached lower threshold (-1.8). Buying spread. / 진입가: 359.53
+- **[2025-01-23 11:47:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.14). / 실현손익: +9,699원
+- **[2025-01-23 12:05:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.89) exceeded upper threshold (+1.8). Selling spread. / 진입가: 359.71
+- **[2025-01-23 12:41:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.07). / 실현손익: -82,940원
+- **[2025-01-23 13:09:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.44) breached lower threshold (-1.8). Buying spread. / 진입가: 360.33
+- **[2025-01-23 13:41:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.07). / 실현손익: -115,694원
+- **[2025-01-23 14:34:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.90) exceeded upper threshold (+1.8). Selling spread. / 진입가: 359.56
+- **[2025-01-24 09:00:00]** 영업일 2025-01-24 개장: 평가 자산: ₩24,861,320 / Track 7 할당 자본(0.5%): ₩124,307
+- **[2025-01-24 09:07:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.36). / 실현손익: -516,175원
+- **[2025-01-24 09:17:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (3.01) exceeded upper threshold (+1.8). Selling spread. / 진입가: 362.29
+- **[2025-01-24 09:27:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: -48,158원
+- **[2025-01-24 09:37:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.58) breached lower threshold (-1.8). Buying spread. / 진입가: 362.45
+- **[2025-01-24 10:08:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.20). / 실현손익: +94,127원
+- **[2025-01-24 10:36:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.13) exceeded upper threshold (+1.8). Selling spread. / 진입가: 363.02
+- **[2025-01-24 10:53:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.00). / 실현손익: -20,596원
+- **[2025-01-24 11:03:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.08) exceeded upper threshold (+1.8). Selling spread. / 진입가: 363.49
+- **[2025-01-24 11:23:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.13). / 실현손익: -101,265원
+- **[2025-01-24 11:33:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 363.65
+- **[2025-01-24 11:43:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: +97,911원
+- **[2025-01-24 12:21:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.01) breached lower threshold (-1.8). Buying spread. / 진입가: 364.03
+- **[2025-01-24 12:28:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: +56,235원
+- **[2025-01-24 12:38:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.99) breached lower threshold (-1.8). Buying spread. / 진입가: 363.93
+- **[2025-01-24 12:52:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: +18,927원
+- **[2025-01-24 13:32:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.05) breached lower threshold (-1.8). Buying spread. / 진입가: 363.54
+- **[2025-01-24 13:35:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: +28,647원
+- **[2025-01-24 13:45:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.41) breached lower threshold (-1.8). Buying spread. / 진입가: 363.38
+- **[2025-01-24 13:57:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.11). / 실현손익: +6,845원
+- **[2025-01-24 14:07:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.71) breached lower threshold (-1.8). Buying spread. / 진입가: 362.87
+- **[2025-01-24 14:23:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.06). / 실현손익: -79,059원
+- **[2025-01-24 14:33:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.83) exceeded upper threshold (+1.8). Selling spread. / 진입가: 362.68
+- **[2025-01-24 14:54:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +82,624원
+- **[2025-01-27 09:00:00]** 영업일 2025-01-27 개장: 평가 자산: ₩24,874,134 / Track 7 할당 자본(0.5%): ₩124,371
+- **[2025-01-27 09:57:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.46) exceeded upper threshold (+1.8). Selling spread. / 진입가: 360.69
+- **[2025-01-27 10:37:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.11). / 실현손익: -97,254원
+- **[2025-01-27 10:48:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.02) breached lower threshold (-1.8). Buying spread. / 진입가: 360.62
+- **[2025-01-27 11:06:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: -8,051원
+- **[2025-01-27 11:55:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.02) exceeded upper threshold (+1.8). Selling spread. / 진입가: 361.56
+- **[2025-01-27 12:07:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.09). / 실현손익: -1,167원
+- **[2025-01-27 12:17:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.81) breached lower threshold (-1.8). Buying spread. / 진입가: 361.27
+- **[2025-01-27 12:31:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.10). / 실현손익: +50,041원
+- **[2025-01-27 13:21:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.92) breached lower threshold (-1.8). Buying spread. / 진입가: 362.07
+- **[2025-01-27 13:41:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +75,660원
+- **[2025-01-27 14:16:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.06) exceeded upper threshold (+1.8). Selling spread. / 진입가: 362.58
+- **[2025-01-27 14:31:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.10). / 실현손익: -27,000원
+- **[2025-01-27 14:42:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.83) breached lower threshold (-1.8). Buying spread. / 진입가: 362.59
+- **[2025-01-27 15:19:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: -215,918원
+- **[2025-01-31 09:00:00]** 영업일 2025-01-31 개장: 평가 자산: ₩24,856,743 / Track 7 할당 자본(0.5%): ₩124,284
+- **[2025-01-31 09:16:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.26) exceeded upper threshold (+1.8). Selling spread. / 진입가: 361.13
+- **[2025-01-31 09:43:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.04). / 실현손익: -35,571원
+- **[2025-01-31 11:06:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.30) exceeded upper threshold (+1.8). Selling spread. / 진입가: 359.87
+- **[2025-01-31 11:35:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.16). / 실현손익: -39,298원
+- **[2025-01-31 11:58:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.90) exceeded upper threshold (+1.8). Selling spread. / 진입가: 360.50
+- **[2025-01-31 12:32:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.20). / 실현손익: -263,742원
+- **[2025-01-31 12:49:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.97) breached lower threshold (-1.8). Buying spread. / 진입가: 361.61
+- **[2025-01-31 12:53:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.06). / 실현손익: +102,213원
+- **[2025-01-31 13:26:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.97) exceeded upper threshold (+1.8). Selling spread. / 진입가: 362.89
+- **[2025-01-31 13:39:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.10). / 실현손익: -34,845원
+- **[2025-01-31 13:50:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.82) breached lower threshold (-1.8). Buying spread. / 진입가: 363.05
+- **[2025-01-31 13:59:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.00). / 실현손익: +85,824원
+- **[2025-01-31 14:09:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.31) breached lower threshold (-1.8). Buying spread. / 진입가: 363.08
+- **[2025-01-31 14:26:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.06). / 실현손익: +65,743원
+- **[2025-01-31 14:36:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.14) exceeded upper threshold (+1.8). Selling spread. / 진입가: 363.87
+- **[2025-01-31 14:51:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.08). / 실현손익: -54,244원
+- **[2025-01-31 15:28:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.94) breached lower threshold (-1.8). Buying spread. / 진입가: 363.64
+- **[2025-02-03 09:00:00]** 영업일 2025-02-03 개장: 평가 자산: ₩24,818,085 / Track 7 할당 자본(0.5%): ₩124,090
+- **[2025-02-03 09:00:00]** 월 변경 자본금 & 코스피 지수 100% 연속 이월: 전월 자산 ₩24,818,085 / 최종 지수 363.58pt 차월 승계 완료
+- **[2025-02-03 09:11:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.20). / 실현손익: +63,846원
+- **[2025-02-03 09:24:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.16) exceeded upper threshold (+1.8). Selling spread. / 진입가: 364.15
+- **[2025-02-03 09:33:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.09). / 실현손익: +42,270원
+- **[2025-02-03 10:34:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.99) exceeded upper threshold (+1.8). Selling spread. / 진입가: 363.99
+- **[2025-02-03 10:42:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.42). / 실현손익: +49,143원
+- **[2025-02-03 10:57:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.10) breached lower threshold (-1.8). Buying spread. / 진입가: 363.49
+- **[2025-02-03 11:08:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: +19,265원
+- **[2025-02-03 11:20:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.80) breached lower threshold (-1.8). Buying spread. / 진입가: 363.22
+- **[2025-02-03 11:27:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: +10,460원
+- **[2025-02-03 11:37:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.31) exceeded upper threshold (+1.8). Selling spread. / 진입가: 363.47
+- **[2025-02-03 12:07:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.11). / 실현손익: -60,878원
+- **[2025-02-03 12:40:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.83) breached lower threshold (-1.8). Buying spread. / 진입가: 364.18
+- **[2025-02-03 12:47:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.09). / 실현손익: +64,476원
+- **[2025-02-03 13:00:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.24) breached lower threshold (-1.8). Buying spread. / 진입가: 364.21
+- **[2025-02-03 13:11:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +49,877원
+- **[2025-02-03 13:21:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.04) exceeded upper threshold (+1.8). Selling spread. / 진입가: 364.84
+- **[2025-02-03 13:30:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: +27,544원
+- **[2025-02-03 14:16:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.98) breached lower threshold (-1.8). Buying spread. / 진입가: 365.69
+- **[2025-02-03 14:18:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.34). / 실현손익: +50,334원
+- **[2025-02-03 14:28:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.43) exceeded upper threshold (+1.8). Selling spread. / 진입가: 366.37
+- **[2025-02-03 14:31:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: +37,255원
+- **[2025-02-03 14:47:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.16) breached lower threshold (-1.8). Buying spread. / 진입가: 366.50
+- **[2025-02-03 15:04:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.10). / 실현손익: +108,398원
+- **[2025-02-03 15:14:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.82) exceeded upper threshold (+1.8). Selling spread. / 진입가: 367.42
+- **[2025-02-03 15:28:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.13). / 실현손익: -70,079원
+- **[2025-02-04 09:00:00]** 영업일 2025-02-04 개장: 평가 자산: ₩24,890,821 / Track 7 할당 자본(0.5%): ₩124,454
+- **[2025-02-04 09:55:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.82) breached lower threshold (-1.8). Buying spread. / 진입가: 368.99
+- **[2025-02-04 10:23:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.05). / 실현손익: +7,654원
+- **[2025-02-04 11:17:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.86) breached lower threshold (-1.8). Buying spread. / 진입가: 369.57
+- **[2025-02-04 11:59:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: -264,717원
+- **[2025-02-04 12:09:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.91) exceeded upper threshold (+1.8). Selling spread. / 진입가: 368.64
+- **[2025-02-04 12:41:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: +34,478원
+- **[2025-02-04 13:04:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.85) exceeded upper threshold (+1.8). Selling spread. / 진입가: 368.76
+- **[2025-02-04 13:06:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.21). / 실현손익: +48,476원
+- **[2025-02-04 13:24:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 368.11
+- **[2025-02-04 13:27:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: +51,931원
+- **[2025-02-04 14:14:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.82) exceeded upper threshold (+1.8). Selling spread. / 진입가: 368.10
+- **[2025-02-04 14:28:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.23). / 실현손익: +32,502원
+- **[2025-02-04 14:39:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.02) breached lower threshold (-1.8). Buying spread. / 진입가: 367.72
+- **[2025-02-04 14:55:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.15). / 실현손익: +6,717원
+- **[2025-02-05 09:00:00]** 영업일 2025-02-05 개장: 평가 자산: ₩24,861,830 / Track 7 할당 자본(0.5%): ₩124,309
+- **[2025-02-05 09:17:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.06) breached lower threshold (-1.8). Buying spread. / 진입가: 366.54
+- **[2025-02-05 09:24:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: -8,047원
+- **[2025-02-05 09:34:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (3.26) exceeded upper threshold (+1.8). Selling spread. / 진입가: 366.65
+- **[2025-02-05 09:57:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.16). / 실현손익: +57,342원
+- **[2025-02-05 10:08:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.92) exceeded upper threshold (+1.8). Selling spread. / 진입가: 366.73
+- **[2025-02-05 10:21:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.11). / 실현손익: +48,050원
+- **[2025-02-05 10:32:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.00) breached lower threshold (-1.8). Buying spread. / 진입가: 366.42
+- **[2025-02-05 10:35:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.03). / 실현손익: +48,322원
+- **[2025-02-05 10:45:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.09) breached lower threshold (-1.8). Buying spread. / 진입가: 366.31
+- **[2025-02-05 10:49:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.02). / 실현손익: +41,963원
+- **[2025-02-05 11:02:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.06) breached lower threshold (-1.8). Buying spread. / 진입가: 366.15
+- **[2025-02-05 11:28:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.02). / 실현손익: -153,678원
+- **[2025-02-05 11:48:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.87) exceeded upper threshold (+1.8). Selling spread. / 진입가: 365.66
+- **[2025-02-05 12:14:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.00). / 실현손익: +5,776원
+- **[2025-02-05 12:55:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.82) exceeded upper threshold (+1.8). Selling spread. / 진입가: 366.03
+- **[2025-02-05 13:12:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.14). / 실현손익: -84,163원
+- **[2025-02-05 14:15:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.87) exceeded upper threshold (+1.8). Selling spread. / 진입가: 366.47
+- **[2025-02-05 14:43:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: -105,985원
+- **[2025-02-05 15:16:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.32) breached lower threshold (-1.8). Buying spread. / 진입가: 367.00
+- **[2025-02-06 09:00:00]** 영업일 2025-02-06 개장: 평가 자산: ₩24,816,395 / Track 7 할당 자본(0.5%): ₩124,082
+- **[2025-02-06 09:13:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: +4,201원
+- **[2025-02-06 09:24:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.16) exceeded upper threshold (+1.8). Selling spread. / 진입가: 367.45
+- **[2025-02-06 09:47:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.16). / 실현손익: -83,967원
+- **[2025-02-06 10:03:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.93) breached lower threshold (-1.8). Buying spread. / 진입가: 367.50
+- **[2025-02-06 10:44:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.06). / 실현손익: -328,335원
+- **[2025-02-06 11:01:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.87) exceeded upper threshold (+1.8). Selling spread. / 진입가: 366.03
+- **[2025-02-06 11:10:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.01). / 실현손익: +100,107원
+- **[2025-02-06 11:22:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.83) exceeded upper threshold (+1.8). Selling spread. / 진입가: 365.87
+- **[2025-02-06 11:51:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: -81,662원
+- **[2025-02-06 12:10:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.87) exceeded upper threshold (+1.8). Selling spread. / 진입가: 366.72
+- **[2025-02-06 12:22:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: +14,960원
+- **[2025-02-06 12:39:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.17) breached lower threshold (-1.8). Buying spread. / 진입가: 366.61
+- **[2025-02-06 12:59:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: +12,075원
+- **[2025-02-06 13:26:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.15) breached lower threshold (-1.8). Buying spread. / 진입가: 366.29
+- **[2025-02-06 13:31:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.03). / 실현손익: +53,362원
+- **[2025-02-06 13:49:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.88) exceeded upper threshold (+1.8). Selling spread. / 진입가: 366.63
+- **[2025-02-06 14:27:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.07). / 실현손익: -225,238원
+- **[2025-02-06 14:42:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 367.46
+- **[2025-02-06 15:01:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.19). / 실현손익: +36,657원
+- **[2025-02-07 09:00:00]** 영업일 2025-02-07 개장: 평가 자산: ₩24,807,959 / Track 7 할당 자본(0.5%): ₩124,040
+- **[2025-02-07 09:09:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.94) breached lower threshold (-1.8). Buying spread. / 진입가: 367.46
+- **[2025-02-07 09:39:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: -151,363원
+- **[2025-02-07 10:13:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.86) exceeded upper threshold (+1.8). Selling spread. / 진입가: 365.83
+- **[2025-02-07 10:18:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: +87,246원
+- **[2025-02-07 10:37:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.31) exceeded upper threshold (+1.8). Selling spread. / 진입가: 365.33
+- **[2025-02-07 11:21:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.17). / 실현손익: -81,493원
+- **[2025-02-07 11:46:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.93) breached lower threshold (-1.8). Buying spread. / 진입가: 365.25
+- **[2025-02-07 12:27:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.01). / 실현손익: -232,168원
+- **[2025-02-07 12:37:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.62) exceeded upper threshold (+1.8). Selling spread. / 진입가: 364.75
+- **[2025-02-07 12:53:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: +90,841원
+- **[2025-02-07 14:16:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.15) breached lower threshold (-1.8). Buying spread. / 진입가: 363.45
+- **[2025-02-07 14:32:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.18). / 실현손익: -11,304원
+- **[2025-02-07 14:49:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.02) breached lower threshold (-1.8). Buying spread. / 진입가: 362.74
+- **[2025-02-07 15:09:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.15). / 실현손익: -153,073원
+- **[2025-02-07 15:19:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.15) exceeded upper threshold (+1.8). Selling spread. / 진입가: 362.39
+- **[2025-02-10 09:00:00]** 영업일 2025-02-10 개장: 평가 자산: ₩24,839,227 / Track 7 할당 자본(0.5%): ₩124,196
+- **[2025-02-10 09:25:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: +45,213원
+- **[2025-02-10 09:43:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.00) breached lower threshold (-1.8). Buying spread. / 진입가: 361.96
+- **[2025-02-10 10:15:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.06). / 실현손익: -156,429원
+- **[2025-02-10 10:27:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.21) exceeded upper threshold (+1.8). Selling spread. / 진입가: 361.29
+- **[2025-02-10 10:57:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.04). / 실현손익: +4,043원
+- **[2025-02-10 11:07:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.04) breached lower threshold (-1.8). Buying spread. / 진입가: 360.65
+- **[2025-02-10 11:19:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.03). / 실현손익: +63,571원
+- **[2025-02-10 11:56:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.82) breached lower threshold (-1.8). Buying spread. / 진입가: 359.88
+- **[2025-02-10 12:02:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: +10,559원
+- **[2025-02-10 12:21:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.98) exceeded upper threshold (+1.8). Selling spread. / 진입가: 359.94
+- **[2025-02-10 13:01:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.17). / 실현손익: -214,320원
+- **[2025-02-10 13:16:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.86) breached lower threshold (-1.8). Buying spread. / 진입가: 360.64
+- **[2025-02-10 13:50:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.01). / 실현손익: -109,512원
+- **[2025-02-10 14:34:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.97) exceeded upper threshold (+1.8). Selling spread. / 진입가: 359.58
+- **[2025-02-10 15:04:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.05). / 실현손익: +30,648원
+- **[2025-02-10 15:14:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.84) breached lower threshold (-1.8). Buying spread. / 진입가: 359.04
+- **[2025-02-10 15:19:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.11). / 실현손익: +59,797원
+- **[2025-02-11 09:00:00]** 영업일 2025-02-11 개장: 평가 자산: ₩24,851,706 / Track 7 할당 자본(0.5%): ₩124,259
+- **[2025-02-11 09:00:00]** Track 5 Gap Trigger (ENTER_GAP_LONG): Gap Down Z-Score (-4.05) breached threshold. Longing index for mean reversion. / 수량: 1계약
+- **[2025-02-11 09:00:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-10.39) breached lower threshold (-1.8). Buying spread. / 진입가: 353.21
+- **[2025-02-11 09:14:30]** Track 5 Gap Close: Timeout (15 minutes elapsed since open). Liquidating remaining gap position. / 실현손익: +47,506원
+- **[2025-02-11 09:19:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.19). / 실현손익: +75,813원
+- **[2025-02-11 10:26:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.94) breached lower threshold (-1.8). Buying spread. / 진입가: 354.78
+- **[2025-02-11 10:38:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: +84,345원
+- **[2025-02-11 11:32:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.97) breached lower threshold (-1.8). Buying spread. / 진입가: 355.65
+- **[2025-02-11 11:43:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: +63,006원
+- **[2025-02-11 11:53:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.52) breached lower threshold (-1.8). Buying spread. / 진입가: 355.54
+- **[2025-02-11 12:27:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.07). / 실현손익: -110,372원
+- **[2025-02-11 12:54:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.80) exceeded upper threshold (+1.8). Selling spread. / 진입가: 354.80
+- **[2025-02-11 13:05:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: +64,602원
+- **[2025-02-11 13:16:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.89) breached lower threshold (-1.8). Buying spread. / 진입가: 354.17
+- **[2025-02-11 13:42:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.06). / 실현손익: -156,976원
+- **[2025-02-11 14:09:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.45) exceeded upper threshold (+1.8). Selling spread. / 진입가: 352.98
+- **[2025-02-11 14:37:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +32,087원
+- **[2025-02-11 15:23:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.89) exceeded upper threshold (+1.8). Selling spread. / 진입가: 352.80
+- **[2025-02-11 15:26:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: +83,315원
+- **[2025-02-12 09:00:00]** 영업일 2025-02-12 개장: 평가 자산: ₩24,879,139 / Track 7 할당 자본(0.5%): ₩124,396
+- **[2025-02-12 09:21:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.97) breached lower threshold (-1.8). Buying spread. / 진입가: 352.16
+- **[2025-02-12 09:46:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: -131,494원
+- **[2025-02-12 09:57:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.20) exceeded upper threshold (+1.8). Selling spread. / 진입가: 351.86
+- **[2025-02-12 10:34:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.07). / 실현손익: -199,439원
+- **[2025-02-12 10:59:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.88) exceeded upper threshold (+1.8). Selling spread. / 진입가: 353.63
+- **[2025-02-12 11:09:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.18). / 실현손익: -43,756원
+- **[2025-02-12 12:08:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.87) breached lower threshold (-1.8). Buying spread. / 진입가: 354.88
+- **[2025-02-12 12:19:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: +117,053원
+- **[2025-02-12 13:15:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.28) exceeded upper threshold (+1.8). Selling spread. / 진입가: 356.01
+- **[2025-02-12 13:31:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.01). / 실현손익: -52,322원
+- **[2025-02-12 14:25:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.96) exceeded upper threshold (+1.8). Selling spread. / 진입가: 357.50
+- **[2025-02-12 14:35:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.21). / 실현손익: -2,130원
+- **[2025-02-12 14:58:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.88) breached lower threshold (-1.8). Buying spread. / 진입가: 357.73
+- **[2025-02-12 15:13:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: +52,103원
+- **[2025-02-13 09:00:00]** 영업일 2025-02-13 개장: 평가 자산: ₩24,841,559 / Track 7 할당 자본(0.5%): ₩124,208
+- **[2025-02-13 09:00:00]** 2주간격 4.3pt 약충격 주입: 평온 장세 테스트: 2주 간격 1회 하루 등락폭 4.3포인트 자율 가변 약충격
+- **[2025-02-13 09:00:00]** Track 5 Gap Trigger (ENTER_GAP_LONG): Gap Down Z-Score (-3.50) breached threshold. Longing index for mean reversion. / 수량: 1계약
+- **[2025-02-13 09:00:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-10.47) breached lower threshold (-1.8). Buying spread. / 진입가: 352.67
+- **[2025-02-13 09:14:30]** Track 5 Gap Close: Timeout (15 minutes elapsed since open). Liquidating remaining gap position. / 실현손익: +125,862원
+- **[2025-02-13 09:18:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.10). / 실현손익: +244,726원
+- **[2025-02-13 10:57:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.89) breached lower threshold (-1.8). Buying spread. / 진입가: 345.83
+- **[2025-02-13 10:59:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.05). / 실현손익: -5,800원
+- **[2025-02-13 11:12:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.03) breached lower threshold (-1.8). Buying spread. / 진입가: 344.24
+- **[2025-02-13 11:16:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.38). / 실현손익: -47,103원
+- **[2025-02-13 11:26:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (4.14) exceeded upper threshold (+1.8). Selling spread. / 진입가: 344.59
+- **[2025-02-13 11:45:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: +248,516원
+- **[2025-02-13 12:47:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.91) breached lower threshold (-1.8). Buying spread. / 진입가: 337.71
+- **[2025-02-13 13:17:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: -810,408원
+- **[2025-02-13 13:27:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (3.83) exceeded upper threshold (+1.8). Selling spread. / 진입가: 334.17
+- **[2025-02-13 14:17:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.14). / 실현손익: -894,837원
+- **[2025-02-13 14:27:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.03) breached lower threshold (-1.8). Buying spread. / 진입가: 336.57
+- **[2025-02-13 14:51:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.15). / 실현손익: -312,356원
+- **[2025-02-14 09:00:00]** 영업일 2025-02-14 개장: 평가 자산: ₩24,836,946 / Track 7 할당 자본(0.5%): ₩124,185
+- **[2025-02-14 10:32:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.05) breached lower threshold (-1.8). Buying spread. / 진입가: 336.26
+- **[2025-02-14 10:48:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: +52,092원
+- **[2025-02-14 11:09:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.12) breached lower threshold (-1.8). Buying spread. / 진입가: 336.46
+- **[2025-02-14 11:23:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.02). / 실현손익: +78,341원
+- **[2025-02-14 11:33:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.83) exceeded upper threshold (+1.8). Selling spread. / 진입가: 337.02
+- **[2025-02-14 12:03:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.12). / 실현손익: -168,656원
+- **[2025-02-14 12:29:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.06) breached lower threshold (-1.8). Buying spread. / 진입가: 338.11
+- **[2025-02-14 13:02:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.26). / 실현손익: +71,766원
+- **[2025-02-14 13:12:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.95) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.87
+- **[2025-02-14 13:50:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: -284,434원
+- **[2025-02-14 14:00:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.69) breached lower threshold (-1.8). Buying spread. / 진입가: 339.87
+- **[2025-02-14 14:37:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.15). / 실현손익: -44,696원
+- **[2025-02-14 15:12:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.98) breached lower threshold (-1.8). Buying spread. / 진입가: 339.28
+- **[2025-02-17 09:00:00]** 영업일 2025-02-17 개장: 평가 자산: ₩24,850,075 / Track 7 할당 자본(0.5%): ₩124,250
+- **[2025-02-17 09:00:00]** Track 5 Gap Trigger (ENTER_GAP_SHORT): Gap Up Z-Score (+3.03) exceeded threshold. Shorting index for mean reversion. / 수량: 1계약
+- **[2025-02-17 09:00:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (10.25). / 실현손익: +1,008,443원
+- **[2025-02-17 09:14:30]** Track 5 Gap Close: Timeout (15 minutes elapsed since open). Liquidating remaining gap position. / 실현손익: +54,290원
+- **[2025-02-17 09:15:00]** Track 2 함정(Trap) 구축 완료: ATM: 342.5, 설치 수량: 1계약
+- **[2025-02-17 09:15:00]** Track 4 Basecamp: ATM: 342.5 양매수 진입
+- **[2025-02-17 10:29:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.03) exceeded upper threshold (+1.8). Selling spread. / 진입가: 342.94
+- **[2025-02-17 10:54:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.00). / 실현손익: -53,166원
+- **[2025-02-17 11:42:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.00) breached lower threshold (-1.8). Buying spread. / 진입가: 342.86
+- **[2025-02-17 12:05:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.03). / 실현손익: -113,863원
+- **[2025-02-17 12:15:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.91) exceeded upper threshold (+1.8). Selling spread. / 진입가: 342.57
+- **[2025-02-17 12:48:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.17). / 실현손익: -179,428원
+- **[2025-02-17 13:13:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.02) breached lower threshold (-1.8). Buying spread. / 진입가: 343.20
+- **[2025-02-17 13:33:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.14). / 실현손익: +29,555원
+- **[2025-02-17 13:54:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.10) breached lower threshold (-1.8). Buying spread. / 진입가: 342.83
+- **[2025-02-17 13:59:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.06). / 실현손익: +41,200원
+- **[2025-02-17 14:09:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.17) breached lower threshold (-1.8). Buying spread. / 진입가: 342.63
+- **[2025-02-17 14:13:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.15). / 실현손익: +32,059원
+- **[2025-02-17 14:30:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.11) breached lower threshold (-1.8). Buying spread. / 진입가: 342.33
+- **[2025-02-17 14:43:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.00). / 실현손익: -35,954원
+- **[2025-02-17 14:54:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.82) exceeded upper threshold (+1.8). Selling spread. / 진입가: 342.17
+- **[2025-02-17 15:13:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.12). / 실현손익: +30,437원
+- **[2025-02-18 09:00:00]** 영업일 2025-02-18 개장: 평가 자산: ₩24,849,617 / Track 7 할당 자본(0.5%): ₩124,248
+- **[2025-02-18 09:02:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.03) exceeded upper threshold (+1.8). Selling spread. / 진입가: 342.39
+- **[2025-02-18 09:26:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.10). / 실현손익: -12,191원
+- **[2025-02-18 09:40:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.09) exceeded upper threshold (+1.8). Selling spread. / 진입가: 342.90
+- **[2025-02-18 09:46:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.18). / 실현손익: +29,358원
+- **[2025-02-18 09:59:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.97) exceeded upper threshold (+1.8). Selling spread. / 진입가: 343.15
+- **[2025-02-18 10:15:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.14). / 실현손익: -66,046원
+- **[2025-02-18 10:35:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.00) breached lower threshold (-1.8). Buying spread. / 진입가: 343.37
+- **[2025-02-18 10:44:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.14). / 실현손익: +62,002원
+- **[2025-02-18 10:56:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.87) breached lower threshold (-1.8). Buying spread. / 진입가: 343.40
+- **[2025-02-18 11:03:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.06). / 실현손익: +63,513원
+- **[2025-02-18 11:17:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.92) exceeded upper threshold (+1.8). Selling spread. / 진입가: 343.98
+- **[2025-02-18 11:56:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.18). / 실현손익: -524,118원
+- **[2025-02-18 12:16:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.81) breached lower threshold (-1.8). Buying spread. / 진입가: 346.13
+- **[2025-02-18 12:51:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.05). / 실현손익: +90,648원
+- **[2025-02-18 13:01:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.45) breached lower threshold (-1.8). Buying spread. / 진입가: 346.24
+- **[2025-02-18 13:06:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.20). / 실현손익: +44,278원
+- **[2025-02-18 13:16:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.72) exceeded upper threshold (+1.8). Selling spread. / 진입가: 346.83
+- **[2025-02-18 13:25:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: +37,476원
+- **[2025-02-18 13:38:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.92) breached lower threshold (-1.8). Buying spread. / 진입가: 346.52
+- **[2025-02-18 14:13:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.19). / 실현손익: -171,591원
+- **[2025-02-18 14:46:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.90) exceeded upper threshold (+1.8). Selling spread. / 진입가: 345.51
+- **[2025-02-19 09:00:00]** 영업일 2025-02-19 개장: 평가 자산: ₩24,850,081 / Track 7 할당 자본(0.5%): ₩124,250
+- **[2025-02-19 09:00:00]** Track 5 Gap Trigger (ENTER_GAP_LONG): Gap Down Z-Score (-3.96) breached threshold. Longing index for mean reversion. / 수량: 1계약
+- **[2025-02-19 09:00:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-10.39). / 실현손익: +1,418,740원
+- **[2025-02-19 09:14:30]** Track 5 Gap Close: Timeout (15 minutes elapsed since open). Liquidating remaining gap position. / 실현손익: +29,378원
+- **[2025-02-19 10:40:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.95) breached lower threshold (-1.8). Buying spread. / 진입가: 338.04
+- **[2025-02-19 10:49:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.28). / 실현손익: -22,387원
+- **[2025-02-19 10:59:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (3.79) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.25
+- **[2025-02-19 11:56:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.20). / 실현손익: -331,751원
+- **[2025-02-19 12:09:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.19) breached lower threshold (-1.8). Buying spread. / 진입가: 339.74
+- **[2025-02-19 12:43:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.02). / 실현손익: +7,232원
+- **[2025-02-19 13:21:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 340.58
+- **[2025-02-19 13:31:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.11). / 실현손익: -12,213원
+- **[2025-02-19 13:54:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.95) exceeded upper threshold (+1.8). Selling spread. / 진입가: 341.33
+- **[2025-02-19 14:03:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.02). / 실현손익: -4,290원
+- **[2025-02-19 14:17:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.82) breached lower threshold (-1.8). Buying spread. / 진입가: 341.41
+- **[2025-02-19 14:42:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.18). / 실현손익: +97,123원
+- **[2025-02-19 15:25:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.13) exceeded upper threshold (+1.8). Selling spread. / 진입가: 342.90
+- **[2025-02-20 09:00:00]** 영업일 2025-02-20 개장: 평가 자산: ₩24,846,115 / Track 7 할당 자본(0.5%): ₩124,231
+- **[2025-02-20 09:00:00]** Track 5 Gap Trigger (ENTER_GAP_LONG): Gap Down Z-Score (-4.14) breached threshold. Longing index for mean reversion. / 수량: 1계약
+- **[2025-02-20 09:00:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-10.41). / 실현손익: +1,483,029원
+- **[2025-02-20 09:14:30]** Track 5 Gap Close: Timeout (15 minutes elapsed since open). Liquidating remaining gap position. / 실현손익: +71,844원
+- **[2025-02-20 10:28:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.27) breached lower threshold (-1.8). Buying spread. / 진입가: 338.44
+- **[2025-02-20 10:55:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: -4,908원
+- **[2025-02-20 11:31:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.83) breached lower threshold (-1.8). Buying spread. / 진입가: 338.50
+- **[2025-02-20 12:01:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.05). / 실현손익: -103,674원
+- **[2025-02-20 12:30:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.95) exceeded upper threshold (+1.8). Selling spread. / 진입가: 337.55
+- **[2025-02-20 12:56:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: +11,888원
+- **[2025-02-20 13:06:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.61) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.09
+- **[2025-02-20 13:26:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.12). / 실현손익: -71,311원
+- **[2025-02-20 14:51:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 338.93
+- **[2025-02-20 14:59:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.03). / 실현손익: +67,065원
+- **[2025-02-20 15:27:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.21) breached lower threshold (-1.8). Buying spread. / 진입가: 339.12
+- **[2025-02-21 09:00:00]** 영업일 2025-02-21 개장: 평가 자산: ₩24,851,063 / Track 7 할당 자본(0.5%): ₩124,255
+- **[2025-02-21 09:45:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.17). / 실현손익: -207,461원
+- **[2025-02-21 09:56:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.39) exceeded upper threshold (+1.8). Selling spread. / 진입가: 338.44
+- **[2025-02-21 10:12:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: +56,193원
+- **[2025-02-21 10:27:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.97) breached lower threshold (-1.8). Buying spread. / 진입가: 337.73
+- **[2025-02-21 10:37:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.05). / 실현손익: +14,238원
+- **[2025-02-21 11:24:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.88) exceeded upper threshold (+1.8). Selling spread. / 진입가: 337.40
+- **[2025-02-21 11:29:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.13). / 실현손익: +75,765원
+- **[2025-02-21 11:46:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.99) breached lower threshold (-1.8). Buying spread. / 진입가: 336.74
+- **[2025-02-21 11:54:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.04). / 실현손익: +8,622원
+- **[2025-02-21 12:06:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.95) exceeded upper threshold (+1.8). Selling spread. / 진입가: 336.95
+- **[2025-02-21 12:13:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +67,380원
+- **[2025-02-21 12:47:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.89) exceeded upper threshold (+1.8). Selling spread. / 진입가: 336.66
+- **[2025-02-21 13:20:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.07). / 실현손익: -173,214원
+- **[2025-02-21 13:30:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.80) breached lower threshold (-1.8). Buying spread. / 진입가: 337.00
+- **[2025-02-21 13:53:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: +29,999원
+- **[2025-02-21 14:36:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.13) breached lower threshold (-1.8). Buying spread. / 진입가: 336.51
+- **[2025-02-21 15:08:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.03). / 실현손익: -128,264원
+- **[2025-02-21 15:25:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.82) breached lower threshold (-1.8). Buying spread. / 진입가: 335.36
+- **[2025-02-24 09:00:00]** 영업일 2025-02-24 개장: 평가 자산: ₩24,846,214 / Track 7 할당 자본(0.5%): ₩124,231
+- **[2025-02-24 09:11:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.20). / 실현손익: -128,440원
+- **[2025-02-24 09:22:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.10) exceeded upper threshold (+1.8). Selling spread. / 진입가: 335.06
+- **[2025-02-24 09:44:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.14). / 실현손익: +84,780원
+- **[2025-02-24 10:26:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.90) exceeded upper threshold (+1.8). Selling spread. / 진입가: 334.37
+- **[2025-02-24 10:41:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +44,335원
+- **[2025-02-24 11:13:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 334.42
+- **[2025-02-24 11:18:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: +72,216원
+- **[2025-02-24 11:50:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.87) breached lower threshold (-1.8). Buying spread. / 진입가: 333.99
+- **[2025-02-24 12:23:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.02). / 실현손익: -151,300원
+- **[2025-02-24 12:45:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.91) exceeded upper threshold (+1.8). Selling spread. / 진입가: 333.07
+- **[2025-02-24 13:10:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.08). / 실현손익: +102,309원
+- **[2025-02-24 13:20:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.75) exceeded upper threshold (+1.8). Selling spread. / 진입가: 333.23
+- **[2025-02-24 13:35:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.19). / 실현손익: +28,921원
+- **[2025-02-24 14:03:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.81) breached lower threshold (-1.8). Buying spread. / 진입가: 332.17
+- **[2025-02-24 14:24:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: -105,800원
+- **[2025-02-24 14:34:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.09) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.93
+- **[2025-02-24 14:43:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.13). / 실현손익: +122,147원
+- **[2025-02-24 15:29:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.85) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.40
+- **[2025-02-25 09:00:00]** 영업일 2025-02-25 개장: 평가 자산: ₩24,842,085 / Track 7 할당 자본(0.5%): ₩124,210
+- **[2025-02-25 09:03:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.17). / 실현손익: +54,180원
+- **[2025-02-25 09:13:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.08) breached lower threshold (-1.8). Buying spread. / 진입가: 330.71
+- **[2025-02-25 09:32:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: -108,786원
+- **[2025-02-25 10:36:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.88) breached lower threshold (-1.8). Buying spread. / 진입가: 329.31
+- **[2025-02-25 10:39:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: +25,986원
+- **[2025-02-25 11:15:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.04) breached lower threshold (-1.8). Buying spread. / 진입가: 328.66
+- **[2025-02-25 11:18:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.63). / 실현손익: +41,193원
+- **[2025-02-25 11:37:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.81) breached lower threshold (-1.8). Buying spread. / 진입가: 328.28
+- **[2025-02-25 11:39:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.11). / 실현손익: +26,061원
+- **[2025-02-25 11:49:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.80) exceeded upper threshold (+1.8). Selling spread. / 진입가: 328.41
+- **[2025-02-25 12:30:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.06). / 실현손익: -143,571원
+- **[2025-02-25 12:55:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.04) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.61
+- **[2025-02-25 12:59:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.04). / 실현손익: +50,615원
+- **[2025-02-25 13:21:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.96) exceeded upper threshold (+1.8). Selling spread. / 진입가: 330.12
+- **[2025-02-25 13:27:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +51,954원
+- **[2025-02-25 13:37:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.09) breached lower threshold (-1.8). Buying spread. / 진입가: 329.62
+- **[2025-02-25 14:08:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.16). / 실현손익: -75,781원
+- **[2025-02-25 14:28:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.95) breached lower threshold (-1.8). Buying spread. / 진입가: 328.71
+- **[2025-02-25 14:40:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.19). / 실현손익: -16,716원
+- **[2025-02-25 15:05:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.97) exceeded upper threshold (+1.8). Selling spread. / 진입가: 328.65
+- **[2025-02-26 09:00:00]** 영업일 2025-02-26 개장: 평가 자산: ₩24,838,904 / Track 7 할당 자본(0.5%): ₩124,195
+- **[2025-02-26 09:04:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.17). / 실현손익: -102,415원
+- **[2025-02-26 10:10:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.95) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.81
+- **[2025-02-26 10:16:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.41). / 실현손익: +32,890원
+- **[2025-02-26 10:26:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (3.02) exceeded upper threshold (+1.8). Selling spread. / 진입가: 330.26
+- **[2025-02-26 10:34:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.11). / 실현손익: +13,450원
+- **[2025-02-26 11:05:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.92) breached lower threshold (-1.8). Buying spread. / 진입가: 330.52
+- **[2025-02-26 11:13:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: +67,423원
+- **[2025-02-26 11:32:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.11) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.24
+- **[2025-02-26 11:54:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.05). / 실현손익: -133,413원
+- **[2025-02-26 12:09:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.14) breached lower threshold (-1.8). Buying spread. / 진입가: 331.83
+- **[2025-02-26 12:56:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.10). / 실현손익: -70,766원
+- **[2025-02-26 13:07:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.86) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.80
+- **[2025-02-26 13:13:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.12). / 실현손익: +60,550원
+- **[2025-02-26 13:32:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.99) breached lower threshold (-1.8). Buying spread. / 진입가: 331.20
+- **[2025-02-26 13:51:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.14). / 실현손익: -47,869원
+- **[2025-02-26 14:36:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.98) breached lower threshold (-1.8). Buying spread. / 진입가: 329.69
+- **[2025-02-26 14:47:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.15). / 실현손익: -26,491원
+- **[2025-02-26 15:14:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.90) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.42
+- **[2025-02-26 15:25:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.15). / 실현손익: +95,308원
+- **[2025-02-27 09:00:00]** 영업일 2025-02-27 개장: 평가 자산: ₩24,867,423 / Track 7 할당 자본(0.5%): ₩124,337
+- **[2025-02-27 09:16:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.94) breached lower threshold (-1.8). Buying spread. / 진입가: 328.68
+- **[2025-02-27 09:32:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.18). / 실현손익: -69,114원
+- **[2025-02-27 09:46:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.02) exceeded upper threshold (+1.8). Selling spread. / 진입가: 328.45
+- **[2025-02-27 09:58:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.03). / 실현손익: +60,917원
+- **[2025-02-27 10:33:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.98) breached lower threshold (-1.8). Buying spread. / 진입가: 328.35
+- **[2025-02-27 10:39:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.12). / 실현손익: +82,196원
+- **[2025-02-27 10:58:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.85) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.34
+- **[2025-02-27 11:14:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.12). / 실현손익: -66,855원
+- **[2025-02-27 11:32:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.90) breached lower threshold (-1.8). Buying spread. / 진입가: 329.03
+- **[2025-02-27 11:59:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.01). / 실현손익: -56,258원
+- **[2025-02-27 12:13:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.81) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.02
+- **[2025-02-27 12:35:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.12). / 실현손익: +14,357원
+- **[2025-02-27 12:48:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.82) breached lower threshold (-1.8). Buying spread. / 진입가: 328.28
+- **[2025-02-27 13:09:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.04). / 실현손익: -86,289원
+- **[2025-02-27 14:13:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.04) exceeded upper threshold (+1.8). Selling spread. / 진입가: 327.48
+- **[2025-02-27 14:54:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.05). / 실현손익: -222,675원
+- **[2025-02-27 15:22:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.90) breached lower threshold (-1.8). Buying spread. / 진입가: 328.67
+- **[2025-02-28 09:00:00]** 영업일 2025-02-28 개장: 평가 자산: ₩24,844,724 / Track 7 할당 자본(0.5%): ₩124,224
+- **[2025-02-28 09:09:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.07). / 실현손익: +61,023원
+- **[2025-02-28 09:25:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.82) breached lower threshold (-1.8). Buying spread. / 진입가: 328.74
+- **[2025-02-28 09:38:30]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.11). / 실현손익: +21,930원
+- **[2025-02-28 10:35:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.83) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.26
+- **[2025-02-28 10:48:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.18). / 실현손익: +2,755원
+- **[2025-02-28 11:10:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.07) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.87
+- **[2025-02-28 11:35:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.13). / 실현손익: -153,526원
+- **[2025-02-28 12:04:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.44) breached lower threshold (-1.8). Buying spread. / 진입가: 331.07
+- **[2025-02-28 12:16:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.07). / 실현손익: +98,531원
+- **[2025-02-28 12:26:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.25) breached lower threshold (-1.8). Buying spread. / 진입가: 331.20
+- **[2025-02-28 12:49:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.05). / 실현손익: +43,992원
+- **[2025-02-28 13:26:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.04) exceeded upper threshold (+1.8). Selling spread. / 진입가: 331.51
+- **[2025-02-28 13:51:00]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.24). / 실현손익: -71,264원
+- **[2025-02-28 14:20:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.19) breached lower threshold (-1.8). Buying spread. / 진입가: 332.12
+- **[2025-02-28 15:10:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.09). / 실현손익: -127,382원
+- **[2025-02-28 15:28:30]** 월 만기 옵션 정산 & 자본 이월: 정산손익: +4,923,952원 / 이월 자본금: ₩29,773,952
+- **[2025-03-04 09:00:00]** 영업일 2025-03-04 개장: 평가 자산: ₩29,774,491 / Track 7 할당 자본(0.5%): ₩148,872
+- **[2025-03-04 09:00:00]** 월 변경 자본금 & 코스피 지수 100% 연속 이월: 전월 자산 ₩29,774,491 / 최종 지수 331.43pt 차월 승계 완료
+- **[2025-03-04 09:17:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 331.02
+- **[2025-03-04 09:23:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (0.22). / 실현손익: +27,470원
+- **[2025-03-04 09:34:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-2.08) breached lower threshold (-1.8). Buying spread. / 진입가: 330.73
+- **[2025-03-04 09:47:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.08). / 실현손익: -22,917원
+- **[2025-03-04 10:04:30]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 330.16
+- **[2025-03-04 10:27:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.06). / 실현손익: -131,737원
+- **[2025-03-04 10:46:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.80) breached lower threshold (-1.8). Buying spread. / 진입가: 328.97
+- **[2025-03-04 10:53:00]** Track 3 Arb Close (CLOSE_LONG_SPREAD): Z-Score returned to mean (-0.07). / 실현손익: -4,906원
+- **[2025-03-04 11:03:00]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.61) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.17
+- **[2025-03-04 11:21:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.20). / 실현손익: +67,022원
+- **[2025-03-04 11:50:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (1.82) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.17
+- **[2025-03-04 12:07:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (0.01). / 실현손익: +7,930원
+- **[2025-03-04 12:51:30]** Track 3 Arb (SHORT_SPREAD): Z-Score (2.03) exceeded upper threshold (+1.8). Selling spread. / 진입가: 329.54
+- **[2025-03-04 13:24:30]** Track 3 Arb Close (CLOSE_SHORT_SPREAD): Z-Score returned to mean (-0.22). / 실현손익: -155,310원
+- **[2025-03-04 13:40:00]** Track 3 Arb (LONG_SPREAD): Z-Score (-1.85) breached lower threshold (-1.8). Buying spread. / 진입가: 330.16
 
 
 ### 💰 1. 자산 및 자본 종합 요약
-- **시작 총자산 (Starting Equity)**: ₩23,422,780
-- **종료 총자산 (Ending Equity)**: ₩24,914,049
-- **실현/평가 순손익 (Net Profit)**: **₩+1,491,269 (+6.367%)**
-- **최대 낙폭 (Max Drawdown, MDD)**: ₩693,556 (2.771%)
+- **시작 총자산 (Starting Equity)**: ₩24,998,416
+- **종료 총자산 (Ending Equity)**: ₩29,818,887
+- **실현/평가 순손익 (Net Profit)**: **₩+4,820,471 (+19.283%)**
+- **최대 낙폭 (Max Drawdown, MDD)**: ₩4,393,177 (17.550%)
 - **안전 유보금 (Ending Reserve)**: ₩0 (전체 자산의 0.0%)
 
 ### 📦 2. 주문 집행 및 체결 성적
 | 구분 | 건수 / 비율 | 비고 |
 | :--- | :--- | :--- |
-| **총 주문 요청 건수** | 0 건 | 틱당 평균 0.00회 |
-| **완전 체결 (FILLED)** | 0 건 | 전체 주문의 0.0% |
+| **총 주문 요청 건수** | 1 건 | 틱당 평균 0.00회 |
+| **완전 체결 (FILLED)** | 1 건 | 전체 주문의 100.0% |
 | **부분 체결 (PARTIAL)** | 0 건 | 전체 주문의 0.0% (GC 회수 대상) |
 | **주문 거부 (REJECTED)** | 0 건 | 전체 주문의 0.0% (백오프 유도) |
 | **대기/미체결 (SENT)** | 0 건 | 전체 주문의 0.0% |
-| **최종 체결 성공률** | **0.00%** | (FILLED + PARTIAL) / Total |
+| **최종 체결 성공률** | **100.00%** | (FILLED + PARTIAL) / Total |
 | **총 발생 거래수수료** | **₩0** | 선물 0.003% / 옵션 0.15% 기준 |
 
 ### 📈 3. 시장 국면(Regime)별 분포
-- **NEUTRAL** 국면: 0.1%
-- **NOISE_CHOPPY** 국면: 99.4%
-- **NORMAL** 국면: 0.5%
+- **NEUTRAL** 국면: 0.3%
+- **NOISE_CHOPPY** 국면: 96.6%
+- **NORMAL** 국면: 3.0%
 
 ### 🌋 4. Self-Tuning Guard (리스크 미세조정) 성능 지표
 - **평균 수량 조절 계수 (Avg Tuning Factor)**: **100.0%**
@@ -161,23 +799,25 @@
 ### 🛡️ 5. 전략별 국면 및 PnL 성과분석 (Strategy Breakdown)
 | 전략 (Strategy) | 총 누적 손익 (Total PnL) | 스트레스 국면 손익 (Stress PnL) | 평균 비중 | 방어 동작 방식 |
 | :--- | :--- | :--- | :--- | :--- |
-| **Track1 (Defense)** | ₩-5,476 | ₩+0 | 30.0% | 리스크 급증 시 100% 비중으로 증거금 제한 및 숏옵션 커버 |
-| **Track2 (Trap)** | ₩-3,650 | ₩+0 | 10.0% | ⛔ **[V2 HOLD]** 박스권 내 역추세 포지션 진입 중단 |
-| **Track3 (Arbitrage)** | ₩+0 | ₩+0 | 5.0% | ⛔ **[V2 HOLD]** 시뮬레이션 순도 유지를 위한 차익 진입 전면 차단 |
-| **Track4 (Gamma)** | ₩-1,825 | ₩+0 | 5.0% | ⛔ **[V2 HOLD]** 현물 델타 헤징 및 스켈핑 중단 |
+| **Track1 (Defense)** | ₩+2,404 | ₩+0 | 30.0% | 리스크 급증 시 100% 비중으로 증거금 제한 및 숏옵션 커버 |
+| **Track2 (Trap)** | ₩+0 | ₩+0 | 10.0% | ⛔ **[V2 HOLD]** 박스권 내 역추세 포지션 진입 중단 |
+| **Track3 (Arbitrage)** | ₩+42,532 | ₩+0 | 5.0% | ⛔ **[V2 HOLD]** 시뮬레이션 순도 유지를 위한 차익 진입 전면 차단 |
+| **Track4 (Gamma)** | ₩+0 | ₩+0 | 5.0% | ⛔ **[V2 HOLD]** 현물 델타 헤징 및 스켈핑 중단 |
 | **Track5 (Gap)** | ₩+0 | ₩+0 | 0.0% | 시가 갭 감지 시 역방향 진입 및 펜스 압축 회귀 저격 |
 | **Track6 (Daily)** | ₩+0 | ₩+0 | 0.0% | 변동성 급증 시 당일 만기 극외가 양매수(0DTE) 가입 |
 | **Track7 (Weekly)** | ₩+0 | ₩+0 | 0.0% | 매주 위클리 옵션 상장 첫날 주간 트렌드 저격 양매수 가입 |
 | **Track8 (Monthly)** | ₩+0 | ₩+0 | 5.0% | 만기 초입 비대칭 외가격 양매수 및 D-3 감마이양 출구 |
 
 ### 🚨 6. 리스크 가드 발동 및 본전 청산 이력
-- **비상 청산 가드 발동 횟수 (Emergency Guards Triggered)**: **0 회**
+- **비상 청산 가드 발동 횟수 (Emergency Guards Triggered)**: **2 회**
 
 ### 📅 7. 월물 전환(롤오버) 및 만기 정산 이력
-- **세션 중 만기 도달 횟수 (Expiry Events)**: **0 회**
-- **만기 정산 누적 손익 합계**: **₩+0**
+- **세션 중 만기 도달 횟수 (Expiry Events)**: **1 회**
+- **만기 정산 누적 손익 합계**: **₩+4,923,952**
 
-> 이번 세션에서는 만기 도달 없이 종료되었습니다.
+| # | Seq(틱) | 만기 시점 기초자산가 | 당월물 정산 손익 | 차월물 D-Day 리셋 |
+| :---: | :---: | :---: | :---: | :---: |
+| 1 | Tick 30408 | 331.40pt | ₩+4,923,952 | D-20.0일 |
 
 ---
 
