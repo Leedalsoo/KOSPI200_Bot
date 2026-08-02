@@ -34,6 +34,7 @@ from strategy.plugins.track5_gap import GapProtocolStrategy
 from strategy.plugins.track6_daily_insurance import DailyTailInsuranceBot
 from strategy.plugins.track7_weekly_insurance import WeeklyTailInsuranceBot
 from strategy.plugins.track8_monthly_strangle import MonthlyWideStrangleStrategy
+from strategy.plugins.track9_overnight_insurance import OvernightInsuranceBot
 from strategy.sensors.market_sensors import FuturesSensor, WeeklyOptionsSensor, DailyOptionsSensor
 from strategy.simulation.virtual_feed_engine import HistoricalReplayEngine, SlippageEngine, PaperTradingAccount
 import orjson
@@ -314,6 +315,7 @@ track5_strategy: Optional[GapProtocolStrategy] = None
 track6_strategy: Optional[DailyTailInsuranceBot] = None
 track7_strategy: Optional[WeeklyTailInsuranceBot] = None
 track8_strategy: Optional[MonthlyWideStrangleStrategy] = None
+track9_strategy: Optional[OvernightInsuranceBot] = None
 futures_sensor: Optional[FuturesSensor] = None
 weekly_sensor: Optional[WeeklyOptionsSensor] = None
 daily_sensor: Optional[DailyOptionsSensor] = None
@@ -488,7 +490,7 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
     global daily_hwm, highest_equity_today, calendar_sim, overnight_insurance_bought_today, insurance_active_this_month, insurance_reentry_needed_today
     global trading_date_logs, event_logs, main_engine_broken
     global all_sessions_telemetry, all_sessions_markdowns
-    global track1_strategy, track2_strategy, track3_strategy, track4_strategy, track5_strategy, track6_strategy, track7_strategy, track8_strategy, futures_sensor, weekly_sensor, daily_sensor, replay_engine, slippage_engine, paper_account
+    global track1_strategy, track2_strategy, track3_strategy, track4_strategy, track5_strategy, track6_strategy, track7_strategy, track8_strategy, track9_strategy, futures_sensor, weekly_sensor, daily_sensor, replay_engine, slippage_engine, paper_account
     global track3_entry_price, track3_entry_qty, track3_net_qty, track5_active_qty, insurance_budget_pool
     global price_history_60, spread_history_120
     global strategy_realized_pnl  # Phase 2.4: 팩토리 재생성을 위해 global 선언 필수
@@ -606,6 +608,9 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
     
     # ── [NEW] Track 8: Monthly Wide Strangle Strategy ──
     track8_strategy = MonthlyWideStrangleStrategy(config={})
+
+    # ── [NEW] Track 9: Overnight Insurance Strategy ──
+    track9_strategy = OvernightInsuranceBot(config={})
     
     futures_sensor = FuturesSensor()
     weekly_sensor = WeeklyOptionsSensor()
@@ -663,7 +668,7 @@ async def handler(websocket: Any) -> None:
                 # SIMULATION : 모든 액션 허용 (로컬 테스트 편의)
                 # PAPER/LIVE : 봇 시작·전략 토글만 허용, 시뮬레이션 설정 변경·시나리오 주입 차단
                 _ACTION_PERMISSIONS: Dict[str, set] = {
-                    "SIMULATION": {"start_bot", "update_settings", "update_strategy_flags", "inject_scenario"},
+                    "SIMULATION": {"start_bot", "update_settings", "update_strategy_flags", "inject_scenario", "change_scenario"},
                     "PAPER":      {"start_bot", "update_strategy_flags"},
                     "LIVE":       {"start_bot", "update_strategy_flags"},
                 }
@@ -694,6 +699,25 @@ async def handler(websocket: Any) -> None:
                         if k in enabled_strategies:
                             enabled_strategies[k] = bool(v)
                     logger.info("🎯 [STRATEGY CONTROL] 대시보드 커맨드 수신: 전략 활성화 상태 변경 %s", enabled_strategies)
+
+                # ── 🌤️ [대시보드 장세 시나리오 실시간 핫 리로드 수신] ──
+                elif data.get("action") == "change_scenario":
+                    new_sc = data.get("scenario", "MODERATE_TREND")
+                    if calendar_sim:
+                        calendar_sim._market_scenario = new_sc
+                    logger.info("🌤️ [HOT RELOAD] 대시보드 시나리오 스위치 커맨드 수신: '%s' 주입 완료!", new_sc)
+                    
+                    sc_file = os.path.join("config", "market_scenarios.yaml")
+                    if os.path.exists(sc_file):
+                        try:
+                            import yaml
+                            with open(sc_file, "r", encoding="utf-8") as f:
+                                sc_conf = yaml.safe_load(f) or {}
+                            sc_conf["active_scenario"] = new_sc
+                            with open(sc_file, "w", encoding="utf-8") as f:
+                                yaml.dump(sc_conf, f, allow_unicode=True)
+                        except Exception as e_sc:
+                            logger.warning("시나리오 YAML 파일 업데이트 에러: %s", e_sc)
 
                 # ── 🎛️ [대시보드 실시간 설정 수신] ──
                 elif data.get("action") == "update_settings":
@@ -754,7 +778,7 @@ async def simulation_loop() -> None:  # noqa: C901
     global trading_date_logs, event_logs, main_engine_broken
     global last_insurance_qty, last_insurance_strike, last_track1_sell_qty
     global track3_entry_price, track3_entry_qty, track3_net_qty
-    global track1_strategy, track2_strategy, track3_strategy, track4_strategy, track5_strategy, track6_strategy, track7_strategy, track8_strategy, futures_sensor, weekly_sensor, daily_sensor, replay_engine, slippage_engine, paper_account
+    global track1_strategy, track2_strategy, track3_strategy, track4_strategy, track5_strategy, track6_strategy, track7_strategy, track8_strategy, track9_strategy, futures_sensor, weekly_sensor, daily_sensor, replay_engine, slippage_engine, paper_account
     global price_history_60, spread_history_120, track5_active_qty, insurance_budget_pool, calculated_fee
     global SIM_CAPITAL_RATIO, SIM_VOL_LEVEL, SIM_DAILY_SHOCK_PTS
     global SIM_STRESS_CIRCUIT_BREAKER, SIM_STRESS_FLASH_CRASH, SIM_STRESS_IV_EXPLOSION, SIM_STRESS_SLIPPAGE_MS
@@ -766,7 +790,7 @@ async def simulation_loop() -> None:  # noqa: C901
     assert track1_strategy is not None and track2_strategy is not None
     assert track3_strategy is not None and track4_strategy is not None
     assert track5_strategy is not None and track6_strategy is not None
-    assert track7_strategy is not None and track8_strategy is not None
+    assert track7_strategy is not None and track8_strategy is not None and track9_strategy is not None
     assert futures_sensor is not None and weekly_sensor is not None
     assert daily_sensor is not None and replay_engine is not None
     assert slippage_engine is not None and paper_account is not None
@@ -1239,35 +1263,41 @@ async def simulation_loop() -> None:  # noqa: C901
 
 
                 else:
-                    # 🌤️ [CONFIGURABLE MARKET SCENARIO] config/market_scenarios.yaml 독립 시나리오 주입
-                    # 1. 파일에서 현재 선택된 시나리오 파라미터 로드 (기본: MODERATE_TREND)
-                    if not hasattr(calendar_sim, '_market_scenario'):
-                        scenario_file = os.path.join("config", "market_scenarios.yaml")
-                        active_sc = "MODERATE_TREND"
-                        drift_min, drift_max = 0.08, 0.22
-                        if os.path.exists(scenario_file):
-                            try:
-                                import yaml
-                                with open(scenario_file, "r", encoding="utf-8") as f:
-                                    sc_conf = yaml.safe_load(f)
-                                    active_sc = sc_conf.get("active_scenario", "MODERATE_TREND")
-                                    sc_info = sc_conf.get("scenarios", {}).get(active_sc, {})
-                                    drift_range = sc_info.get("trend_drift_range", [0.08, 0.22])
-                                    drift_min, drift_max = drift_range[0], drift_range[1]
-                                    logger.info("⚙️ [SCENARIO INJECTOR] 시나리오 모드: '%s' (%s) 주입 완료!", active_sc, sc_info.get('name', '중간 추세'))
-                            except Exception as ex:
-                                logger.warning("⚠️ [SCENARIO INJECTOR] 설정 파일 읽기 실패, 기본 MODERATE_TREND 모드 적용: %s", ex)
-                        
-                        calendar_sim._market_scenario = active_sc
-                        calendar_sim._sc_drift = random.choice([random.uniform(drift_min, drift_max), -random.uniform(drift_min, drift_max)])
+                    # 🌤️ [CONFIGURABLE MARKET SCENARIO] config/market_scenarios.yaml 실시간 핫 리로드 주입
+                    scenario_file = os.path.join("config", "market_scenarios.yaml")
+                    active_sc = getattr(calendar_sim, '_market_scenario', None)
                     
-                    drift = calendar_sim._sc_drift
-                    # 10% 확률로 장중 추세 속도 미세 조율, 1% 확률로 드물게 추세 반전
-                    if random.random() < 0.01:
-                        calendar_sim._sc_drift *= -1
-                    base_change = random.uniform(-0.25, 0.25) + drift
+                    if not active_sc and os.path.exists(scenario_file):
+                        try:
+                            import yaml
+                            with open(scenario_file, "r", encoding="utf-8") as f:
+                                sc_conf = yaml.safe_load(f)
+                                active_sc = sc_conf.get("active_scenario", "MODERATE_TREND")
+                                calendar_sim._market_scenario = active_sc
+                        except Exception:
+                            active_sc = "MODERATE_TREND"
 
-                current_price += base_change * active_vol
+                    # 🎛️ 시나리오별 주가 변동성 & HMM 국면 배지 실시간 동기화
+                    if active_sc == "CALM":
+                        current_regime = "NEUTRAL"
+                        base_volatility = 1.0
+                        drift_val = random.uniform(-0.03, 0.03)
+                    elif active_sc == "HIGH_VOLATILITY":
+                        current_regime = "HIGH_VOL"
+                        base_volatility = 2.85
+                        drift_val = random.uniform(-0.35, 0.35)
+                    elif active_sc == "CRASH_FLASH":
+                        current_regime = "HIGH_VOL"
+                        base_volatility = 4.5
+                        drift_val = random.uniform(-0.80, -0.30)
+                    else:  # MODERATE_TREND (기본: 중간 추세 장세)
+                        current_regime = "NORMAL"
+                        base_volatility = 1.75
+                        drift_val = random.uniform(0.08, 0.22)
+                    
+                    active_vol = base_volatility
+                    current_price += drift_val
+                    current_price = max(100.0, current_price)
 
             # ── 📡 3대 실시간 센서 레이어 데이터 갱신 및 상태 측정 ──
             if futures_sensor is None:
@@ -1284,6 +1314,8 @@ async def simulation_loop() -> None:  # noqa: C901
                 paper_account = PaperTradingAccount(initial_capital=25000000.0)
             if track8_strategy is None:
                 track8_strategy = MonthlyWideStrangleStrategy()
+            if track9_strategy is None:
+                track9_strategy = OvernightInsuranceBot()
 
             # [축 1] 가상 틱/호가 데이터 재생기 (Historical Replay Engine) 데이터 덮어쓰기
             if replay_engine.is_active:
@@ -1494,71 +1526,58 @@ async def simulation_loop() -> None:  # noqa: C901
             else:
                 order_qty = max(1, min(MAX_ORDER_QTY_CAP, int(base_sizing_qty * random.uniform(0.6, 1.2))))
 
-            # ── 8-1. 오버나잇 보험용 극외가(OTM) 옵션 매입 파이프라인 (동적 튜닝) ──
+            # ── 8-1. 오버나잇 보험용 극외가(OTM) 옵션 매입 파이프라인 (Track 9 연동) ──
             # 매 영업일 15:15:00 ~ 15:20:00 사이 작동
             h_time, m_time = calendar_sim.current_time.hour, calendar_sim.current_time.minute
-            if autobot_active and (h_time == 15 and 15 <= m_time < 20) and not overnight_insurance_bought_today:
-                # 1. 살아있는(is_locked가 False인) 가두리 매도 수량 합산
+            if autobot_active and enabled_strategies.get("track9", True) and (h_time == 15 and 15 <= m_time < 20) and not overnight_insurance_bought_today:
+                # 1. 살아있는(is_locked가 False인) 가두리 매도 수량 합산 (Track 1)
                 active_sell_qty = sum(
                     int(pos.get("qty", 0)) for pos in portfolio_options 
                     if pos.get("side") == "SELL" and pos.get("activeStrategy", "Track1 (Defense)") == "Track1 (Defense)" and not pos.get("is_locked", False)
                 )
-                
-                # 2. 타겟 보험 수량 산출 (매도 물량의 50%. 최소 1계약, 가두리가 없으면 0계약)
-                target_insurance_qty = max(1, int(active_sell_qty * 0.5)) if active_sell_qty > 0 else 0
-                
-                # 3. 현재 보유 중인 보험 수량 파악 (PUT 기준)
+                # 2. 현재 보유 중인 오버나잇 보험 수량 파악 (PUT 기준)
                 active_insurances = [
                     pos for pos in portfolio_options 
-                    if pos.get("is_insurance", False) and pos.get("side") == "BUY"
+                    if pos.get("is_overnight_insurance", False) and pos.get("side") == "BUY"
                 ]
                 current_ins_qty = sum(int(p.get("qty", 0)) for p in active_insurances if p.get("type") == "PUT")
                 
-                if target_insurance_qty != current_ins_qty:
-                    if target_insurance_qty > current_ins_qty:
-                        # [추가 매수] 부족분만큼 신규 매입
-                        diff_qty = target_insurance_qty - current_ins_qty
-                        insurance_put_strike = round((current_price - 15.0) / 2.5) * 2.5
-                        insurance_call_strike = round((current_price + 15.0) / 2.5) * 2.5
-                        insurance_premium = 0.15
+                # 3. Track 9 플러그인에 평가 위임 (프론트엔드상으로는 Track 1 그룹으로 묶임)
+                t9_res = track9_strategy.evaluate_insurance(current_price, active_sell_qty, current_ins_qty)
+                
+                target_insurance_qty = 0
+                if t9_res.get("status") == "ADD":
+                    for sig in t9_res.get("signals", []):
+                        diff_qty = sig["diff_qty"]
+                        target_insurance_qty = sig["target_qty"]
+                        put_k = sig["put_strike"]
+                        call_k = sig["call_strike"]
+                        premium = sig["premium"]
                         
                         portfolio_options.append({
-                            "type": "PUT", "side": "BUY", "strike": float(insurance_put_strike),
-                            "price": float(insurance_premium), "qty": int(diff_qty),
-                            "is_insurance": True, "activeStrategy": "Track1 (Defense)"
+                            "type": "PUT", "side": "BUY", "strike": put_k,
+                            "price": premium, "qty": diff_qty,
+                            "is_insurance": True, "is_overnight_insurance": True, "activeStrategy": "Track1 (Defense)", "tag_id": "O/N"
                         })
                         portfolio_options.append({
-                            "type": "CALL", "side": "BUY", "strike": float(insurance_call_strike),
-                            "price": float(insurance_premium), "qty": int(diff_qty),
-                            "is_insurance": True, "activeStrategy": "Track1 (Defense)"
+                            "type": "CALL", "side": "BUY", "strike": call_k,
+                            "price": premium, "qty": diff_qty,
+                            "is_insurance": True, "is_overnight_insurance": True, "activeStrategy": "Track1 (Defense)", "tag_id": "O/N"
                         })
                         
-                        insurance_cost = insurance_premium * diff_qty * OPTIONS_MULTIPLIER * 2
+                        insurance_cost = premium * diff_qty * OPTIONS_MULTIPLIER * 2
                         current_capital -= insurance_cost
                         
-                        last_insurance_qty = target_insurance_qty
-                        last_insurance_strike = f"P:{insurance_put_strike}, C:{insurance_call_strike}"
-                        
-                        logger.info(
-                            "🛡️ [DYNAMIC INSURANCE] OTM 보험 부족분 추가 가입 (+%d계약). "
-                            "Target: %d (활성 가두리 수량: %d계약 기준)",
-                            diff_qty, target_insurance_qty, active_sell_qty
-                        )
                         event_logs.append({
-                            "seq": seq,
-                            "date": date_str,
-                            "time": time_str,
-                            "event": "OTM 옵션 보험 추가 매입",
-                            "details": f"Strikes: {last_insurance_strike}, Qty: +{diff_qty}, Cost: ₩{insurance_cost:,.0f}"
+                            "seq": seq, "date": date_str, "time": time_str,
+                            "event": "Track 1 (Defense) 오버나잇 갭 방어 헷지 매입",
+                            "details": f"Target: {target_insurance_qty} (가두리 매도 {active_sell_qty} 기준) | Qty: +{diff_qty}, Cost: ₩{insurance_cost:,.0f}"
                         })
-                    else:
-                        # [부분 축소] 남는 잉여 수량만큼 기존 보험 옵션들의 qty 차감
-                        diff_qty = current_ins_qty - target_insurance_qty
-                        logger.info(
-                            "🛡️ [DYNAMIC INSURANCE] OTM 보험 잉여분 축소 튜닝 (-%d계약). "
-                            "Target: %d (활성 가두리 수량: %d계약 기준)",
-                            diff_qty, target_insurance_qty, active_sell_qty
-                        )
+                elif t9_res.get("status") == "REDUCE":
+                    for sig in t9_res.get("signals", []):
+                        diff_qty = sig["diff_qty"]
+                        target_insurance_qty = sig["target_qty"]
+                        
                         qty_to_reduce_put = diff_qty
                         qty_to_reduce_call = diff_qty
                         for p in active_insurances:
@@ -1572,24 +1591,17 @@ async def simulation_loop() -> None:  # noqa: C901
                                 p["qty"] = cur_qty - reduce
                                 qty_to_reduce_call -= reduce
                                 
-                        # 수량이 0이 된 빈 포지션은 제거
+                        # 빈 포지션 제거
                         portfolio_options = [p for p in portfolio_options if int(p.get("qty", 1)) > 0]
-                        last_insurance_qty = target_insurance_qty
+                        
                         event_logs.append({
-                            "seq": seq,
-                            "date": date_str,
-                            "time": time_str,
-                            "event": "OTM 옵션 보험 부분 축소",
-                            "details": f"보험 Qty -{diff_qty} 감소 (Target: {target_insurance_qty})"
+                            "seq": seq, "date": date_str, "time": time_str,
+                            "event": "Track 1 (Defense) 오버나잇 갭 방어 헷지 잉여분 축소",
+                            "details": f"Target: {target_insurance_qty} (가두리 매도 {active_sell_qty} 기준) | Qty: -{diff_qty}"
                         })
-                else:
-                    # [유지] 수량 변동 없음
-                    if target_insurance_qty > 0:
-                        logger.info(
-                            "🛡️ [DYNAMIC INSURANCE] 가두리 매도(%d)와 현재 보험 수량(%d)의 균형 유지. "
-                            "추가 프리미엄 지출 없이 어제 보험을 [그대로 홀딩]합니다.",
-                            active_sell_qty, current_ins_qty
-                        )
+                elif t9_res.get("status") == "HOLD":
+                    for sig in t9_res.get("signals", []):
+                        target_insurance_qty = sig["target_qty"]
                 
                 last_track1_sell_qty = active_sell_qty
                 overnight_insurance_bought_today = True
@@ -2060,34 +2072,41 @@ async def simulation_loop() -> None:  # noqa: C901
             # ── 10.2.1 [NEW] Track 5: Gap Protocol Mean Reversion Monitoring ──
             if autobot_active and enabled_strategies.get("track5", True) and track5_strategy and track5_strategy.gap_state["is_active"]:
                 gap_eval = track5_strategy.evaluate_mean_reversion(current_price)
-                if gap_eval.get("status") in ["PROFIT_TAKEN", "STOP_LOSS", "TIMEOUT"]:
+                if gap_eval.get("status") in ["PROFIT_TAKEN", "STOP_LOSS", "TIMEOUT", "TRAILING_PROFIT_LOCK", "LIQUIDITY_PROVISION_1", "LIQUIDITY_PROVISION_2"]:
                     for signal in gap_eval.get("signals", []):
                         action = signal.get("action")
                         reason = signal.get("reason")
                         pnl = signal.get("pnl", 0.0)
                         
+                        is_partial = (action == "PROVIDE_LIQUIDITY_LIMIT")
+                        close_qty = max(1, int(track5_active_qty * 0.4)) if is_partial and track5_active_qty > 1 else track5_active_qty
+                        if close_qty <= 0:
+                            continue
+                            
                         # 청산 수수료 가산
-                        calculated_fee += track5_active_qty * current_price * FUTURES_MULTIPLIER * FUTURES_FEE_RATE
+                        calculated_fee += close_qty * current_price * FUTURES_MULTIPLIER * FUTURES_FEE_RATE
                         
                         # 선물 포지션 청산 (언와인드)
                         if track5_strategy.gap_state["direction"] == "SHORT":
-                            current_position_qty += track5_active_qty  # 숏 청산 -> 매수
+                            current_position_qty += close_qty  # 숏 청산 -> 매수
                             
-                            # 콜 펜스 원복 (압축 해제)
-                            for pos in portfolio_options:
-                                if pos.get("type") == "CALL" and pos.get("side") == "SELL":
-                                    pos["strike"] += track5_strategy.fence_compress_pt
-                                    logger.info("🕸️ [TRACK 5 FENCE] 숏 청산에 따른 콜 가두리 펜스 원복! 행사 변경: %.2f", pos["strike"])
+                            # 콜 펜스 원복 (최종 청산 시에만)
+                            if not is_partial or close_qty == track5_active_qty:
+                                for pos in portfolio_options:
+                                    if pos.get("type") == "CALL" and pos.get("side") == "SELL":
+                                        pos["strike"] += track5_strategy.fence_compress_pt
+                                        logger.info("🕸️ [TRACK 5 FENCE] 숏 청산에 따른 콜 가두리 펜스 원복! 행사 변경: %.2f", pos["strike"])
                         else:
-                            current_position_qty -= track5_active_qty  # 롱 청산 -> 매도
+                            current_position_qty -= close_qty  # 롱 청산 -> 매도
                             
-                            # 풋 펜스 원복 (압축 해제)
-                            for pos in portfolio_options:
-                                if pos.get("type") == "PUT" and pos.get("side") == "SELL":
-                                    pos["strike"] -= track5_strategy.fence_compress_pt
-                                    logger.info("🕸️ [TRACK 5 FENCE] 롱 청산에 따른 풋 가두리 펜스 원복! 행사 변경: %.2f", pos["strike"])
+                            # 풋 펜스 원복 (최종 청산 시에만)
+                            if not is_partial or close_qty == track5_active_qty:
+                                for pos in portfolio_options:
+                                    if pos.get("type") == "PUT" and pos.get("side") == "SELL":
+                                        pos["strike"] -= track5_strategy.fence_compress_pt
+                                        logger.info("🕸️ [TRACK 5 FENCE] 롱 청산에 따른 풋 가두리 펜스 원복! 행사 변경: %.2f", pos["strike"])
                             
-                        realized_pnl = pnl * track5_active_qty * FUTURES_MULTIPLIER
+                        realized_pnl = pnl * close_qty * FUTURES_MULTIPLIER
                         strategy_pnl_tracker["Track5 (Gap)"] += realized_pnl
                         
                         # [SELF-FUNDING] 실현손익을 일일 마찰비용에서 탕감(비용 차감)
@@ -2105,7 +2124,7 @@ async def simulation_loop() -> None:  # noqa: C901
                             side="SELL" if track5_strategy.gap_state["direction"] == "LONG" else "BUY",
                             asset_type="FUTURES",
                             price=current_price,
-                            qty=track5_active_qty,
+                            qty=close_qty,
                             reason=reason,
                             realized_pnl=realized_pnl,
                             sensor_snapshot={"zScore": 1.5, "activeVol": active_vol, "vpin": 0.12},
@@ -2117,7 +2136,10 @@ async def simulation_loop() -> None:  # noqa: C901
                             "event": "Track 5 Gap Close",
                             "details": f"{reason} / 실현손익: {pnl_fmt}"
                         })
-                    track5_active_qty = 0
+                    track5_active_qty -= close_qty
+                    if track5_active_qty <= 0:
+                        track5_active_qty = 0
+                        track5_strategy.reset_state()
 
             # ── 10.2.6 [NEW] Track 6 & 7: Daily & Weekly Tail Insurance Evaluation ──
             if autobot_active:

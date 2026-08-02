@@ -36,6 +36,9 @@ class GapProtocolStrategy:
             "target_price": 0.0,     # 평균 회귀 목표가 (괴리 0선 = 전일 종가)
             "stop_loss_price": 0.0,
             "open_time_tick": 0,     # 장 시작 후 경과 틱 카운트
+            "peak_pnl": 0.0,         # 🚀 달성된 최고 PnL (pt)
+            "trailing_active": False,# 🚀 동적 트레일링 스탑 활성화 여부
+            "liquidity_provided": 0  # 💦 유동성 공급으로 분할 청산된 횟수/단계
         }
 
     def evaluate_gap_divergence(self, open_price: float, prev_close_price: float, active_vol: float, current_regime: str = "NORMAL") -> Dict[str, Any]:
@@ -78,8 +81,11 @@ class GapProtocolStrategy:
             self.gap_state["target_price"] = prev_close_price  # 괴리 0선으로 정확히 고정
             self.gap_state["stop_loss_price"] = open_price + self.stop_loss_pts
             self.gap_state["open_time_tick"] = 0
+            self.gap_state["peak_pnl"] = 0.0
+            self.gap_state["trailing_active"] = False
+            self.gap_state["liquidity_provided"] = 0
             
-            logger.info("⚡ [GAP PROTOCOL TRIGGER] 갭 상승 감지 (Z-Score: +%.2f). 숏 포지션 진입 준비.", z_score)
+            logger.info("⚡ [GAP PROTOCOL TRIGGER] 갭 상승 감지 (Z-Score: +%.2f). 숏 포지션 진입 및 동적 트레일링 익절 대기.", z_score)
             signals.append({
                 "action": "ENTER_GAP_SHORT",
                 "reason": f"Gap Up Z-Score (+{z_score:.2f}) exceeded threshold. Shorting index for mean reversion.",
@@ -88,7 +94,7 @@ class GapProtocolStrategy:
                 "stop_loss": self.gap_state["stop_loss_price"]
             })
             
-        # 갭 하락 (Z-Score < -1.5) -> 롱 진입 및 풋 펜스 압축
+        # 갭 하락 (Z-Score < -1.5) -> 롱 진입 및 풋 펜스 압축 (보호 중심)
         else:
             self.gap_state["is_active"] = True
             self.gap_state["direction"] = "LONG"
@@ -96,8 +102,11 @@ class GapProtocolStrategy:
             self.gap_state["target_price"] = prev_close_price  # 괴리 0선으로 정확히 고정
             self.gap_state["stop_loss_price"] = open_price - self.stop_loss_pts
             self.gap_state["open_time_tick"] = 0
+            self.gap_state["peak_pnl"] = 0.0
+            self.gap_state["trailing_active"] = False
+            self.gap_state["liquidity_provided"] = 0
 
-            logger.info("⚡ [GAP PROTOCOL TRIGGER] 갭 하락 감지 (Z-Score: %.2f). 롱 포지션 진입 준비.", z_score)
+            logger.info("⚡ [GAP PROTOCOL TRIGGER] 갭 하락 감지 (Z-Score: %.2f). 롱 포지션 진입 (양방향 익절 대기).", z_score)
             signals.append({
                 "action": "ENTER_GAP_LONG",
                 "reason": f"Gap Down Z-Score ({z_score:.2f}) breached threshold. Longing index for mean reversion.",
@@ -110,7 +119,7 @@ class GapProtocolStrategy:
 
     def evaluate_mean_reversion(self, current_price: float) -> Dict[str, Any]:
         """
-        [진입 후 모니터링: 평균 회귀선 청산 또는 손절]
+        [진입 후 모니터링: 갭하락 계좌 보호 vs 갭상승 최고점 익절 트레일링 락인]
         """
         if not self.gap_state["is_active"]:
             return {"status": "INACTIVE", "signals": []}
@@ -120,55 +129,76 @@ class GapProtocolStrategy:
         entry = self.gap_state["entry_price"]
         target = self.gap_state["target_price"]
         stop_loss = self.gap_state["stop_loss_price"]
-        ticks = self.gap_state["open_time_tick"]
 
         signals = []
+
+        # ── 🚀 [양방향: 최고점 동적 트레일링 익절 및 유동성 공급 (Liquidity Provision & Trailing Profit Lock)] ──
+        current_pnl = (entry - current_price) if direction == "SHORT" else (current_price - entry)
         
-        # 1. 평균 회귀 타겟 도달 시 익절 청산 (괴리 0선)
-        if direction == "SHORT" and current_price <= target:
+        if current_pnl > self.gap_state["peak_pnl"]:
+            self.gap_state["peak_pnl"] = current_pnl
+        
+        # 1. 💦 [유동성 공급 (Maker Order)] 일정 수익 구간마다 호가에 지정가를 깔아 분할 익절 시도 (가상 신호)
+        if current_pnl >= 0.3 and self.gap_state["liquidity_provided"] == 0:
+            self.gap_state["liquidity_provided"] = 1
+            signals.append({
+                "action": "PROVIDE_LIQUIDITY_LIMIT",
+                "reason": f"💦 [LIQUIDITY PROVISION] 갭 회귀 1차 수익(+0.3pt 돌파). 지정가(Maker) 매수/매도 대기로 유동성 공급 및 분할 수익 수취 시작.",
+                "pnl": current_pnl,
+                "limit_price": current_price
+            })
+            return {"status": "LIQUIDITY_PROVISION_1", "signals": signals}
+
+        if current_pnl >= 0.6 and self.gap_state["liquidity_provided"] == 1:
+            self.gap_state["liquidity_provided"] = 2
+            signals.append({
+                "action": "PROVIDE_LIQUIDITY_LIMIT",
+                "reason": f"💦 [LIQUIDITY PROVISION] 갭 회귀 2차 수익(+0.6pt 돌파). 지정가(Maker)로 추가 유동성 공급 및 분할 수익 수취.",
+                "pnl": current_pnl,
+                "limit_price": current_price
+            })
+            return {"status": "LIQUIDITY_PROVISION_2", "signals": signals}
+
+        # +0.4pt 이상 이익 구간 진입 시 트레일링 스탑 락인 활성화
+        if current_pnl >= 0.4:
+            self.gap_state["trailing_active"] = True
+
+        # 최고 달성 수익점 대비 0.15pt 눌림/반등 시 최고 수익 가격에서 남은 물량 즉시 익절 (Taker)
+        if self.gap_state["trailing_active"] and (self.gap_state["peak_pnl"] - current_pnl >= 0.15):
             signals.append({
                 "action": "CLOSE_GAP_FUTURES",
-                "reason": f"Mean reversion target ({target:.2f}) met. Taking profit.",
-                "pnl": (entry - current_price)
+                "reason": f"🚀 [TRAILING LOCK] 최고 이익(+{self.gap_state['peak_pnl']:.2f}pt) 대비 0.15pt 반전 감지. 남은 물량 즉각 시장가 익절 락인!",
+                "pnl": current_pnl
             })
             self.reset_state()
-            return {"status": "PROFIT_TAKEN", "signals": signals}
-            
-        elif direction == "LONG" and current_price >= target:
+            return {"status": "TRAILING_PROFIT_LOCK", "signals": signals}
+
+        # 2. 평균 회귀 타겟 도달 시 익절 청산 (괴리 0선)
+        if (direction == "SHORT" and current_price <= target) or (direction == "LONG" and current_price >= target):
             signals.append({
                 "action": "CLOSE_GAP_FUTURES",
-                "reason": f"Mean reversion target ({target:.2f}) met. Taking profit.",
-                "pnl": (current_price - entry)
+                "reason": f"Mean reversion target ({target:.2f}) met. Taking final profit.",
+                "pnl": current_pnl
             })
             self.reset_state()
             return {"status": "PROFIT_TAKEN", "signals": signals}
 
-        # 2. 손절선 돌파 시 강제 청산
-        if direction == "SHORT" and current_price >= stop_loss:
+        # 3. 손절선 돌파 시 강제 청산
+        if (direction == "SHORT" and current_price >= stop_loss) or (direction == "LONG" and current_price <= stop_loss):
             signals.append({
                 "action": "CLOSE_GAP_FUTURES",
                 "reason": f"Stop loss triggered at {stop_loss:.2f}. Cutting losses.",
-                "pnl": (entry - current_price)
-            })
-            self.reset_state()
-            return {"status": "STOP_LOSS", "signals": signals}
-            
-        elif direction == "LONG" and current_price <= stop_loss:
-            signals.append({
-                "action": "CLOSE_GAP_FUTURES",
-                "reason": f"Stop loss triggered at {stop_loss:.2f}. Cutting losses.",
-                "pnl": (current_price - entry)
+                "pnl": current_pnl
             })
             self.reset_state()
             return {"status": "STOP_LOSS", "signals": signals}
 
-        # 3. 시간 초과 청산 (예: 15분 경과 = 1틱 30초 시뮬레이터 상 30틱 경과)
-        if ticks >= 30:
-            pnl_val = (entry - current_price) if direction == "SHORT" else (current_price - entry)
+        # 4. 시간 초과 청산 (예: 15분 경과 = 1틱 30초 시뮬레이터 상 30틱 경과)
+        if self.gap_state["open_time_tick"] >= 30:
             signals.append({
                 "action": "CLOSE_GAP_FUTURES",
                 "reason": "Timeout (15 minutes elapsed since open). Liquidating remaining gap position.",
-                "pnl": pnl_val
+                "pnl": current_pnl
             })
             self.reset_state()
             return {"status": "TIMEOUT", "signals": signals}

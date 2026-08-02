@@ -1271,7 +1271,7 @@
                       stratFutures.map((f, i) => (
                         <div key={`fut-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: f.side === 'BUY' ? '#EF4444' : '#3B82F6' }}>
                           <span>[선물] <strong style={{ textDecoration: 'underline' }}>{f.side === 'BUY' ? '매수' : '매도'}</strong> {f.qty}계약</span>
-                          <span>@{typeof f.price === 'number' ? f.price.toFixed(2) : (Number(f.price) || 0).toFixed(2)}P {f.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: '#334155', borderRadius: '3px', color: '#94A3B8' }}>{f.tag_id}</span>}</span>
+                          <span>@{typeof f.price === 'number' ? f.price.toFixed(2) : (Number(f.price) || 0).toFixed(2)}P {f.tag_id && <span style={f.tag_id === 'O/N' ? { fontSize: '9px', padding: '1px 4px', backgroundColor: '#F59E0B', borderRadius: '3px', color: '#000000', fontWeight: 'bold' } : { fontSize: '8px', padding: '1px 3px', backgroundColor: '#334155', borderRadius: '3px', color: '#94A3B8' }}>{f.tag_id}</span>}</span>
                         </div>
                       ))
                     ) : (
@@ -1283,7 +1283,7 @@
                       stratCalls.map((c, i) => (
                         <div key={`call-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#EF4444' }}>
                           <span>[CALL] {c.side === 'BUY' ? '매수' : '매도'} K:{c.strike}</span>
-                          <span>{typeof c.price === 'number' ? c.price.toFixed(2) : (Number(c.price) || 0).toFixed(2)}P ({c.qty}계약) {c.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(239, 68, 68, 0.2)', borderRadius: '3px', color: '#EF4444', border: '1px solid #EF4444' }}>{c.tag_id}</span>}</span>
+                          <span>{typeof c.price === 'number' ? c.price.toFixed(2) : (Number(c.price) || 0).toFixed(2)}P ({c.qty}계약) {c.tag_id && <span style={c.tag_id === 'O/N' ? { fontSize: '9px', padding: '1px 4px', backgroundColor: '#F59E0B', borderRadius: '3px', color: '#000000', fontWeight: 'bold' } : { fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(239, 68, 68, 0.2)', borderRadius: '3px', color: '#EF4444', border: '1px solid #EF4444' }}>{c.tag_id}</span>}</span>
                         </div>
                       ))
                     ) : (
@@ -1295,7 +1295,7 @@
                       stratPuts.map((p, i) => (
                         <div key={`put-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#3B82F6' }}>
                           <span>[PUT] {p.side === 'BUY' ? '매수' : '매도'} K:{p.strike}</span>
-                          <span>{typeof p.price === 'number' ? p.price.toFixed(2) : (Number(p.price) || 0).toFixed(2)}P ({p.qty}계약) {p.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: '3px', color: '#3B82F6', border: '1px solid #3B82F6' }}>{p.tag_id}</span>}</span>
+                          <span>{typeof p.price === 'number' ? p.price.toFixed(2) : (Number(p.price) || 0).toFixed(2)}P ({p.qty}계약) {p.tag_id && <span style={p.tag_id === 'O/N' ? { fontSize: '9px', padding: '1px 4px', backgroundColor: '#F59E0B', borderRadius: '3px', color: '#000000', fontWeight: 'bold' } : { fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: '3px', color: '#3B82F6', border: '1px solid #3B82F6' }}>{p.tag_id}</span>}</span>
                         </div>
                       ))
                     ) : (
