@@ -17,11 +17,17 @@ class TradeReplayAnalyzer:
     """
     매매 의사결정 스냅샷 캡처, 월/일 계층형 아카이빙 및 AI 사후 분석 엔진
     """
-    def __init__(self, max_history: int = 2000):
+    def __init__(self, max_history: int = 2000, mode: str = "VIRTUAL"):
         self.max_history = max_history
+        self.mode: str = mode.upper()
         self.trade_records: List[Dict[str, Any]] = []
         # 월별 -> 일자별 -> 거래 목록 계층 구조
         self.trade_tree: Dict[str, Dict[str, List[Dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+        self.last_sim_date: str = "2025-01-02"
+
+    def set_mode(self, mode: str) -> None:
+        """실행 모드 변경 (VIRTUAL / BACKTEST vs MOCK / LIVE)"""
+        self.mode = mode.upper()
 
     def capture_trade_event(
         self,
@@ -40,10 +46,18 @@ class TradeReplayAnalyzer:
     ) -> Dict[str, Any]:
         """
         거래 발생 시 센서, 대시보드 상태, 규정 준수 및 AI 타이밍 분석 자동 생성 및 월/일 트리 기록
+        - LIVE / MOCK 모드: 실시간 컴퓨터 시스템 날짜 자동 연동
+        - VIRTUAL / BACKTEST 모드: 시뮬레이션 역사적 거래일(date_str) 단일 원천화
         """
+        if self.mode in ("LIVE", "MOCK"):
+            curr_date = time.strftime("%Y-%m-%d")
+        else:
+            if date_str:
+                self.last_sim_date = date_str
+            curr_date = self.last_sim_date
+
         trade_id = f"TRD-{int(time.time())}-{str(uuid.uuid4())[:6]}"
-        curr_date = date_str or time.strftime("%Y-%m-%d")
-        curr_month = curr_date[:7] if len(curr_date) >= 7 else time.strftime("%Y-%m")
+        curr_month = curr_date[:7] if len(curr_date) >= 7 else (time.strftime("%Y-%m") if self.mode in ("LIVE", "MOCK") else "2025-01")
         
         # 1. 규칙 준수 (Rule Compliance) 자동 판정
         compliance_res = self._check_rule_compliance(track_name, sensor_snapshot, state_snapshot)

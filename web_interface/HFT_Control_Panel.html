@@ -83,11 +83,11 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useCallback, useRef, memo } = React;
+    const { useState, useEffect, useCallback, useRef, memo, useMemo } = React;
     const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ScatterChart, Scatter, ReferenceLine, ResponsiveContainer, Brush, Cell } = Recharts;
 
 
-    const MAX_POINTS = 5000;
+    const MAX_POINTS = 30000;
     const MAX_ORDERS = 50;
 
     // 천단위 쉼표 포맷팅 유틸 (십만단위 절사 정렬 적용 - 차트용)
@@ -188,23 +188,111 @@
     // ==============================================================================
     // 2. 수익률 추이 차트 컴포넌트
     // ==============================================================================
+    // 2. 실시간 누적 수익률 차트 컴포넌트 (20영업일 domain 0~19 고정 등간격 X축 및 왼쪽부터 차오르는 손익곡선)
+    // ==============================================================================
     const ProfitChart = memo(({ coords, focusedTickSeq }) => {
-      const clickedIndex = focusedTickSeq !== null ? coords.findIndex(c => c.x === focusedTickSeq) : undefined;
+      // 1. coords 내의 모든 영업일(date) 유니크 목록 추적
+      const uniqueDates = useMemo(() => {
+        const dates = [];
+        (coords || []).forEach(c => {
+          if (c && c.date && !dates.includes(c.date)) {
+            dates.push(c.date);
+          }
+        });
+        return dates;
+      }, [coords]);
+
+      // 2. 20개 고정 영업일 틱 날짜 배열(20개) 및 각 데이터 포인트의 수치형 dayIndex 매핑
+      const { fixed20Dates, displayCoords, ticks20 } = useMemo(() => {
+        if (!coords || coords.length === 0) {
+          return { fixed20Dates: [], displayCoords: [], ticks20: [] };
+        }
+
+        const totalDays = uniqueDates.length;
+        let target20Days = [...uniqueDates];
+
+        if (totalDays > 20) {
+          // 20영업일 초과 시 (차월 시작): 최근 20영업일 롤링 유지
+          target20Days = uniqueDates.slice(-20);
+        } else if (totalDays < 20) {
+          // 20영업일 미만 (테스트 시작 초기): 첫 날짜 기준으로 20개 영업일을 미리 20개 등간격 틱으로 형성!
+          const firstDateStr = uniqueDates[0] || '2025-01-02';
+          const baseDate = new Date(firstDateStr);
+          while (target20Days.length < 20) {
+            baseDate.setDate(baseDate.getDate() + 1);
+            if (baseDate.getDay() !== 0 && baseDate.getDay() !== 6) {
+              const y = baseDate.getFullYear();
+              const m = String(baseDate.getMonth() + 1).padStart(2, '0');
+              const d = String(baseDate.getDate()).padStart(2, '0');
+              target20Days.push(`${y}-${m}-${d}`);
+            }
+          }
+        }
+
+        // 날짜별 수치 인덱스 Map (date -> 0~19)
+        const dateToIdxMap = new Map();
+        target20Days.forEach((dStr, idx) => {
+          dateToIdxMap.set(dStr, idx);
+        });
+
+        // 영업일별 틱 개수 집계
+        const dateGroups = new Map();
+        coords.forEach(c => {
+          if (c && c.date && dateToIdxMap.has(c.date)) {
+            dateGroups.set(c.date, (dateGroups.get(c.date) || 0) + 1);
+          }
+        });
+
+        const mappedCoords = [];
+        const dateCounters = new Map();
+        coords.forEach(c => {
+          if (c && c.date && dateToIdxMap.has(c.date)) {
+            const dayIdx = dateToIdxMap.get(c.date);
+            const totalInDay = dateGroups.get(c.date) || 1;
+            const currentInDay = (dateCounters.get(c.date) || 0);
+            dateCounters.set(c.date, currentInDay + 1);
+
+            // 0~19 수치 공간에서 해당 영업일 지점에 위치하도록 xVal 할당
+            const fractionalOffset = totalInDay > 1 ? (currentInDay / (totalInDay - 1)) * 0.95 : 0;
+            mappedCoords.push({
+              ...c,
+              xVal: dayIdx + fractionalOffset
+            });
+          }
+        });
+
+        const ticksArr = Array.from({ length: 20 }, (_, i) => i);
+
+        return {
+          fixed20Dates: target20Days,
+          displayCoords: mappedCoords.length > 0 ? mappedCoords : coords,
+          ticks20: ticksArr
+        };
+      }, [coords, uniqueDates]);
+
+      const clickedIndex = focusedTickSeq !== null ? (displayCoords || []).findIndex(c => c && c.x === focusedTickSeq) : undefined;
+
       return (
         <div style={{ width: '100%', height: '300px', position: 'relative', overflow: 'hidden' }}>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={coords} activeTooltipIndex={clickedIndex} margin={{ top: 25, right: 25, left: 10, bottom: 20 }}>
+            <LineChart data={displayCoords} activeTooltipIndex={clickedIndex} margin={{ top: 25, right: 30, left: 10, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2D3748" opacity={0.3} />
               <XAxis
-                dataKey="date"
+                type="number"
+                dataKey="xVal"
+                domain={[0, 19.5]}
+                ticks={ticks20}
                 stroke="#94A3B8"
                 tickLine={false}
                 axisLine={{ stroke: '#334155' }}
-                tick={{ fontSize: 11, fill: '#94A3B8' }}
-                minTickGap={65}
+                tick={{ fontSize: 10, fill: '#94A3B8' }}
                 tickFormatter={(val) => {
-                  if (!val) return '';
-                  return val.length >= 10 ? val.slice(5) : val;
+                  const idx = Math.floor(val);
+                  if (idx >= 0 && idx < fixed20Dates.length) {
+                    const dateStr = fixed20Dates[idx];
+                    return dateStr && dateStr.length >= 10 ? dateStr.slice(5) : dateStr; // "MM-DD" 월일 형태로 20개 날짜 쫙 표기
+                  }
+                  return '';
                 }}
               />
               <YAxis
@@ -730,7 +818,7 @@
           border: '1px solid #334155',
           padding: '24px',
           boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
-          gridColumn: '1 / -1', // 가로 전체 폭 확장
+          gridColumn: '1 / -1',
           display: 'flex',
           flexDirection: 'column',
           gap: '16px'
@@ -762,9 +850,12 @@
               const isProfit = pnl >= 0;
               const pnlColor = pnl === 0 ? '#94A3B8' : (isProfit ? '#10B981' : '#EF4444');
 
-              // 해당 전략의 보유 옵션 수량 계산
-              const stratOptions = options.filter(pos => pos && (pos.activeStrategy || '').includes(t.id.split(' ')[0]));
-              const totalOptQty = stratOptions.reduce((sum, item) => sum + parseInt((item && item.qty) || 0), 0);
+              // 해당 전략의 보유 포지션 분류 (선물, 콜옵션, 풋옵션, 태그)
+              const stratPositions = options.filter(pos => pos && (pos.activeStrategy || '').includes(t.id.split(' ')[0]));
+              const stratFutures = stratPositions.filter(pos => pos.type === 'FUTURES' || pos.asset_type === 'FUTURES');
+              const stratCalls = stratPositions.filter(pos => pos.type === 'CALL');
+              const stratPuts = stratPositions.filter(pos => pos.type === 'PUT');
+              const totalOptQty = stratPositions.reduce((sum, item) => sum + parseInt((item && item.qty) || 0), 0);
 
               return (
                 <div 
@@ -777,7 +868,7 @@
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    height: '135px', // 위아래 완전 동일 높이 고정
+                    minHeight: '210px',
                     boxSizing: 'border-box',
                     position: 'relative',
                     overflow: 'hidden',
@@ -804,7 +895,7 @@
                   </div>
 
                   {/* 카드 중단: 전략명 & 설명 */}
-                  <div>
+                  <div style={{ marginTop: '4px' }}>
                     <div style={{ fontSize: '13px', fontWeight: 800, color: '#F8FAFC', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {t.name.split(': ')[1]}
                     </div>
@@ -813,8 +904,58 @@
                     </div>
                   </div>
 
-                  {/* 카드 하단: 실현 손익 및 비중 / 보유량 */}
-                  <div style={{ borderTop: '1px dashed #1E293B', paddingTop: '8px', marginTop: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                  {/* 📌 [전략 카드 세부 포지션 블록]: 선물 / CALL / PUT / 꼬리표 상세 노출 */}
+                  <div style={{
+                    marginTop: '8px',
+                    padding: '6px 8px',
+                    borderRadius: '6px',
+                    backgroundColor: '#1E293B',
+                    border: '1px solid #334155',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                    fontSize: '10px',
+                    fontFamily: 'monospace'
+                  }}>
+                    {/* 1. 선물 (FUTURES) 포지션 */}
+                    {stratFutures.length > 0 ? (
+                      stratFutures.map((f, i) => (
+                        <div key={`fut-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: f.side === 'BUY' ? '#EF4444' : '#3B82F6' }}>
+                          <span>[선물] <strong style={{ textDecoration: 'underline' }}>{f.side === 'BUY' ? '매수' : '매도'}</strong> {f.qty}계약</span>
+                          <span>@{f.price}P {f.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: '#334155', borderRadius: '3px', color: '#94A3B8' }}>{f.tag_id}</span>}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ color: '#475569', fontSize: '9px' }}>선물: 보유 없음</div>
+                    )}
+
+                    {/* 2. 콜 옵션 (CALL) 포지션 */}
+                    {stratCalls.length > 0 ? (
+                      stratCalls.map((c, i) => (
+                        <div key={`call-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#EF4444' }}>
+                          <span>[CALL] {c.side === 'BUY' ? '매수' : '매도'} K:{c.strike}</span>
+                          <span>{c.price}P ({c.qty}계약) {c.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(239, 68, 68, 0.2)', borderRadius: '3px', color: '#EF4444', border: '1px solid #EF4444' }}>{c.tag_id}</span>}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ color: '#475569', fontSize: '9px' }}>콜옵션: 보유 없음</div>
+                    )}
+
+                    {/* 3. 풋 옵션 (PUT) 포지션 */}
+                    {stratPuts.length > 0 ? (
+                      stratPuts.map((p, i) => (
+                        <div key={`put-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#3B82F6' }}>
+                          <span>[PUT] {p.side === 'BUY' ? '매수' : '매도'} K:{p.strike}</span>
+                          <span>{p.price}P ({p.qty}계약) {p.tag_id && <span style={{ fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: '3px', color: '#3B82F6', border: '1px solid #3B82F6' }}>{p.tag_id}</span>}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ color: '#475569', fontSize: '9px' }}>풋옵션: 보유 없음</div>
+                    )}
+                  </div>
+
+                  {/* 카드 하단: 실현 손익 및 비중 / 총 보유량 */}
+                  <div style={{ borderTop: '1px dashed #1E293B', paddingTop: '8px', marginTop: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                     <div>
                       <div style={{ fontSize: '9px', color: '#94A3B8', textTransform: 'uppercase' }}>Strategy PnL</div>
                       <div style={{ fontSize: '13px', fontWeight: 900, color: pnlColor, fontFamily: 'monospace' }}>
@@ -824,7 +965,7 @@
 
                     <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '10px', color: '#CBD5E1' }}>
                       <div>비중: <strong style={{ color: '#F59E0B' }}>{weight.toFixed(1)}%</strong></div>
-                      <div>포지션: <strong style={{ color: totalOptQty > 0 ? '#38BDF8' : '#64748B' }}>{totalOptQty}계약</strong></div>
+                      <div>총 포지션: <strong style={{ color: totalOptQty > 0 ? '#38BDF8' : '#64748B' }}>{totalOptQty}계약</strong></div>
                     </div>
                   </div>
                 </div>
@@ -1113,7 +1254,9 @@
       const fullList = tradeReplayList || [];
 
       // 계층 탐색 상태 (기본값: ALL - 전체 수집 거래 한눈에 전개)
-      const months = Object.keys(tree).sort().reverse();
+      const months = Object.keys(tree)
+        .filter(m => m && !m.startsWith('2026')) // 컴퓨터 실제 날짜 오입력 원천 차단 필터
+        .sort().reverse();
       const [selectedMonth, setSelectedMonth] = useState('ALL');
       
       const availableDates = selectedMonth !== 'ALL' && tree[selectedMonth] 
@@ -1474,7 +1617,7 @@
         "Track1 (Defense)": 30.0,
         "Track2 (Trap)": 10.0,
         "Track3 (Arbitrage)": 5.0,
-        "Track4 (Gamma)": 10.0,
+        "Track4 (Gamma)": 5.0,
         "Track5 (Gap)": 0.0,
         "Track6 (Daily)": 0.0,
         "Track7 (Weekly)": 0.0,
@@ -1532,11 +1675,10 @@
             const parsedData = JSON.parse(event.data);
             if (!parsedData || typeof parsedData !== 'object') return;
 
-            // 0-1. 🛡️ [Phase 3.1] 세션 경계 감지 및 상태 리셋
+            // 0-1. 🛡️ [Phase 3.1] 세션 경계 감지 (누적 손익 차트는 최근 1개월 슬라이딩 연속 보존)
             if (parsedData.sessionId && parsedData.sessionId !== currentSessionIdRef.current) {
-              console.warn(`[SESSION CHANGE] 새 세션 감지 (${parsedData.sessionId}), 로컬 상태 초기화`);
+              console.warn(`[SESSION CHANGE] 새 세션 감지 (${parsedData.sessionId}) - 차트는 1개월 슬라이딩 연속성을 유지합니다.`);
               currentSessionIdRef.current = parsedData.sessionId;
-              setCoords([]);
               if (typeof setPortfolioOptions === 'function') setPortfolioOptions([]);
             }
 
@@ -1698,9 +1840,7 @@
 
         ws.onclose = () => {
           setIsConnected(false);
-          // 🛡️ 서버 접속 종료 시 로컬 상태 전면 리셋 (이전 세션 잔상 방지)
           currentSessionIdRef.current = null;
-          setCoords([]);
           if (typeof setPortfolioOptions === 'function') setPortfolioOptions([]);
           if (typeof setEventLogs === 'function') setEventLogs([]);
           if (typeof setOrders === 'function') setOrders([]);
@@ -2339,7 +2479,6 @@
     // 🎛️ 실시간 가상테스트 환경 설정 패널 컴포넌트
     // ==============================================================================
     const SimSettingsPanel = ({ wsRef }) => {
-      const [capitalRatio, setCapitalRatio] = React.useState(2);
       const [volLevel, setVolLevel] = React.useState('CALM');
       const [dailyShockPts, setDailyShockPts] = React.useState(0);
       const [circuitBreaker, setCircuitBreaker] = React.useState(false);
@@ -2350,7 +2489,7 @@
       const [lastApplied, setLastApplied] = React.useState(null);
 
       const sendSettings = () => {
-        const settings = { capitalRatio, volLevel, dailyShockPts, stressCircuitBreaker: circuitBreaker, stressFlashCrash: flashCrash, stressIVExplosion: ivExplosion, stressSlippageMs: slippageMs };
+        const settings = { volLevel, dailyShockPts, stressCircuitBreaker: circuitBreaker, stressFlashCrash: flashCrash, stressIVExplosion: ivExplosion, stressSlippageMs: slippageMs };
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({ action: 'update_settings', settings }));
           setApplied(true); setLastApplied(new Date().toLocaleTimeString('ko-KR'));
@@ -2377,16 +2516,9 @@
             </div>
             {lastApplied && <span style={{ fontSize: '10px', color: '#10B981', fontFamily: 'monospace' }}>✅ 마지막 반영: {lastApplied}</span>}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 2fr', gap: '28px', alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '28px', alignItems: 'start' }}>
             <div>
-              <span style={LS}>① 전략 5~8 자본비율</span>
-              <div style={{ fontSize: '36px', fontWeight: 900, color: '#818CF8', fontFamily: 'monospace', marginBottom: '10px' }}>{capitalRatio}%</div>
-              <input type="range" min="1" max="10" step="1" value={capitalRatio} onChange={e => setCapitalRatio(+e.target.value)} style={{ width: '100%', accentColor: '#6366F1', cursor: 'pointer' }} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#475569', marginTop: '4px' }}><span>1%</span><span>5%</span><span>10%</span></div>
-              <p style={{ fontSize: '10px', color: '#475569', marginTop: '10px', lineHeight: 1.6 }}>테일 보험·갭 전략 자본 예산.<br />일 HWM 기준 매일 재산정.</p>
-            </div>
-            <div>
-              <span style={LS}>② 변동성 레벨</span>
+              <span style={LS}>① 변동성 레벨</span>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {[['CALM', '🌤️ 약함', '평온 · 저변동 (×0.45)', '#10B981'], ['NORMAL', '📊 보통', '표준 · 보통 (×0.95)', '#F59E0B'], ['HIGH', '🌪️ 강함', '고변동 · BEAR_VOL (×2.2)', '#EF4444']].map(([val, lbl, desc, col]) => (
                   <button key={val} onClick={() => setVolLevel(val)} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${volLevel === val ? col : '#334155'}`, backgroundColor: volLevel === val ? `${col}18` : '#1E293B', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px', transition: 'all 0.2s' }}>
@@ -2397,14 +2529,14 @@
               </div>
             </div>
             <div>
-              <span style={LS}>③ 일단위 지수변동폭</span>
+              <span style={LS}>② 일단위 지수변동폭</span>
               <div style={{ fontSize: '36px', fontWeight: 900, fontFamily: 'monospace', marginBottom: '10px', color: dailyShockPts === 0 ? '#475569' : '#F59E0B' }}>{dailyShockPts === 0 ? 'AUTO' : `${dailyShockPts}pt`}</div>
               <input type="range" min="0" max="20" step="5" value={dailyShockPts} onChange={e => setDailyShockPts(+e.target.value)} style={{ width: '100%', accentColor: '#F59E0B', cursor: 'pointer' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#475569', marginTop: '4px' }}><span>AUTO</span><span>5pt</span><span>10pt</span><span>15pt</span><span>20pt</span></div>
               <p style={{ fontSize: '10px', color: '#475569', marginTop: '10px', lineHeight: 1.6 }}>하루 급등락 주입 크기 고정.<br />AUTO = 4~8pt 자율 가변.</p>
             </div>
             <div>
-              <span style={LS}>④ 극한요소 즉시 주입</span>
+              <span style={LS}>③ 극한요소 즉시 주입</span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
                 <ToggleBtn active={circuitBreaker} onClick={() => setCircuitBreaker(v => !v)} label="🚨 서킷브레이커" subLabel="거래 일시정지" color="#EF4444" />
                 <ToggleBtn active={flashCrash} onClick={() => setFlashCrash(v => !v)} label="💥 플래시 크래시" subLabel="순간 급락 폭락" color="#F97316" />

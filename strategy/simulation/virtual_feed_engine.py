@@ -14,9 +14,9 @@ class HistoricalReplayEngine:
         self.current_idx = 0
         self.is_active = False
 
-    def load_scenario(self, scenario_name: str) -> None:
+    def load_scenario(self, scenario_name: str, start_price: Optional[float] = None) -> None:
         """
-        특정 과거 폭락장 및 변동성 폭발 시나리오 틱 로딩 모사
+        특정 과거 폭락장 및 변동성 폭발 시나리오 틱 로딩 모사 (start_price 제공 시 연속 승계)
         """
         self.scenario_ticks.clear()
         self.current_idx = 0
@@ -25,7 +25,7 @@ class HistoricalReplayEngine:
         # 1. 2020년 3월 코로나 팬데믹 서킷브레이커 폭락장 모사 시나리오 틱 생성
         if scenario_name == "COVID_PANIC_2020":
             logger.info("🎬 [REPLAY ENGINE] 2020년 3월 코로나 팬데믹 폭락장 시나리오 로딩...")
-            base_price = 280.0
+            base_price = start_price if (start_price is not None and start_price > 0) else 280.0
             for i in range(1, 501):
                 vol_spike = 1.0 if i < 100 else (3.0 if i < 300 else 5.0)
                 price_drop = 0.0 if i < 100 else (random.uniform(-1.5, -0.2) if i < 300 else random.uniform(-0.5, 0.5))

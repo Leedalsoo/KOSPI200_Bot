@@ -47,3 +47,26 @@ def test_trade_replay_analyzer_hierarchy():
     assert "2025-02-03" in tree["2025-02"]
     assert len(tree["2025-01"]["2025-01-15"]) == 1
     assert tree["2025-01"]["2025-01-15"][0]["tradeId"] == record1["tradeId"]
+
+
+def test_trade_replay_analyzer_mode_date_routing():
+    import time
+    # LIVE 모드 테스트
+    live_analyzer = TradeReplayAnalyzer(mode="LIVE")
+    rec_live = live_analyzer.capture_trade_event(
+        trade_type="ENTRY", track_name="Track 1", side="BUY", asset_type="FUTURES",
+        price=350.0, qty=1, reason="Test", realized_pnl=0.0,
+        sensor_snapshot={}, state_snapshot={}, date_str="2025-01-01" # LIVE 모드에서는 date_str 무시하고 실시간 시스템 날짜 사용
+    )
+    today_str = time.strftime("%Y-%m-%d")
+    assert rec_live["dateStr"] == today_str
+
+    # VIRTUAL 모드 테스트
+    virtual_analyzer = TradeReplayAnalyzer(mode="VIRTUAL")
+    rec_virt = virtual_analyzer.capture_trade_event(
+        trade_type="ENTRY", track_name="Track 1", side="BUY", asset_type="FUTURES",
+        price=350.0, qty=1, reason="Test", realized_pnl=0.0,
+        sensor_snapshot={}, state_snapshot={}, date_str="2025-03-10"
+    )
+    assert rec_virt["dateStr"] == "2025-03-10"
+

@@ -40,12 +40,17 @@ import orjson
 import numpy as np
 from sensor.trade_replay_analyzer import TradeReplayAnalyzer
 
-trade_replay_analyzer = TradeReplayAnalyzer(max_history=50)
+trade_replay_analyzer = TradeReplayAnalyzer(max_history=50, mode="VIRTUAL")
 
 # 📝 [AUDIT TRAIL] 시계열 감사 로그 검증 모드 활성화
 # 터미널(콘솔)은 INFO 레벨만 출력하여 깔끔하게 유지하고, 상세 판단 근거(DEBUG)는 audit_trail.log에 시계열로 영구 보존합니다.
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
+
+# 🔇 websockets 저수준 프로토콜 패킷 디버그 노이즈 로그 100% 필터링 차단 (매 0.1초 8KB 통신 패킷 중복 출력 방지)
+logging.getLogger("websockets").setLevel(logging.INFO)
+logging.getLogger("websockets.protocol").setLevel(logging.INFO)
+logging.getLogger("websockets.server").setLevel(logging.INFO)
 
 if logger.hasHandlers():
     logger.handlers.clear()
@@ -349,7 +354,6 @@ connected_clients: set[Any] = set()
 
 # ── 🎛️ [대시보드 실시간 설정 제어 전역 변수] ──────────────────────────────────────
 # HFT_Control_Panel.html 설정 블록에서 WebSocket으로 수신된 값이 즉시 반영됩니다.
-SIM_CAPITAL_RATIO: float = 0.02          # 전략5~8 자본비율 (기본 2%)
 SIM_VOL_LEVEL: str = "CALM"              # 변동성 레벨: "CALM" / "NORMAL" / "HIGH"
 SIM_DAILY_SHOCK_PTS: float = 0.0         # 일단위 지수변동폭 강제주입 (0=비활성)
 SIM_STRESS_CIRCUIT_BREAKER: bool = False  # 극한요소: 서킷브레이커
@@ -602,7 +606,7 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
     )
 async def handler(websocket: Any) -> None:
     global autobot_active
-    global SIM_CAPITAL_RATIO, SIM_VOL_LEVEL, SIM_DAILY_SHOCK_PTS
+    global SIM_VOL_LEVEL, SIM_DAILY_SHOCK_PTS
     global SIM_STRESS_CIRCUIT_BREAKER, SIM_STRESS_FLASH_CRASH, SIM_STRESS_IV_EXPLOSION, SIM_STRESS_SLIPPAGE_MS
     logger.info("대시보드 클라이언트 연결됨!")
     connected_clients.add(websocket)
@@ -634,7 +638,6 @@ async def handler(websocket: Any) -> None:
 
                     # 🛡️ [Phase 2.3] 원자적 적용: 임시 변수에 파싱 후 전부 성공 시에만 전역 적용
                     try:
-                        _cap = max(0.01, min(0.10, float(cfg["capitalRatio"]) / 100.0)) if "capitalRatio" in cfg else SIM_CAPITAL_RATIO
                         _vol = str(cfg["volLevel"]) if "volLevel" in cfg else SIM_VOL_LEVEL
                         _shock = float(cfg["dailyShockPts"]) if "dailyShockPts" in cfg else SIM_DAILY_SHOCK_PTS
                         _cb = bool(cfg["stressCircuitBreaker"]) if "stressCircuitBreaker" in cfg else SIM_STRESS_CIRCUIT_BREAKER
@@ -647,7 +650,6 @@ async def handler(websocket: Any) -> None:
                         continue
 
                     # 모든 파싱 성공 → 전역 변수에 원자적 일괄 적용
-                    SIM_CAPITAL_RATIO = _cap
                     SIM_VOL_LEVEL = _vol
                     SIM_DAILY_SHOCK_PTS = _shock
                     SIM_STRESS_CIRCUIT_BREAKER = _cb
@@ -655,8 +657,8 @@ async def handler(websocket: Any) -> None:
                     SIM_STRESS_IV_EXPLOSION = _iv
                     SIM_STRESS_SLIPPAGE_MS = _slip
 
-                    logger.info("🎛️ [SETTINGS APPLIED] 자본비율=%.0f%%, 변동성=%s, 충격=%spt, CB=%s, FC=%s, IV=%s, Slip=%dms",
-                                _cap * 100, _vol, _shock, _cb, _fc, _iv, _slip)
+                    logger.info("🎛️ [SETTINGS APPLIED] 변동성=%s, 충격=%spt, CB=%s, FC=%s, IV=%s, Slip=%dms",
+                                _vol, _shock, _cb, _fc, _iv, _slip)
 
                     # 설정 반영 확인 응답 전송
                     ack = orjson.dumps({"type": "settings_ack", "applied": cfg})
@@ -756,10 +758,10 @@ async def simulation_loop() -> None:  # noqa: C901
             logger.info("⏳ [INITIAL SERVER WAIT] 인터페이스 화면 접속 대기를 위해 5초간 대기합니다...")
             await asyncio.sleep(5.0)
             last_tick_real_time = real_time.time()
-            # 🎬 [축 1] 과거 코로나 팬데믹 대폭락 시나리오 데이터 재생 강제 로드
+            # 🎬 [축 1] 과거 코로나 팬데믹 대폭락 시나리오 데이터 재생 강제 로드 (현재가 연속 승계)
             if replay_engine is None:
                 replay_engine = HistoricalReplayEngine()
-            replay_engine.load_scenario("COVID_PANIC_2020")
+            replay_engine.load_scenario("COVID_PANIC_2020", start_price=current_price)
 
         while True:
             await asyncio.sleep(0.1)
@@ -788,9 +790,9 @@ async def simulation_loop() -> None:  # noqa: C901
                     "underlyingPrice":       round(current_price, 2),
                     "regime":                "STANDBY",
                     "bidAskSpread":          0.0,
-                    "coord":                 {"x": seq, "y": round(total_equity, 2)},
+                    "coord":                 {"x": seq, "y": round(total_equity, 2), "date": date_str},
                     "payoffCoords":          [],
-                    "strategyWeights":       {"Track1 (Defense)": 30.0, "Track2 (Trap)": 10.0, "Track3 (Arbitrage)": 5.0, "Track4 (Gamma)": 10.0, "Track5 (Gap)": 0.0, "Track6 (Daily)": 0.0, "Track7 (Weekly)": 0.0, "Track8 (Monthly)": 5.0},
+                    "strategyWeights":       {"Track1 (Defense)": 30.0, "Track2 (Trap)": 10.0, "Track3 (Arbitrage)": 5.0, "Track4 (Gamma)": 5.0, "Track5 (Gap)": 0.0, "Track6 (Daily)": 0.0, "Track7 (Weekly)": 0.0, "Track8 (Monthly)": 5.0},
                     "capital":               round(current_capital, 2),
                     "reserve":               round(accumulated_reserve, 2),
                     "budgetPool":            round(insurance_budget_pool, 2),
@@ -833,18 +835,17 @@ async def simulation_loop() -> None:  # noqa: C901
                     current_price = round(current_price * (1.0 + gap_dir * gap_pct), 2)
                     logger.info("⚡ [OVERNIGHT GAP] %s 개장 시초가 갭(%.2f%%) 발생! 시가: %.2fp", date_str, gap_dir * gap_pct * 100, current_price)
 
-                # ── 💰 [DAILY DYNAMIC CAPITAL] 매일 평가 자산(total_equity)의 고정 2.0% 비율 연동 예산 갱신 ──
-                track5_investment_ratio = 0.02
-                insurance_budget_pool = total_equity * track5_investment_ratio
+                # ── 💰 [STRATEGY CAPITAL ISOLATION] 전략별 독립 할당 자본금 표기 (Track 7: 0.5%) ──
+                track7_capital = total_equity * 0.005
                 
-                logger.info("🌅 [NEW TRADING DATE] %s 영업일 시작. Daily HWM: ₩%s | 실시간 자본 2.0%% 연동 예산: ₩%s", 
-                            date_str, f"{daily_hwm:,.0f}", f"{insurance_budget_pool:,.0f}")
+                logger.info("🌅 [NEW TRADING DATE] %s 영업일 시작. Total Equity: ₩%s | Track 7 (Weekly Insurance) 독립 자본: ₩%s", 
+                            date_str, f"{total_equity:,.0f}", f"{track7_capital:,.0f}")
                 event_logs.append({
                     "seq": seq,
                     "date": date_str,
                     "time": time_str,
                     "event": f"영업일 {date_str} 개장",
-                    "details": f"HWM: ₩{daily_hwm:,.0f} / 가용예산(2%): ₩{insurance_budget_pool:,.0f}"
+                    "details": f"평가 자산: ₩{total_equity:,.0f} / Track 7 할당 자본(0.5%): ₩{track7_capital:,.0f}"
                 })
                 
                 sim_day_in_month += 1
@@ -874,23 +875,14 @@ async def simulation_loop() -> None:  # noqa: C901
                 if month_str != current_month_str:
                     sim_day_in_month = 1  # 신규 월 시작 시 일자 카운트 초기화
                     if current_month_str != "":
-                        # 전월 결산 및 2500만원 리셋 공지
-                        logger.warning("📅 [MONTHLY RESET] 월이 변경되었습니다! (%s -> %s) 전월 결산을 마치고 원금(₩%s)으로 월단위 독립 테스트를 새로 시작합니다.", 
-                                       current_month_str, month_str, f"{initial_capital:,.0f}")
-                        
-                        # [자본금 완벽 초기화]
-                        current_capital = initial_capital
-                        accumulated_reserve = 0.0
-                        total_equity = initial_capital
-                        daily_hwm = initial_capital
-                        highest_equity_today = initial_capital
-                        portfolio_options.clear()
-                        current_position_qty = 0
+                        # 💰 [CARRY-OVER CAPITAL & INDEX] 월 변경 시 자본금 및 코스피 지수를 100% 연속 이월 승계 (끊김 없는 세션 전환)
+                        logger.info("📅 [MONTHLY CARRY-OVER] 월 변경 감지! (%s -> %s) 전월 최종 자본금(₩%s) 및 종가 지수(%.2fpt)를 차월로 100%% 연속 이월 승계합니다.", 
+                                    current_month_str, month_str, f"{total_equity:,.0f}", current_price)
                         
                         event_logs.append({
                             "seq": seq, "date": date_str, "time": time_str,
-                            "event": "월단위 독립 테스트 자본 리셋",
-                            "details": f"자산 및 HWM ₩{initial_capital:,.0f} 초기화 완료"
+                            "event": "월 변경 자본금 & 코스피 지수 100% 연속 이월",
+                            "details": f"전월 자산 ₩{total_equity:,.0f} / 최종 지수 {current_price:.2f}pt 차월 승계 완료"
                         })
                         
                     current_month_str = month_str
@@ -899,13 +891,9 @@ async def simulation_loop() -> None:  # noqa: C901
                     calendar_sim.remaining_days = 20
                     calendar_sim.simulated_days_to_expiry = 20.0
                     simulated_days_to_expiry = 20.0
-                    track5_investment_ratio = 0.02
-                    track5_investment_ratio = SIM_CAPITAL_RATIO  # 대시보드 설정값 반영
-                    insurance_budget_pool = total_equity * track5_investment_ratio
-
                     
-                    logger.info("📅 [MONTHLY BUDGET ALLOCATION] 새로운 월(%s) 시작! 루프 %d. 전략 5~8 자본 2.0%% 고정 예산 셋팅: (₩%s)", 
-                                month_str, sim_month_count, f"{insurance_budget_pool:,.0f}")
+                    logger.info("📅 [MONTHLY TRANSITION] 새로운 월(%s) 시작! 루프 %d. 차월 세션 정상 진입 (이월 자본금: ₩%s | 시작 지수: %.2fpt)", 
+                                month_str, sim_month_count, f"{total_equity:,.0f}", current_price)
 
                 
                 # [전략 5] 시초가 갭 괴리 감지 및 역방향 저격 진입 판단 (장세 지표 연동 동적 Z-Score 적용)
@@ -1234,10 +1222,12 @@ async def simulation_loop() -> None:  # noqa: C901
             # 2. 위클리 옵션 센서
             time_str_val = calendar_sim.current_time.strftime("%H:%M:%S")
             is_new_week_start = (date_changed and calendar_sim.current_time.weekday() == 0)
-            weekly_state = weekly_sensor.scan_weekly_market(current_price, insurance_budget_pool, is_new_week_start)
+            track7_allocated_capital = total_equity * 0.005  # Track 7 할당 자본 0.5%
+            weekly_state = weekly_sensor.scan_weekly_market(current_price, track7_allocated_capital, is_new_week_start)
             
-            # 3. 데일리 / 0DTE 옵션 센서
-            daily_state = daily_sensor.monitor_daily_risk(active_vol, BASE_VOLATILITY, insurance_budget_pool)
+            # 3. 데일리 / 0DTE 옵션 센서 (Track 6 할당 자본 0.1%)
+            track6_allocated_capital = total_equity * 0.001  # Track 6 할당 자본 0.1%
+            daily_state = daily_sensor.monitor_daily_risk(active_vol, BASE_VOLATILITY, track6_allocated_capital)
 
             # 횡보장 노이즈 필터 동작을 위해 최근 10틱 가격 보관 및 표준편차 산출
             price_history.append(float(current_price))
@@ -1262,7 +1252,7 @@ async def simulation_loop() -> None:  # noqa: C901
                     "underlyingPrice":       round(current_price, 2),
                     "regime":                "CIRCUIT_BREAKER",
                     "bidAskSpread":          99.0,
-                    "coord":                 {"x": seq, "y": round(total_equity, 2)},
+                    "coord":                 {"x": seq, "y": round(total_equity, 2), "date": date_str},
                     "payoffCoords":          [],
                     "strategyWeights":       {"Track1 (Defense)": 100.0, "Track2 (Trap)": 0.0, "Track3 (Arbitrage)": 0.0, "Track4 (Gamma)": 0.0},
                     "capital":               round(current_capital, 2),
@@ -1314,13 +1304,12 @@ async def simulation_loop() -> None:  # noqa: C901
 
             iv_sell_blocked = iv_explosion_active
 
-            # ── 4. 8대 전략 표준 자본 배분 비율 (Capital Allocation Weights) 반영 ────────
-            # 고정 배분: Track1(30%), Track2(10%), Track3(5%), Track4(10%), Track8(5%)
+            # 고정 배분: Track1(30%), Track2(10%), Track3(5%), Track4(5%), Track8(5%)
             # 조건부 배분: Track5(조건시 +0.1%), Track6(조건시 +0.1%), Track7(조건시 +0.5%)
             t1 = 30.0
             t2 = 10.0
             t3 = 5.0
-            t4 = 10.0
+            t4 = 5.0
             t5_pct = 0.1 if (track5_strategy and track5_strategy.gap_state["is_active"]) else 0.0
             t6_pct = 0.1 if (track6_strategy and track6_strategy.insurance_state["is_active"]) else 0.0
             t7_pct = 0.5 if (track7_strategy and track7_strategy.insurance_state["is_active"]) else 0.0
@@ -1958,11 +1947,7 @@ async def simulation_loop() -> None:  # noqa: C901
                                         date_str=date_str
                                     )
                                     
-                                    # [CASH FLOW RULE] 실현이익의 30%를 테일 보험 예산으로 적립
-                                    if realized_pnl > 0:
-                                        allocated_budget = realized_pnl * 0.3
-                                        insurance_budget_pool += allocated_budget
-                                        logger.info("💰 [CASH FLOW] Track 3 실현수익의 30%%(₩%s)를 테일 보험 예산 풀로 적립! (가용 예산: ₩%s)", f"{allocated_budget:,.0f}", f"{insurance_budget_pool:,.0f}")
+                                    pass
                                         
                                     # [CRITICAL FIX] current_capital += realized_pnl 삭제!
                                     # 선물 거래는 매 틱 MTM 정산되므로 청산 시 전체 차익을 더하면 이중 계상이 됨.
@@ -2013,10 +1998,7 @@ async def simulation_loop() -> None:  # noqa: C901
                             daily_friction_cost = max(0.0, daily_friction_cost - realized_pnl)
                             logger.info("💰 [SELF-FUNDING] Gap Protocol 수익 ₩%s으로 일일 헤지 마찰비용 탕감 완료 (남은 마찰비용: ₩%s)", f"{realized_pnl:,.0f}", f"{daily_friction_cost:,.0f}")
                             
-                            # [CASH FLOW RULE] 실현이익의 30%를 테일 보험 예산으로 적립
-                            allocated_budget = realized_pnl * 0.3
-                            insurance_budget_pool += allocated_budget
-                            logger.info("💰 [CASH FLOW] Track 5 실현수익의 30%%(₩%s)를 테일 보험 예산 풀로 적립! (가용 예산: ₩%s)", f"{allocated_budget:,.0f}", f"{insurance_budget_pool:,.0f}")
+                            pass
                         
                         pnl_fmt = f"+{realized_pnl:,.0f}원" if realized_pnl >= 0 else f"-{abs(realized_pnl):,.0f}원"
                         logger.info("💰 [TRACK 5 GAP CLOSE] %s | 실현손익: %s", reason, pnl_fmt)
@@ -2055,7 +2037,7 @@ async def simulation_loop() -> None:  # noqa: C901
                             current_price=current_price,
                             active_vol=active_vol,
                             base_vol=BASE_VOLATILITY,
-                            budget=insurance_budget_pool,
+                            budget=total_equity * 0.001,
                             date_str=date_str
                         )
                     else:
@@ -2063,7 +2045,6 @@ async def simulation_loop() -> None:  # noqa: C901
                     if t6_res.get("status") == "TRIGGERED":
                         for signal in t6_res.get("signals", []):
                             cost = signal.get("cost", 0.0)
-                            insurance_budget_pool = max(0.0, insurance_budget_pool - cost)
                             
                             # 포트폴리오에 데일리 보험 롱 스트랭글 추가
                             portfolio_options.append({
@@ -2152,7 +2133,7 @@ async def simulation_loop() -> None:  # noqa: C901
                     if weekly_state.get("weekly_entry_ready"):
                         t7_res = track7_strategy.evaluate_insurance_buy(
                             current_price=current_price,
-                            budget=insurance_budget_pool,
+                            budget=total_equity * 0.005,
                             date_str=date_str,
                             is_new_week_start=is_new_week_start,
                             active_vol=active_vol
@@ -2162,7 +2143,6 @@ async def simulation_loop() -> None:  # noqa: C901
                     if t7_res.get("status") == "TRIGGERED":
                         for signal in t7_res.get("signals", []):
                             cost = signal.get("cost", 0.0)
-                            insurance_budget_pool = max(0.0, insurance_budget_pool - cost)
                             
                             # 포트폴리오에 위클리 보험 롱 스트랭글 추가
                             portfolio_options.append({
@@ -2273,7 +2253,7 @@ async def simulation_loop() -> None:  # noqa: C901
                 if enabled_strategies.get("track8", True) and track8_strategy and not track8_strategy.strangle_state["is_active"]:
                     t8_res = track8_strategy.evaluate_entry(
                         dte=simulated_days_to_expiry,
-                        budget=insurance_budget_pool,
+                        budget=total_equity * 0.050,
                         current_price=current_price,
                         current_regime=current_regime,
                         date_str=date_str
@@ -2281,7 +2261,6 @@ async def simulation_loop() -> None:  # noqa: C901
                     if t8_res.get("status") == "TRIGGERED":
                         for signal in t8_res.get("signals", []):
                             cost = signal.get("cost", 0.0)
-                            insurance_budget_pool = max(0.0, insurance_budget_pool - cost)
                             
                             # 포트폴리오에 월간 보험 풋 편향 외가격 롱 스트랭글 구축
                             portfolio_options.append({
@@ -2598,8 +2577,8 @@ async def simulation_loop() -> None:  # noqa: C901
                         continue  # 알 수 없는 타입 건너뜀
 
                     if trigger:
-                        # 1. 평가이익 계산 및 실현 (내재가치 수취)
-                        realized_pnl = max(0.5, intrinsic) * qty_val * OPTIONS_MULTIPLIER
+                        # 1. 평가이익 계산 및 실현 (지수 기반 내재가치 정직 수취)
+                        realized_pnl = intrinsic * qty_val * OPTIONS_MULTIPLIER
                         current_capital += realized_pnl
                         
                         # 2. 보험 포지션 청산 (이익 수취 완료)
@@ -2646,21 +2625,6 @@ async def simulation_loop() -> None:  # noqa: C901
                 delta_sign = 1.0 if side == "BUY" else -1.0
                 opt_delta_eff = delta_sign * delta
                 
-                # [UX 개선] "가두리 안에서는 이익 변동이 거의 없어야 한다"는 사용자 심리(상식)를 
-                # 충족시키기 위해, 지수가 밴드 내에 위치할 시 델타 변동성을 95% 강제 감쇄(Damping)
-                is_defense = pos.get("activeStrategy", "Track1 (Defense)") == "Track1 (Defense)"
-                if is_defense and side == "SELL":
-                    # Track1 양매도 밴드(Strike) 탐색
-                    t1_puts = [p["strike"] for p in portfolio_options if p.get("activeStrategy", "Track1 (Defense)") == "Track1 (Defense)" and p["type"] == "PUT" and p["side"] == "SELL"]
-                    t1_calls = [p["strike"] for p in portfolio_options if p.get("activeStrategy", "Track1 (Defense)") == "Track1 (Defense)" and p["type"] == "CALL" and p["side"] == "SELL"]
-                    
-                    if t1_puts and t1_calls:
-                        min_k = min(t1_puts)
-                        max_k = max(t1_calls)
-                        # 현재가가 양매도 행사가 밴드 사이에 있을 경우 평온함 연출 (댐핑 0.05)
-                        if min_k <= current_price <= max_k:
-                            opt_delta_eff *= 0.05
-                            
                 tick_pnl = dp * opt_delta_eff * qty * OPTIONS_MULTIPLIER
                 
                 # [CRITICAL FIX] 횡보장 옵션 양매도의 핵심인 '시간 가치(Theta) 수취' 로직 도입
@@ -2670,18 +2634,8 @@ async def simulation_loop() -> None:  # noqa: C901
                 theta_pnl = theta_decay_per_tick * float(qty) * (1.0 if side == "SELL" else -1.0)
                 tick_pnl += theta_pnl
                 
-                # 익일 시초가 갭 폭락 또는 블랙스완 발생 시 손익 상쇄(Netting) 반영
-                is_insurance = pos.get("is_insurance", False)
-                if is_insurance and dp < 0.0:
-                    if dp < -5.0:
-                        # 갭 폭락(블랙스완) 시: 내재가치 급폭등(Intrinsic Value Spike)으로 타 숏포지션 손실 전액 상쇄
-                        severity_multiplier = min(15.0, float(abs(dp) * 2.0))
-                        tick_pnl = float(abs(dp)) * severity_multiplier * float(qty) * float(OPTIONS_MULTIPLIER)
-                        logger.info(
-                            "🛡️ [PORTFOLIO NETTING] 블랙스완 갭 폭락 감지! 보험 OTM PUT 내재가치 급팽창 상쇄 작동. "
-                            "상쇄 이익: +₩%s (배율: %.1fx)",
-                            f"{tick_pnl:,.0f}", severity_multiplier
-                        )
+                # 옵션 프리미엄 세타 차감 및 정직한 평가 손익 반영
+                pass
                 
                 options_pnl += tick_pnl
 
@@ -2735,19 +2689,10 @@ async def simulation_loop() -> None:  # noqa: C901
                     strategy_stress_pnl[strat_name] = strategy_pnl_tracker[strat_name]
 
 
-            if net_pnl > 0:
-                accumulated_reserve += net_pnl * 0.5
-                current_capital     += net_pnl * 0.5
-            else:
-                loss_abs = abs(net_pnl)
-                if accumulated_reserve > 0:
-                    reserve_deduct      = min(accumulated_reserve, loss_abs * 0.5)
-                    accumulated_reserve -= reserve_deduct
-                    current_capital     -= (loss_abs - reserve_deduct)
-                else:
-                    current_capital -= loss_abs
-
-            total_equity = current_capital + accumulated_reserve
+            # ── [CRITICAL FIX] 이중 계상(Double Counting) 제거 및 지수 연동 정직 자산 계산 ──
+            # current_capital은 청산 시점의 확정 실현 손익만 반영하며, 매 틱 MTM 손익은 total_equity에만 단 1회 가산됩니다.
+            unrealized_mtm_pnl = futures_pnl + options_pnl
+            total_equity = current_capital + accumulated_reserve + unrealized_mtm_pnl
 
             # ── 11.2 Daily HWM (High-Water Mark) 실시간 갱신 ──
             highest_equity_today = max(highest_equity_today, total_equity)
@@ -2820,7 +2765,7 @@ async def simulation_loop() -> None:  # noqa: C901
                     "underlyingPrice":       round(current_price, 2),
                     "regime":                "CIRCUIT_BREAKER",
                     "bidAskSpread":          99.0,
-                    "coord":                 {"x": seq, "y": round(total_equity, 2)},
+                    "coord":                 {"x": seq, "y": round(total_equity, 2), "date": date_str},
                     "payoffCoords":          [],
                     "strategyWeights":       strategy_weights,
                     "capital":               round(current_capital, 2),
