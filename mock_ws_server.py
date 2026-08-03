@@ -2058,8 +2058,8 @@ async def simulation_loop() -> None:  # noqa: C901
                                     
                                     pass
                                         
-                                    # [CRITICAL FIX] current_capital += realized_pnl 삭제!
-                                    # 선물 거래는 매 틱 MTM 정산되므로 청산 시 전체 차익을 더하면 이중 계상이 됨.
+                                    # [CRITICAL FIX REVERT] MTM 미실현 손익이 0이 되므로 실현 손익을 자본에 가산해야 함!
+                                    current_capital += realized_pnl
                                     track3_entry_qty = 0
                                     track3_net_qty = 0
                                     pnl_str = f"+{realized_pnl:,.0f}원" if realized_pnl >= 0 else f"-{abs(realized_pnl):,.0f}원"
@@ -2220,7 +2220,8 @@ async def simulation_loop() -> None:  # noqa: C901
                             # 수수료 정산
                             calculated_fee += signal.get("qty") * 2 * current_price * OPTIONS_MULTIPLIER * OPTIONS_FEE_RATE
                             
-                            # 자본 정산 (이중계상 방지: current_capital 중복 가산 제거, strategy_realized_pnl에만 누적 기록)
+                            # 자본 정산 (이중계상 방지 롤백: 실현이익 가산)
+                            current_capital += total_realized
                             net_profit = total_realized - track6_strategy.insurance_state["premium_spent"]
                             strategy_realized_pnl["Track6 (Daily)"] += net_profit  # ← strategy_pnl_tracker는 line 2711에서 자동 계산
                             
@@ -2304,7 +2305,8 @@ async def simulation_loop() -> None:  # noqa: C901
                                         portfolio_options.remove(pos)
                                     except ValueError:
                                         pass
-                            # 이중계상 방지: current_capital 중복 가산 제거
+                            # 이중계상 방지 롤백: 실현이익 가산
+                            current_capital += realized_amount
                             net_profit = realized_amount - track7_strategy.insurance_state.get("premium_spent", 350000.0)
                             strategy_realized_pnl["Track7 (Weekly)"] += net_profit  # ← 이중계상 방지: tracker는 line 2711에서 자동 계산
                             logger.warning("🎉 [WEEKLY INSURANCE PROFIT REALIZATION] 위클리 옵션 동적 익절 청산 완료! (실현이익: ₩%s, 순손익: ₩%s)", f"{realized_amount:,.0f}", f"{net_profit:,.0f}")
@@ -2354,7 +2356,8 @@ async def simulation_loop() -> None:  # noqa: C901
                             # 수수료 정산
                             calculated_fee += signal.get("qty") * 2 * current_price * OPTIONS_MULTIPLIER * OPTIONS_FEE_RATE
                             
-                            # 자본 정산 (이중계상 방지: current_capital 중복 가산 제거)
+                            # 자본 정산 (이중계상 방지 롤백: 실현이익 가산)
+                            current_capital += total_realized
                             net_profit = total_realized - track7_strategy.insurance_state["premium_spent"]
                             strategy_realized_pnl["Track7 (Weekly)"] += net_profit  # ← tracker는 line 2711에서 자동 계산
                             
@@ -2417,7 +2420,8 @@ async def simulation_loop() -> None:  # noqa: C901
                                         pass
                             # 수수료 차감
                             calculated_fee += (signal.get("qty_call") + signal.get("qty_put")) * current_price * OPTIONS_MULTIPLIER * OPTIONS_FEE_RATE
-                            # 자본에 정산금 회수 적용 (이중계상 방지: current_capital 중복 가산 제거)
+                            # 자본에 정산금 회수 적용 (이중계상 방지 롤백: 실현이익 가산)
+                            current_capital += total_realized
                             net_profit = total_realized - signal.get("premium_spent")
                             strategy_realized_pnl["Track8 (Monthly)"] += net_profit  # ← 기존 미갱신 버그 수정: tracker는 line 2711에서 자동 계산
                             pnl_str = f"+{total_realized:,.0f}원" if total_realized >= 0 else f"-{abs(total_realized):,.0f}원"
@@ -2709,8 +2713,9 @@ async def simulation_loop() -> None:  # noqa: C901
                         continue  # 알 수 없는 타입 건너뜀
 
                     if trigger:
-                        # 1. 평가이익 계산 및 실현 (지수 기반 내재가치 정직 수취 — 이중계상 방지: current_capital 중복 가산 제거)
+                        # 1. 평가이익 계산 및 실현 (지수 기반 내재가치 정직 수취 — 이중계상 방지 롤백: 실현이익 가산)
                         realized_pnl = intrinsic * qty_val * OPTIONS_MULTIPLIER
+                        current_capital += realized_pnl
                         # strategy_realized_pnl 누적 (activeStrategy로 Track 판별)
                         _ins_strat = pos.get("activeStrategy", "Track1 (Defense)")
                         _ins_key = next((k for k in strategy_realized_pnl if k.split(' ')[0] in _ins_strat), "Track1 (Defense)")
