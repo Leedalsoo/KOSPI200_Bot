@@ -1,6 +1,7 @@
 from decimal import Decimal
 import logging
 from typing import Dict, Any, List, Optional
+from strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,9 @@ class Track1:
         self.hedge_entry_price: float = 0.0
         
         self.is_market_opened = False
-        self.last_trading_date = None
+        self.last_trading_date: Optional[str] = None
+        self.date_reset_helper = TradingDateResetHelper()
+        self.rotation_timer = WallClockTimer(30.0)  # 휩소 방지 30초 쿨다운
 
     def _calculate_kelly_fraction(self, win_rate: Decimal, win_loss_ratio: Decimal) -> Decimal:
         if win_loss_ratio == 0:
@@ -97,16 +100,19 @@ class Track1:
         """서버 연동 브릿지 함수"""
         signals = []
         current_date = market_data.get("date_str", "UNKNOWN")
-        trend_signal = market_data.get("momentum_confirmed", True) 
+        trend_signal = market_data.get("momentum_confirmed", False) 
 
-        # 날짜 변경 감지
-        if self.last_trading_date != current_date:
-            self.last_trading_date = current_date
+        # 영업일 변경 세션 감지 및 원자적 리셋
+        if self.date_reset_helper.check_and_update(current_date):
+            self.last_trading_date = self.date_reset_helper.last_trading_date
+            self.is_market_opened = False
             self.futures_hedge_count = 0
+            self.active_hedge = None
+            self.rotation_timer.reset()
 
         # 장 개장 세팅 (1번 꼬리표)
         if not self.is_market_opened:
-            self.base_price = current_atm
+            self.base_price = current_underlying
             self.is_market_opened = True
             open_signals = self.on_market_open(current_underlying)
             signals.extend(open_signals)
@@ -120,6 +126,7 @@ class Track1:
     def on_market_open(self, current_price: float) -> List[Dict]:
         """[1단계] 장 시작 직후 넓은 양매수 선제 구축 및 초기 풋매도 가두리 형성"""
         signals = []
+        self.base_price = current_price
         call_strike = round((current_price + self.fence_distance)/2.5)*2.5
         put_strike = round((current_price - self.fence_distance)/2.5)*2.5
         
@@ -130,6 +137,7 @@ class Track1:
             "action": "TAIL_DEFENSE_BUILD",
             "call_strike": call_strike,
             "put_strike": put_strike,
+            "qty": 1,
             "reason": "[장 시작 세팅] 넓은 양매수(Long Strangle) 구축 완료"
         })
         
@@ -141,6 +149,7 @@ class Track1:
             "type": "PUT",
             "strike": put_strike,
             "tag_id": 1,
+            "qty": 1,
             "reason": f"초기 풋매도 가두리 (행사가: {put_strike}, #1)"
         })
         
@@ -153,10 +162,20 @@ class Track1:
         if not self.active_fence:
             return signals
 
+        # 100% 격돌 및 1.5pt 반전 매 틱 독립 우선 체크 (갭 대응)
+        hedge_exit_signals = self.check_hedge_exit_conditions(current_price)
+        if hedge_exit_signals:
+            signals.extend(hedge_exit_signals)
+            return signals
+
         # [시나리오 A] 상대방 90% 도달 시 순환 (이익 확정)
         if self.check_opposite_90_reached(current_price):
-            signals.extend(self.execute_fence_rotation(current_price))
-            return signals
+            if self.rotation_timer.is_expired():
+                rotation_signals = self.execute_fence_rotation(current_price)
+                if rotation_signals:
+                    self.rotation_timer.reset()
+                    signals.extend(rotation_signals)
+                    return signals
 
         # [시나리오 B] 위협 접근 시 선물 헷지
         if self.check_returning_90_approaching(current_price):
@@ -178,8 +197,6 @@ class Track1:
                     "reason": f"선물 헷지 #{self.futures_hedge_count} 발동"
                 })
                 logger.info(f"🚨 [선물 헷지 발동 #{self.futures_hedge_count}] {self.active_hedge} 체결 (진입: {current_price})")
-            else:
-                signals.extend(self.check_hedge_exit_conditions(current_price))
                 
         return signals
 
@@ -212,7 +229,14 @@ class Track1:
         old_type = self.active_fence['type']
         old_strike = self.active_fence['strike']
         
-        realized_profit = 2.5 * 50000 
+        # 실체결 PnL 산출 유틸 사용 (행사가 격차 2.5pt 기반 실질 PnL 산출)
+        realized_profit = ExecutionCostCalculator.calc_realized_pnl(
+            side="SELL",
+            entry_price=old_strike,
+            exit_price=old_strike - 2.5 if old_type == 'PUT' else old_strike + 2.5,
+            qty=1,
+            multiplier=50000.0,
+        )
         self.profit_buffer += realized_profit
         
         logger.info(f"🔄 [순환 루프] 꼬리표 #{old_tag} 청산 | 버퍼 누적: {self.profit_buffer}원")
@@ -221,6 +245,7 @@ class Track1:
             "type": old_type,
             "strike": old_strike,
             "tag_id": old_tag,
+            "qty": 1,
             "reason": f"꼬리표 #{old_tag} 순환 청산"
         })
         
@@ -236,6 +261,7 @@ class Track1:
             "type": new_type,
             "strike": new_strike,
             "tag_id": old_tag + 1,
+            "qty": 1,
             "reason": f"신규 꼬리표 #{old_tag + 1} ({new_type})"
         })
         logger.info(f"🏗️ [신규 가두리] {new_type}매도 (행사가: {new_strike}, #{old_tag + 1})")
@@ -247,7 +273,7 @@ class Track1:
             return signals
         fence_strike = self.active_fence['strike']
         
-        # 3단계: 100% 격돌 (선물+옵션 전량 청산)
+        # 3단계: 100% 격돌 (해당 100% 격돌 가두리 옵션 및 선물 헷지 청산)
         is_flatten = False
         if self.active_fence['type'] == 'PUT' and current_price <= fence_strike:
             is_flatten = True
@@ -255,8 +281,31 @@ class Track1:
             is_flatten = True
             
         if is_flatten:
-            logger.critical("💥 [100% 격돌] 방어선 붕괴. 선물 및 가두리 전량 동시 청산(Flatten)")
-            signals.append({"action": "FLATTEN_ALL", "reason": "100% 방어선 격돌"})
+            logger.critical("💥 [100% 격돌] 방어선 붕괴. 해당 가두리 옵션 및 선물 헷지 청산")
+            old_tag = self.active_fence['tag_id']
+            old_type = self.active_fence['type']
+            old_strike = self.active_fence['strike']
+            
+            # 1. 100% 도달한 가두리 매도 옵션 청산
+            signals.append({
+                "action": "FENCE_CLEAR",
+                "type": old_type,
+                "strike": old_strike,
+                "tag_id": old_tag,
+                "qty": 1,
+                "reason": f"100% 방어선 격돌 가두리 #{old_tag} 청산"
+            })
+            
+            # 2. 헷징 선물 포지션 청산 (선물 반대 매매)
+            if self.active_hedge is not None:
+                unwind_side = "BUY" if self.active_hedge == "SELL" else "SELL"
+                signals.append({
+                    "action": "FUTURES_UNWIND",
+                    "type": unwind_side,
+                    "price": current_price,
+                    "reason": "100% 방어선 격돌 선물 헷지 청산"
+                })
+            
             self.active_hedge = None
             self.active_fence = None
             return signals
@@ -270,12 +319,15 @@ class Track1:
             
         if is_reverted:
             logger.info("✅ [1.5pt 반전] 위험 완화. 선물 헷지 단독 청산 해제.")
+            unwind_side = "BUY" if self.active_hedge == "SELL" else "SELL"
             signals.append({
                 "action": "FUTURES_UNWIND",
-                "type": str(self.active_hedge),
+                "type": unwind_side,
+                "price": current_price,
                 "reason": "1.5pt 반전 휩소 탈출"
             })
             self.active_hedge = None
 
         return signals
+
 

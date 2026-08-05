@@ -55,3 +55,52 @@ def test_dynamic_futures_delta_hedging() -> None:
     assert agent._calculate_futures_hedge_qty(Decimal('1.8')) == -2
     # 3. 델타 -2.3 (Deadband 초과) -> 매수(+) 2계약 필요
     assert agent._calculate_futures_hedge_qty(Decimal('-2.3')) == 2
+
+
+def test_track1_trading_date_reset() -> None:
+    """영업일 변경 시 is_market_opened 및 카운터 자동 리셋 검증"""
+    agent = Track1({})
+    market_data_day1 = {"date_str": "2025-01-10"}
+    
+    # Day 1 진입
+    res1 = agent.evaluate_strategy(320.0, 320.0, market_data_day1)
+    assert agent.is_market_opened is True
+    assert len(res1["signals"]) > 0
+    
+    # Day 2 진입 -> 세션 원자적 리셋 발동
+    market_data_day2 = {"date_str": "2025-01-13"}
+    res2 = agent.evaluate_strategy(325.0, 325.0, market_data_day2)
+    assert agent.last_trading_date == "2025-01-13"
+    assert len(res2["signals"]) > 0
+
+
+def test_track1_100_percent_strike_exit() -> None:
+    """100% 격돌 시 전체 청산이 아닌 해당 가두리 옵션과 선물 헷지 청산 시그널 발동 검증"""
+    agent = Track1({})
+    # 가두리 (PUT 312.5) 및 선물 헷지 (SELL 313.0) 수동 세팅
+    agent.active_fence = {'type': 'PUT', 'strike': 312.5, 'tag_id': 1}
+    agent.active_hedge = "SELL"
+    agent.hedge_entry_price = 313.0
+
+    # 100% 격돌 지점 (현재가 312.0 <= 312.5)
+    signals = agent.check_hedge_exit_conditions(312.0)
+    
+    # FENCE_CLEAR 및 FUTURES_UNWIND(BUY) 시그널이 발생하고 FLATTEN_ALL이 없음을 검증
+    actions = [s["action"] for s in signals]
+    assert "FENCE_CLEAR" in actions
+    assert "FUTURES_UNWIND" in actions
+    assert "FLATTEN_ALL" not in actions
+
+    # FUTURES_UNWIND의 타입이 SELL의 반대인 BUY인지 확인
+    unwind_signal = next(s for s in signals if s["action"] == "FUTURES_UNWIND")
+    assert unwind_signal["type"] == "BUY"
+
+
+def test_track1_signal_qty_field() -> None:
+    """시그널 생성 시 qty: 1 필드 명시적 포함 검증"""
+    agent = Track1({})
+    signals = agent.on_market_open(320.0)
+    for s in signals:
+        assert "qty" in s
+        assert s["qty"] == 1
+

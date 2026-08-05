@@ -87,3 +87,61 @@ async def test_asymmetric_legging_sequence() -> None:
     assert atm_order is not None
     assert atm_order.instrument_code == "ATM1"
     assert otm_order.client_order_id not in agent.pending_legs # 상태 정리 검증
+
+
+def test_track3_invalid_data_hold() -> None:
+    """스프레드 데이터 부족(len < 10) 시 억울한 조기청산 없이 HOLD 상태 유지 검증"""
+    agent = Track3({})
+    
+    # 1. 시계열 개수 부족 데이터 (len=5 < 10)
+    res_short_data = agent.evaluate_arbitrage({"spread_history": [1.5]*5})
+    assert res_short_data["status"] == "HOLD"
+    assert len(res_short_data["signals"]) == 0
+    
+    # 2. 포지션 보유 중 데이터 부족 시 조기청산(CLOSE)되지 않고 HOLD 유지 검증
+    agent.active_position = "SHORT_SPREAD"
+    res_holding_short_data = agent.evaluate_arbitrage({"spread_history": [1.5]*5})
+    assert res_holding_short_data["status"] == "HOLD"
+    assert agent.active_position == "SHORT_SPREAD"
+    assert len(res_holding_short_data["signals"]) == 0
+
+
+
+def test_track3_stop_loss_and_timeout() -> None:
+    """Z-Score 극단 이탈(|Z| >= 3.5) 손절 및 300틱 타임아웃 청산 검증"""
+    agent = Track3({})
+    agent.active_position = "SHORT_SPREAD"
+    
+    # 1. Z-Score = 4.0 (극단 이탈 -> 손절 STOP_LOSS)
+    spread_history_stop = [0.0]*15 + [4.0]
+    res_stop = agent.evaluate_arbitrage({"spread_history": spread_history_stop})
+    assert res_stop["status"] == "STOP_LOSS"
+    assert agent.active_position is None
+
+    # 2. 타임아웃 검증 (300틱 도달)
+    agent.active_position = "LONG_SPREAD"
+    agent.holding_ticks = 299
+    spread_history_normal = [0.0]*16  # z_score = 0.0 인 일반 상태
+    res_timeout = agent.evaluate_arbitrage({"spread_history": spread_history_normal})
+    assert res_timeout["status"] == "TIMEOUT_EXIT"
+    assert agent.active_position is None
+
+
+def test_track3_scope_isolation() -> None:
+    """Track 3 전용 손익/수수료 스코프 키(track3_current_pnl 등) 우선 참조 검증"""
+    agent = Track3({})
+    agent.active_position = "SHORT_SPREAD"
+    
+    # 전체 total_fees는 100,000 이지만 track3_total_fees = 0 이면 수수료 조기 익절 안 됨
+    market_data = {
+        "spread_history": [0.0]*16,  # z_score = 0
+        "total_fees": 100000.0,
+        "current_pnl": 200000.0,
+        "track3_total_fees": 0.0,
+        "track3_current_pnl": 0.0,
+    }
+    res = agent.evaluate_arbitrage(market_data)
+    # z_score = 0 이므로 z_exit_threshold(0.2) 조건에 따라 정상 회귀 청산
+    assert res["status"] == "CLOSED"
+    assert res["signals"][0]["action"] == "CLOSE_STAT_ARB"
+

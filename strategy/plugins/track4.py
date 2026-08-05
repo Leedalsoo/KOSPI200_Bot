@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from core.base_agent import BaseAgent
 from core.contracts import MarketTick, OrderRequest
+from strategy.common import TradingDateResetHelper
 
 class Track4(BaseAgent):
     """
@@ -19,16 +20,33 @@ class Track4(BaseAgent):
         self.equity_threshold: Decimal = equity_threshold
         self.is_active: bool = False
         self.scalp_state: Dict[str, Any] = {"is_active": False}
+        self.active_hedge_qty: int = 0  # 현재 누적 선물 헷지 수량
         self._atr_history: deque[Decimal] = deque(maxlen=20)
         
-        # 실시간 ATR 계산을 위한 고가, 저가, 종가 버퍼 관리 (이벤트 루프 지연 차단을 위한 maxlen=20 가드)
+        # 실시간 ATR 계산을 위한 고가, 저가, 종가 버퍼 관리
         self._high_history: deque[Decimal] = deque(maxlen=20)
         self._low_history: deque[Decimal] = deque(maxlen=20)
         self._close_history: deque[Decimal] = deque(maxlen=20)
+        self.date_reset_helper = TradingDateResetHelper()
 
     def evaluate_scalping_rebalance(self, market_data: Dict[str, Any], days_to_expiry: float) -> Dict[str, Any]:
         """[Track4] 감마 스캘핑 델타 리밸런싱 평가"""
-        return {"status": "NORMAL", "signals": []}
+        current_delta = Decimal(str(market_data.get("current_delta", "0.0")))
+        band = Decimal(str(market_data.get("deadband", "0.3")))
+        
+        signals = []
+        if abs(current_delta) > band:
+            qty_val = -current_delta / Decimal('1.0')
+            qty = int(qty_val.to_integral_value(rounding=ROUND_HALF_UP))
+            if qty != 0:
+                signals.append({
+                    "action": "GAMMA_REBALANCE",
+                    "delta": float(current_delta),
+                    "qty": qty,
+                    "reason": f"Gamma rebalance trigger (Delta: {float(current_delta):.2f} > Band: {float(band):.2f})"
+                })
+        
+        return {"status": "REBALANCE" if signals else "NORMAL", "signals": signals}
 
     async def start(self) -> None:
         pass
@@ -81,14 +99,39 @@ class Track4(BaseAgent):
         return band
 
     def _verify_theta_decay_offset(self, accumulated_profit: Decimal, decay_cost: Decimal) -> bool:
-        """[목표 C] 감마 수익이 세타 붕괴 비용을 압도하는지 검증"""
+        """[목표 C] 신규 감마 스캘핑 진입/확장 시 감마 수익이 세타 붕괴 비용을 압도하는지 검증"""
         return bool(accumulated_profit > decay_cost)
 
     async def on_tick(self, tick: MarketTick, current_gamma: Decimal, current_delta: Decimal) -> List[OrderRequest]:
-        """[목표 A, B, C] 하이브리드 오케스트레이션: 동적 데드밴드 반영 선물 델타 헤징 주문 생성"""
-        # 1. Feature Flag 자산 기반 해제 검증
-        current_equity = Decimal(str(self.context.get("current_equity", Decimal('0'))))
+        """[목표 A, B, C] 동적 데드밴드 반영 선물 델타 헤징 (세타 가드와 독립적 작동)"""
+        current_time = tick.timestamp
+        if self.date_reset_helper.check_and_update(current_time.date()):
+            self._high_history.clear()
+            self._low_history.clear()
+            self._close_history.clear()
+
+        # 1. Feature Flag 자산 기반 해제 검증 (Track 4 전용 스코프 우선 참조)
+        raw_eq = self.context.get("track4_current_equity", self.context.get("current_equity", Decimal('0')))
+        current_equity = Decimal(str(raw_eq))
+        
+        # 전략 비활성화 시 잔여 헷지 포지션 언와인드(청산) 처리
         if not self._check_feature_flag(current_equity):
+            if self.active_hedge_qty != 0:
+                unwind_side = "SELL" if self.active_hedge_qty > 0 else "BUY"
+                unwind_qty = abs(self.active_hedge_qty)
+                price = tick.last_price - Decimal('0.10') if unwind_side == "SELL" else tick.last_price + Decimal('0.10')
+                price = max(price, Decimal('0.01'))
+                
+                unwind_order = OrderRequest(
+                    decision_id=uuid4(),
+                    client_order_id=uuid4(),
+                    instrument_code="FUT_HEDGE",
+                    side=unwind_side,
+                    price=price,
+                    qty=unwind_qty
+                )
+                self.active_hedge_qty = 0
+                return [unwind_order]
             return []
 
         # 2. 가격 이력 추가
@@ -102,16 +145,9 @@ class Track4(BaseAgent):
         c_arr = np.array(list(self._close_history), dtype=float)
         band = self._calculate_atr_deadband(h_arr, l_arr, c_arr)
 
-        # 4. 감마 수익성 상쇄(Offset) 검증
-        accumulated_profit = Decimal(str(self.context.get("accumulated_profit", Decimal('0'))))
-        decay_cost = Decimal(str(self.context.get("decay_cost", Decimal('0'))))
-        if not self._verify_theta_decay_offset(accumulated_profit, decay_cost):
-            return []
-
-        # 5. 델타 헤징 밴드 이탈 조건 감지 및 수량 산출
+        # 🛡️ [핵심 수정: 델타 헷지와 세타 가드의 구조적 분리]
+        # 델타 헷지는 포트폴리오 델타 방어를 위해 세타 조건과 상관없이 항상 작동함.
         if abs(current_delta) > band:
-            # 포트폴리오 델타 반대 방향의 선물 헷지 수량 연산
-            # ROUND_HALF_UP을 통한 int 반올림 형변환
             qty_val = -current_delta / Decimal('1.0')
             qty_rounded = qty_val.to_integral_value(rounding=ROUND_HALF_UP)
             qty = int(qty_rounded)
@@ -126,7 +162,7 @@ class Track4(BaseAgent):
             elif qty < -max_safety_limit:
                 qty = -max_safety_limit
 
-            # 🛡 [시장가 주문 절대 금지] BBO 대비 2틱(0.10) 가감 반영 지정가(IOC) 적용
+            # 지정가(IOC) 적용
             if qty > 0:
                 price = tick.last_price + Decimal('0.10')
             else:
@@ -142,6 +178,7 @@ class Track4(BaseAgent):
                 price=price,
                 qty=abs(qty)
             )
+            self.active_hedge_qty += qty
             return [hedge_order]
 
         return []
@@ -149,4 +186,5 @@ class Track4(BaseAgent):
 
 # 하위 호환성을 위한 전략 클래스 별칭
 Track4 = Track4
+
 

@@ -8,6 +8,7 @@ from uuid import uuid4
 from core.base_agent import BaseAgent
 from core.contracts import MarketTick, OrderRequest
 from infra.time_service import TimeService
+from strategy.common import TradingDateResetHelper
 
 class Track2(BaseAgent):
     """
@@ -20,11 +21,12 @@ class Track2(BaseAgent):
         self.time_service: TimeService = time_service if time_service is not None else TimeService()
         self.capital_allocation_rate: Decimal = Decimal('0.10')  # 자본의 10% 할당
         
-        self.trap_state: Dict[str, Any] = {"is_active": False}
+        self.trap_state: Dict[str, Any] = {"is_active": False, "entry_price": None, "entry_order": None}
         self._last_loss_time: Optional[datetime] = None
         self._daily_entry_count: int = 0
         self._max_daily_entries: int = 2
         self._cooldown_duration: timedelta = timedelta(minutes=15)
+        self.date_reset_helper = TradingDateResetHelper()
 
     def build_asymmetric_trap(self, current_atm: float) -> Dict[str, Any]:
         """[Track2] 비대칭 양매수 및 프리미엄 수취 함정 구조 생성"""
@@ -44,7 +46,61 @@ class Track2(BaseAgent):
         }
 
     def evaluate_trap_status(self, current_price: float) -> Dict[str, Any]:
-        """[Track2] 트랩 상태 실시간 평가 및 헷지 시그널 산출"""
+        """
+        [Track2] 트랩 상태 실시간 평가 및 헷지/손절/익절 시그널 산출
+        - 손절(-30% 이상 손실): _last_loss_time 갱신(15분 쿨다운 발동) 및 손절 시그널 생성
+        - 익절(+50% 이상 이익): _generate_reversal_short_orders 매도 스위칭 주문 생성
+        """
+        if not self.trap_state.get("is_active") or self.trap_state.get("entry_price") is None:
+            return {"status": "NORMAL", "signals": []}
+
+        entry_price = float(self.trap_state["entry_price"])
+        if entry_price <= 0:
+            return {"status": "NORMAL", "signals": []}
+
+        pnl_ratio = (current_price - entry_price) / entry_price
+        current_time = self.time_service.get_current_time()
+
+        # 1. 손절 조건 (-30% 이하 손실)
+        if pnl_ratio <= -0.30:
+            self._last_loss_time = current_time
+            self.trap_state["is_active"] = False
+            self.trap_state["entry_price"] = None
+            return {
+                "status": "STOP_LOSS",
+                "signals": [
+                    {
+                        "action": "STOP_LOSS_CLOSE",
+                        "price": current_price,
+                        "reason": f"Track2 손절 발동 (수익률: {pnl_ratio*100:.1f}%)"
+                    }
+                ]
+            }
+
+        # 2. 익절 조건 (+50% 이상 이익) -> 고점 IV 수확을 위한 매도(Short) 스위칭
+        if pnl_ratio >= 0.50:
+            self.trap_state["is_active"] = False
+            self.trap_state["entry_price"] = None
+            last_order = self.trap_state.get("entry_order")
+            
+            reversal_orders: List[OrderRequest] = []
+            if last_order is not None:
+                reversal_orders = self._generate_reversal_short_orders(
+                    last_order, Decimal(str(current_price))
+                )
+
+            return {
+                "status": "TAKE_PROFIT",
+                "signals": [
+                    {
+                        "action": "TAKE_PROFIT_REVERSAL",
+                        "price": current_price,
+                        "reversal_orders": reversal_orders,
+                        "reason": f"Track2 익절 및 매도 스위칭 (수익률: +{pnl_ratio*100:.1f}%)"
+                    }
+                ]
+            }
+
         return {"status": "NORMAL", "signals": []}
 
     async def start(self) -> None:
@@ -99,7 +155,7 @@ class Track2(BaseAgent):
         if abs(obi) <= Decimal('0.5'):
             return False
 
-        # 2. KOSPI 200 베이시스 역전 (Contango 임계값 초과 여부 검사)
+        # 2. KOSPI 200 베이시스 과열 검증 (Contango 임계값 0.3pt 초과 여부 검사)
         if basis <= Decimal('0.3'):
             return False
 
@@ -151,6 +207,10 @@ class Track2(BaseAgent):
         """메인 이벤트 핸들러: 쿨다운 타이머 체크, 방아쇠 검증, 4중 필터 통과 시 기습 함정 발주"""
         current_time = self.time_service.get_current_time()
 
+        # 영업일 변경 세션 감지 및 일일 진입 횟수 리셋
+        if self.date_reset_helper.check_and_update(current_time.date()):
+            self._daily_entry_count = 0
+
         # 🛡️ [논블로킹 쿨다운 철저 수호] 15분 하드웨어 쿨다운 가드 검사
         if self._last_loss_time is not None:
             if current_time - self._last_loss_time < self._cooldown_duration:
@@ -180,10 +240,14 @@ class Track2(BaseAgent):
             qty=10
         )
 
+        self.trap_state["is_active"] = True
+        self.trap_state["entry_price"] = tick.last_price
+        self.trap_state["entry_order"] = entry_order
         self._daily_entry_count += 1
         return [entry_order]
 
 
 # 하위 호환성을 위한 전략 클래스 별칭
 Track2 = Track2
+
 

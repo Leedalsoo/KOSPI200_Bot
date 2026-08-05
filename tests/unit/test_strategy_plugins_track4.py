@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
+import pytest
 import numpy as np
 from decimal import Decimal
 from strategy.plugins.track4 import Track4
+
 
 def test_feature_flag_seal() -> None:
     """[목표 A 검증] 설정 자산 대비 봉인(Seal) 및 활성화 경계값 대칭성 증명"""
@@ -60,3 +62,72 @@ def test_gamma_profit_offset() -> None:
 
     # 3. 수익 == 비용 (동률 경계값 ➡️ False)
     assert agent._verify_theta_decay_offset(Decimal("1000"), Decimal("1000")) is False
+
+
+@pytest.mark.asyncio
+async def test_track4_delta_hedging_independent_of_theta() -> None:
+
+    """[핵심 검증] 세타 비용 손실 조건에도 델타 헷지가 차단되지 않고 독립 작동함 증명"""
+    from datetime import datetime
+    from core.contracts import MarketTick
+    
+    # 세타 수익 < 세타 비용 (세타 가드 조건 실패 상태)
+    context = {
+        "current_equity": Decimal("100"),
+        "accumulated_profit": Decimal("100"),
+        "decay_cost": Decimal("500")
+    }
+    agent = Track4(context, equity_threshold=Decimal("0"))
+    
+    tick = MarketTick(
+        instrument_code="KOSPI200_FUT",
+        timestamp=datetime.now(),
+        last_price=Decimal("350.00"),
+        volume=10,
+        bid_prices=[Decimal("349.95")],
+        ask_prices=[Decimal("350.05")],
+        bid_qtys=[5],
+        ask_qtys=[5]
+    )
+    
+    # 델타 = 1.5 > 데드밴드(0.2) ➡️ 델타 헷지 주문이 세타 가드 실패에도 불구하고 생성되어야 함 (1.5 반올림 ➡️ 2계약 매도)
+    orders = await agent.on_tick(tick, current_gamma=Decimal("0.05"), current_delta=Decimal("1.5"))
+    assert len(orders) == 1
+    assert orders[0].side == "SELL"
+    assert orders[0].qty == 2
+    assert orders[0].instrument_code == "FUT_HEDGE"
+
+
+
+@pytest.mark.asyncio
+async def test_track4_deactivation_unwind() -> None:
+    """[비활성화 검증] 전략 비활성화 시 잔여 선물 헷지 언와인드(청산) 발주 증명"""
+    from datetime import datetime
+    from core.contracts import MarketTick
+    
+    context = {"current_equity": Decimal("100")}
+    agent = Track4(context, equity_threshold=Decimal("0"))
+    agent.active_hedge_qty = 2  # 기존 선물 헷지 매수 2계약 보유 중
+    
+    # 자산 미달로 비활성화 전환 (equity_threshold 500 > equity 100)
+    agent.equity_threshold = Decimal("500")
+    
+    tick = MarketTick(
+        instrument_code="KOSPI200_FUT",
+        timestamp=datetime.now(),
+        last_price=Decimal("350.00"),
+        volume=10,
+        bid_prices=[Decimal("349.95")],
+        ask_prices=[Decimal("350.05")],
+        bid_qtys=[5],
+        ask_qtys=[5]
+    )
+    
+    orders = await agent.on_tick(tick, current_gamma=Decimal("0"), current_delta=Decimal("0"))
+    assert len(orders) == 1
+    assert orders[0].side == "SELL"
+    assert orders[0].qty == 2
+    assert agent.active_hedge_qty == 0
+
+
+

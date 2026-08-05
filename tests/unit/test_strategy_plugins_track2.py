@@ -137,3 +137,64 @@ async def test_cooldown_release_and_daily_limit() -> None:
     # 4. 3회차 진입 시도 -> 일일 2회 제한에 걸려 기계적으로 거부되어 [] 반환 확인
     orders3 = await agent.on_tick(tick, bbw_data, vol_data, Decimal("0.5"), Decimal("0.2"), Decimal("0.4"), Decimal("348.0"))
     assert len(orders3) == 0
+
+
+@pytest.mark.asyncio
+async def test_track2_trading_date_reset() -> None:
+    """영업일 변경 시 _daily_entry_count 0으로 초기화 검증"""
+    ts = TimeService(mode="BACKTEST")
+    agent = Track2({}, ts)
+    
+    # Day 1 설정 (진입 2회 완료)
+    day1 = datetime(2026, 7, 17, 10, 0, 0)
+    ts.set_virtual_time(day1)
+    agent._daily_entry_count = 2
+    
+    # Day 2 진입 (다음 영업일 10시)
+    day2 = datetime(2026, 7, 18, 10, 0, 0)
+    ts.set_virtual_time(day2)
+    
+    tick = MarketTick("CODE", ts.get_current_time(), Decimal("350.0"), 10, [Decimal("350.0")]*5, [Decimal("351.0")]*5, [10]*5, [2]*5)
+    bbw_data = np.array([0.05, 0.05, 0.04])
+    vol_data = np.array([10.0]*5 + [50.0])
+    
+    # on_tick 호출 시 date 변경을 감지하고 _daily_entry_count가 0으로 리셋된 후 1회차 진입 성공
+    orders = await agent.on_tick(tick, bbw_data, vol_data, Decimal("0.5"), Decimal("0.2"), Decimal("0.4"), Decimal("348.0"))
+    assert len(orders) == 1
+    assert agent._daily_entry_count == 1
+
+
+def test_track2_evaluate_trap_status_stop_loss() -> None:
+    """손절(-30% 이상 손실) 감지 시 _last_loss_time 갱신 및 STOP_LOSS 상태 산출 검증"""
+    ts = TimeService(mode="BACKTEST")
+    agent = Track2({}, ts)
+    
+    # 진입 상태 수동 세팅 (진입가 2.00)
+    agent.trap_state = {"is_active": True, "entry_price": Decimal("2.00"), "entry_order": None}
+    
+    # 현재가 1.30 (-35% 손실)
+    eval_res = agent.evaluate_trap_status(1.30)
+    assert eval_res["status"] == "STOP_LOSS"
+    assert agent.trap_state["is_active"] is False
+    assert agent._last_loss_time is not None
+
+
+def test_track2_evaluate_trap_status_take_profit() -> None:
+    """익절(+50% 이상 이익) 감지 시 매도 스위칭 주문 생성 및 TAKE_PROFIT 상태 산출 검증"""
+    ts = TimeService(mode="BACKTEST")
+    agent = Track2({}, ts)
+    
+    long_order = OrderRequest(uuid4(), uuid4(), "OPT_TRAP", Decimal("2.00"), 10, "BUY")
+    agent.trap_state = {"is_active": True, "entry_price": Decimal("2.00"), "entry_order": long_order}
+    
+    # 현재가 3.20 (+60% 이익)
+    eval_res = agent.evaluate_trap_status(3.20)
+    assert eval_res["status"] == "TAKE_PROFIT"
+    assert agent.trap_state["is_active"] is False
+    
+    signals = eval_res["signals"]
+    assert len(signals) == 1
+    reversal_orders = signals[0]["reversal_orders"]
+    assert len(reversal_orders) == 1
+    assert reversal_orders[0].side == "SELL"
+
