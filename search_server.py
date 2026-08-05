@@ -1,5 +1,5 @@
 import sys
-sys.stdout.reconfigure(encoding='utf-8')
+sys.stdout.reconfigure(encoding='utf-8')  # type: ignore[union-attr]
 
 keywords = ['EXIT_PENDING', 'pending_exit_orders', 'EXIT FILLED', '_pos_get', 
             'strategy_realized_pnl', 'portfolio_options', '_vob', '_exec_ladder',

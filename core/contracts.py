@@ -77,3 +77,47 @@ class ExecutionReport:
     remaining_qty: int
     timestamp: datetime
     raw_response: Dict[str, Any]
+
+class LimitOrderType(str, Enum):
+    TP = "TP"
+    TIME_EXIT = "TIME_EXIT"
+    EMERGENCY = "EMERGENCY"
+    SL = "SL"
+    CANCEL = "CANCEL"
+
+class PositionExitStatus(str, Enum):
+    OPEN = "OPEN"
+    PENDING_EXIT = "PENDING_EXIT"
+    CLOSED = "CLOSED"
+    PARTIALLY_CLOSED = "PARTIALLY_CLOSED"
+
+@dataclass
+class LimitOrderRecord:
+    order_id: str
+    position_id: str
+    strategy_id: str
+    side: str
+    price: Decimal
+    qty: int
+    order_type: str
+    status: str
+    created_at_ns: int
+    reprice_count: int = 0
+    last_reprice_at_ns: int = 0
+
+@dataclass
+class PositionRecord:
+    position_id: str
+    strategy_id: str
+    symbol: str
+    side: str
+    qty: int
+    remaining_qty: int
+    entry_price: Decimal
+    option_type: str = "OPTIONS"
+    strike_price: Decimal = Decimal("0")
+    expiry: str = ""
+    status: str = "OPEN"
+    tag: str = ""
+    entry_time: datetime = datetime.now()
+

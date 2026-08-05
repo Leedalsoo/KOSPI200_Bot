@@ -91,6 +91,9 @@ class CalendarSimulator:
         # 시작 가상 일시 기록
         self.start_datetime_str = self.current_time.strftime("%Y-%m-%d %H:%M:%S")
         self.expiry_datetime_str = datetime.combine(self.current_expiry, datetime.min.time()).strftime("%Y-%m-%d 15:30:00")
+        self._market_scenario: Optional[str] = None
+        self.extreme_vol_dir: int = 1
+
 
     def is_korean_holiday(self, d: date) -> bool:
         """토요일, 일요일 및 한국 대표 법정공휴일 판정"""
@@ -302,6 +305,11 @@ simulated_days_to_expiry: float = float(calendar_sim.remaining_days)
 
 # 🛡️ [만기일 롤오버 1회 실행 보장 플래그] — Phase 1.1 BUG FIX
 already_rolled_this_month: bool = False
+enabled_strategies: Dict[str, bool] = {f"track{i}": True for i in range(1, 10)}
+hourly_start_equity: float = 25000000.0
+month_start_capital: float = 25000000.0
+last_tracked_hour: int = -1
+
 
 # 🛡️ [월물 전환(롤오버) 이벤트 로그]
 # 각 롤오버 발생 시 {'tick', 'seq', 'settlement_pnl', 'price', 'new_dte'} 딕셔너리를 누적한다.
@@ -1960,7 +1968,8 @@ async def simulation_loop() -> None:  # noqa: C901
                 if len(price_history_60) == 60:
                     ma_60 = np.mean(price_history_60)
                     spread = current_price - ma_60
-                    spread_history_120.append(spread)
+                    spread_history_120.append(float(spread))
+
                     
                     # 현재 전략 3 미실현 평가손익 연산
                     current_track3_pnl = 0.0
@@ -2800,10 +2809,11 @@ async def simulation_loop() -> None:  # noqa: C901
                 for pos in portfolio_options:
                     pos_strat = pos.get("activeStrategy", "Track1")
                     matched_key = "Track1"
-                    for k in strategy_mtm_tick.keys():
-                        if k.split(' ')[0] in pos_strat:
-                            matched_key = k
+                    for strat_k in strategy_mtm_tick.keys():
+                        if strat_k.split(' ')[0] in pos_strat:
+                            matched_key = strat_k
                             break
+
                     strategy_mtm_tick[matched_key] += per_option_pnl
 
             # (2) 선물 헷지 및 스캘핑 MTM 손익을 해당 주체 전략별로만 귀속
