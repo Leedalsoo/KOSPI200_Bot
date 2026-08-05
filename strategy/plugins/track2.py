@@ -9,9 +9,9 @@ from core.base_agent import BaseAgent
 from core.contracts import MarketTick, OrderRequest
 from infra.time_service import TimeService
 
-class Track2Trap(BaseAgent):
+class Track2(BaseAgent):
     """
-    [전략 2] 데일리 함정(Trap) 기습 공격 및 4중 휩쏘 검증 엔진 (Track 2 Asymmetric Trap)
+    [Track2] 데일리 함정(Trap) 기습 공격 및 4중 휩쏘 검증 엔진 (Track 2 Asymmetric Trap)
     - 자본 배분: 10% (비대칭 트랩 및 동적 헷지 모듈)
     """
 
@@ -27,7 +27,7 @@ class Track2Trap(BaseAgent):
         self._cooldown_duration: timedelta = timedelta(minutes=15)
 
     def build_asymmetric_trap(self, current_atm: float) -> Dict[str, Any]:
-        """[Track 2] 비대칭 양매수 및 프리미엄 수취 함정 구조 생성"""
+        """[Track2] 비대칭 양매수 및 프리미엄 수취 함정 구조 생성"""
         self.trap_state["is_active"] = True
         return {
             "status": "SUCCESS",
@@ -44,7 +44,7 @@ class Track2Trap(BaseAgent):
         }
 
     def evaluate_trap_status(self, current_price: float) -> Dict[str, Any]:
-        """[Track 2] 트랩 상태 실시간 평가 및 헷지 시그널 산출"""
+        """[Track2] 트랩 상태 실시간 평가 및 헷지 시그널 산출"""
         return {"status": "NORMAL", "signals": []}
 
     async def start(self) -> None:
@@ -185,5 +185,5 @@ class Track2Trap(BaseAgent):
 
 
 # 하위 호환성을 위한 전략 클래스 별칭
-AsymmetricTrapStrategy = Track2Trap
+Track2 = Track2
 

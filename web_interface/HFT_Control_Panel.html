@@ -685,20 +685,20 @@
       // 전략별 분류
       const getPositionsByStrategy = (stratName) => {
         return regularOptions.filter(pos => {
-          const strat = pos.activeStrategy || 'Track1 (Defense)';
+          const strat = pos.activeStrategy || 'Track1';
           return strat.includes(stratName);
         });
       };
 
       const strategies = [
-        { id: 'Track1', name: 'Track 1 (Defense)' },
-        { id: 'Track2', name: 'Track 2 (Trap)' },
-        { id: 'Track3', name: 'Track 3 (Arbitrage)' },
-        { id: 'Track4', name: 'Track 4 (Gamma)' },
-        { id: 'Track5', name: 'Track 5 (Gap)' },
-        { id: 'Track6', name: 'Track 6 (Daily Insurance)' },
-        { id: 'Track7', name: 'Track 7 (Weekly Insurance)' },
-        { id: 'Track8', name: 'Track 8 (Monthly Insurance)' }
+        { id: 'Track1', name: 'Track1' },
+        { id: 'Track2', name: 'Track2' },
+        { id: 'Track3', name: 'Track3' },
+        { id: 'Track4', name: 'Track4' },
+        { id: 'Track5', name: 'Track5' },
+        { id: 'Track6', name: 'Track6' },
+        { id: 'Track7', name: 'Track7' },
+        { id: 'Track8', name: 'Track8' }
       ];
 
       return (
@@ -909,20 +909,20 @@
     // ==============================================================================
     const StrategyToggleControlPanel = memo(({ enabledStrategies, onToggleStrategy, isConnected }) => {
       const defaultFlags = {
-        track1: true, track2: true, track3: true, track4: true,
-        track5: true, track6: true, track7: true, track8: true
+        Track1: true, Track2: true, Track3: true, Track4: true,
+        Track5: true, Track6: true, Track7: true, Track8: true
       };
       const flags = { ...defaultFlags, ...(enabledStrategies || {}) };
 
       const tracks = [
-        { id: 'track1', name: 'Track 1: Tail Defense', desc: '테일 방어 양매수' },
-        { id: 'track2', name: 'Track 2: Asymmetric Trap', desc: '비대칭 트랩 세팅' },
-        { id: 'track3', name: 'Track 3: Stat Arbitrage', desc: '선물/옵션 차익' },
-        { id: 'track4', name: 'Track 4: Gamma Scalping', desc: '동적 감마 스캘핑' },
-        { id: 'track5', name: 'Track 5: Gap Protocol', desc: '시가 갭 평균복귀' },
-        { id: 'track6', name: 'Track 6: Daily 0DTE', desc: '당일 옵션 헷지' },
-        { id: 'track7', name: 'Track 7: Weekly Insurance', desc: '주간 테일 보험' },
-        { id: 'track8', name: 'Track 8: Monthly Strangle', desc: '월간 넓은 양매수' },
+        { id: 'Track1', name: 'Track 1: Tail Defense', desc: '테일 방어 양매수' },
+        { id: 'Track2', name: 'Track 2: Asymmetric Trap', desc: '비대칭 트랩 세팅' },
+        { id: 'Track3', name: 'Track 3: Stat Arbitrage', desc: '선물/옵션 차익' },
+        { id: 'Track4', name: 'Track 4: Gamma Scalping', desc: '동적 감마 스캘핑' },
+        { id: 'Track5', name: 'Track 5: Gap Protocol', desc: '시가 갭 평균복귀' },
+        { id: 'Track6', name: 'Track 6: Daily 0DTE', desc: '당일 옵션 헷지' },
+        { id: 'Track7', name: 'Track 7: Weekly Insurance', desc: '주간 테일 보험' },
+        { id: 'Track8', name: 'Track 8: Monthly Strangle', desc: '월간 넓은 양매수' },
       ];
 
       return (
@@ -1122,14 +1122,14 @@
       const options = portfolioOptions || [];
 
       const tracks = [
-        { id: "Track1 (Defense)", key: "track1", name: "Track 1: Tail Defense", desc: "테일 방어 양매수", tag: "DEFENSE" },
-        { id: "Track2 (Trap)", key: "track2", name: "Track 2: Asymmetric Trap", desc: "비대칭 트랩 세팅", tag: "TRAP" },
-        { id: "Track3 (Arbitrage)", key: "track3", name: "Track 3: Stat Arbitrage", desc: "선물/옵션 차익", tag: "ARB" },
-        { id: "Track4 (Gamma)", key: "track4", name: "Track 4: Gamma Scalping", desc: "동적 감마 스캘핑", tag: "GAMMA" },
-        { id: "Track5 (Gap)", key: "track5", name: "Track 5: Gap Protocol", desc: "시가 갭 평균복귀", tag: "GAP" },
-        { id: "Track6 (Daily)", key: "track6", name: "Track 6: Daily 0DTE", desc: "당일 옵션 헷지", tag: "0DTE" },
-        { id: "Track7 (Weekly)", key: "track7", name: "Track 7: Weekly Insurance", desc: "주간 테일 보험", tag: "WEEKLY" },
-        { id: "Track8 (Monthly)", key: "track8", name: "Track 8: Monthly Strangle", desc: "월간 넓은 양매수", tag: "MONTHLY" },
+        { id: "Track1", key: "Track1", name: "Track 1: Tail Defense", desc: "테일 방어 양매수", tag: "DEFENSE" },
+        { id: "Track2", key: "Track2", name: "Track 2: Asymmetric Trap", desc: "비대칭 트랩 세팅", tag: "TRAP" },
+        { id: "Track3", key: "Track3", name: "Track 3: Stat Arbitrage", desc: "선물/옵션 차익", tag: "ARB" },
+        { id: "Track4", key: "Track4", name: "Track 4: Gamma Scalping", desc: "동적 감마 스캘핑", tag: "GAMMA" },
+        { id: "Track5", key: "Track5", name: "Track 5: Gap Protocol", desc: "시가 갭 평균복귀", tag: "GAP" },
+        { id: "Track6", key: "Track6", name: "Track 6: Daily 0DTE", desc: "당일 옵션 헷지", tag: "0DTE" },
+        { id: "Track7", key: "Track7", name: "Track 7: Weekly Insurance", desc: "주간 테일 보험", tag: "WEEKLY" },
+        { id: "Track8", key: "Track8", name: "Track 8: Monthly Strangle", desc: "월간 넓은 양매수", tag: "MONTHLY" },
       ];
 
       return (
@@ -1166,7 +1166,7 @@
             gap: '14px'
           }}>
             {tracks.map((t, idx) => {
-              // 전략 키 정규화 (Track 1 (Defense), Track1 (Defense), track1 -> track1 로 통일)
+              // 전략 키 정규화 (Track1, Track1 (Defense), track1 -> track1 로 통일)
               const trackKey = t.key;
               
               // PnL 딕셔너리 정규화 조회 (소문자/대문자/공백 유무 모두 대응)
@@ -1190,8 +1190,8 @@
                   if (normalizedActive.includes(normalizedTarget)) return true;
                 }
                 
-                // 2. Track 1(Tail Defense) 구출 백업: activeStrategy 키가 전혀 없는 미아 포지션 구출!
-                if (trackKey === 'track1') {
+                // 2. Track1 구출 백업: activeStrategy 키가 전혀 없는 미아 포지션 구출!
+                if (trackKey === 'Track1') {
                   const isOther = pos.activeStrategy && 
                     (pos.activeStrategy.includes('Track2') || pos.activeStrategy.includes('Track3') || 
                      pos.activeStrategy.includes('Track4') || pos.activeStrategy.includes('Track5') || 
@@ -1338,14 +1338,14 @@
       const pnlData = strategyPnL || {};
 
       const strategies = [
-        { id: "Track1 (Defense)", name: "T1 (Defense)" },
-        { id: "Track2 (Trap)", name: "T2 (Trap)" },
-        { id: "Track3 (Arbitrage)", name: "T3 (Arbitrage)" },
-        { id: "Track4 (Gamma)", name: "T4 (Gamma)" },
-        { id: "Track5 (Gap)", name: "T5 (Gap)" },
-        { id: "Track6 (Daily)", name: "T6 (Daily)" },
-        { id: "Track7 (Weekly)", name: "T7 (Weekly)" },
-        { id: "Track8 (Monthly)", name: "T8 (Monthly)" },
+        { id: "Track1", name: "Track1" },
+        { id: "Track2", name: "Track2" },
+        { id: "Track3", name: "Track3" },
+        { id: "Track4", name: "Track4" },
+        { id: "Track5", name: "Track5" },
+        { id: "Track6", name: "Track6" },
+        { id: "Track7", name: "Track7" },
+        { id: "Track8", name: "Track8" },
       ];
 
       const chartData = strategies.map(s => {
@@ -2005,7 +2005,7 @@
       const [usedMargin, setUsedMargin] = useState(0);
       const [marginRatio, setMarginRatio] = useState(0);
       const [riskLevel, setRiskLevel] = useState('NORMAL');
-      const [activeStrategy, setActiveStrategy] = useState('Track1 (Defense)');
+      const [activeStrategy, setActiveStrategy] = useState('Track1');
       const [tuningFactor, setTuningFactor] = useState(1.0);
       const [daysToExpiry, setDaysToExpiry] = useState(7.0);
       const [autobotActive, setAutobotActive] = useState(false);
@@ -2045,22 +2045,22 @@
       });
 
       const [strategyWeights, setStrategyWeights] = useState({
-        "Track1 (Defense)": 30.0,
-        "Track2 (Trap)": 10.0,
-        "Track3 (Arbitrage)": 5.0,
-        "Track4 (Gamma)": 5.0,
-        "Track5 (Gap)": 0.0,
-        "Track6 (Daily)": 0.0,
-        "Track7 (Weekly)": 0.0,
-        "Track8 (Monthly)": 5.0
+        "Track1": 30.0,
+        "Track2": 10.0,
+        "Track3": 5.0,
+        "Track4": 5.0,
+        "Track5": 0.0,
+        "Track6": 0.0,
+        "Track7": 0.0,
+        "Track8": 5.0
       });
 
       const [hourlyReturn, setHourlyReturn] = useState(0.0);
       const [monthlyReturn, setMonthlyReturn] = useState(0.0);
 
       const [enabledStrategies, setEnabledStrategies] = useState({
-        track1: true, track2: true, track3: true, track4: true,
-        track5: true, track6: true, track7: true, track8: true
+        Track1: true, Track2: true, Track3: true, Track4: true,
+        Track5: true, Track6: true, Track7: true, Track8: true
       });
 
       const currentSessionIdRef = useRef(null);

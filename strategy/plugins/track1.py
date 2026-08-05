@@ -1,11 +1,12 @@
+from decimal import Decimal
 import logging
 from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
-class DetailedProductionFenceEngine:
+class Track1:
     """
-    [전략 1] 꼬리표 순환형 다이내믹 가두리 및 미아 포지션 선물 헷지 루프 (Track 1 Tail Defense)
+    [Track1] 꼬리표 순환형 다이내믹 가두리 및 미아 포지션 선물 헷지 루프 (Track 1 Tail Defense)
     - 자본 배분: 30% (공방 일체형 핵심 테일 방어선)
     """
     def __init__(self, config: Dict[str, Any]):
@@ -28,6 +29,69 @@ class DetailedProductionFenceEngine:
         
         self.is_market_opened = False
         self.last_trading_date = None
+
+    def _calculate_kelly_fraction(self, win_rate: Decimal, win_loss_ratio: Decimal) -> Decimal:
+        if win_loss_ratio == 0:
+            return Decimal('0')
+        f = win_rate - (Decimal('1') - win_rate) / win_loss_ratio
+        return f / Decimal('8')
+
+    def _check_global_mdd_shutdown(self, peak: Decimal, current: Decimal) -> bool:
+        if peak <= 0:
+            return False
+        mdd = (peak - current) / peak
+        return mdd >= Decimal('0.2')
+
+    async def _execute_liquidity_discovery(self, risk_manager: Any, targets: Dict[str, Any]) -> List[Any]:
+        from uuid import uuid4
+        import time
+        from core.contracts import OrderRequest
+        wing_code = targets.get("wing", "OPT_WING")
+        body_code = targets.get("body", "OPT_BODY")
+        now_ns = time.time_ns()
+        
+        wing_order = OrderRequest(
+            decision_id=uuid4(),
+            client_order_id=uuid4(),
+            instrument_code=wing_code,
+            price=Decimal("1.0"),
+            qty=1,
+            side="BUY",
+            timestamp_ns=now_ns
+        )
+        body_order = OrderRequest(
+            decision_id=uuid4(),
+            client_order_id=uuid4(),
+            instrument_code=body_code,
+            price=Decimal("1.0"),
+            qty=1,
+            side="SELL",
+            timestamp_ns=now_ns
+        )
+        return [wing_order, body_order]
+
+    def _trigger_kill_switch(self, greeks: Dict[str, Decimal]) -> List[Any]:
+        from uuid import uuid4
+        import time
+        from core.contracts import OrderRequest
+        now_ns = time.time_ns()
+        return [
+            OrderRequest(
+                decision_id=uuid4(),
+                client_order_id=uuid4(),
+                instrument_code="OPT_COVER",
+                price=Decimal("1.0"),
+                qty=1,
+                side="BUY",
+                timestamp_ns=now_ns
+            )
+        ]
+
+    def _calculate_futures_hedge_qty(self, delta: Decimal) -> int:
+        deadband = Decimal('0.5')
+        if abs(delta) <= deadband:
+            return 0
+        return -round(float(delta))
 
     def evaluate_strategy(self, current_underlying: float, current_atm: float, market_data: Dict[str, Any]) -> Dict[str, Any]:
         """서버 연동 브릿지 함수"""

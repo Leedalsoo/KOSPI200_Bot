@@ -2,14 +2,14 @@ from typing import Dict, Any, List
 import logging
 
 # 전략 플러그인 임포트 (mock_ws_server.py 에서 복사)
-from strategy.plugins.track1_defense import DetailedProductionFenceEngine
-from strategy.plugins.track2_trap import AsymmetricTrapStrategy
-from strategy.plugins.track3_arbitrage import StatisticalArbitrageStrategy
-from strategy.plugins.track4_gamma import SmartGammaScalpingStrategy
-from strategy.plugins.track5_gap import GapProtocolStrategy
-from strategy.plugins.track6_daily_insurance import DailyTailInsuranceBot
-from strategy.plugins.track7_weekly_insurance import WeeklyTailInsuranceBot
-from strategy.plugins.track8_monthly_strangle import MonthlyWideStrangleStrategy
+from strategy.plugins.track1 import Track1
+from strategy.plugins.track2 import Track2
+from strategy.plugins.track3 import Track3
+from strategy.plugins.track4 import Track4
+from strategy.plugins.track5 import Track5
+from strategy.plugins.track6 import Track6
+from strategy.plugins.track7 import Track7
+from strategy.plugins.track8 import Track8
 
 from .state import SessionContext
 
@@ -17,19 +17,19 @@ logger = logging.getLogger(__name__)
 
 class StrategyOrchestrator:
     """
-    모든 Track 1~8 전략 플러그인을 로드하고 관리하며, 
+    모든 Track1~Track8 전략 플러그인을 로드하고 관리하며, 
     매 틱마다 시그널을 수집하여 주문 목록을 반환하는 계층
     """
     def __init__(self):
         self.strategies = {
-            "track1": DetailedProductionFenceEngine(config={}),
-            "track2": AsymmetricTrapStrategy(config={}),
-            "track3": StatisticalArbitrageStrategy(config={}),
-            "track4": SmartGammaScalpingStrategy(config={}),
-            "track5": GapProtocolStrategy(config={}),
-            "track6": DailyTailInsuranceBot(config={}),
-            "track7": WeeklyTailInsuranceBot(config={}),
-            "track8": MonthlyWideStrangleStrategy(config={})
+            "Track1": Track1(config={}),
+            "Track2": Track2(config={}),
+            "Track3": Track3(config={}),
+            "Track4": Track4(config={}),
+            "Track5": Track5(config={}),
+            "Track6": Track6(config={}),
+            "Track7": Track7(config={}),
+            "Track8": Track8(config={})
         }
         logger.info(f"StrategyOrchestrator initialized. Loaded {len(self.strategies)} track plugins.")
 
@@ -40,7 +40,7 @@ class StrategyOrchestrator:
         # -----------------------------------------------------------
         # [이식] Track 1: 100% 방어막 유지 (양매도)
         # -----------------------------------------------------------
-        track1 = self.strategies.get("track1")
+        track1 = self.strategies.get("Track1")
         if track1:
             eval_result = track1.evaluate_strategy(
                 current_price=ctx.current_price,
@@ -52,13 +52,13 @@ class StrategyOrchestrator:
             )
             if eval_result.get("action") == "ENTRY":
                 orders.append({
-                    "track": "Track 1 (Defense)", "type": "CALL", "side": "SELL",
+                    "track": "Track1", "type": "CALL", "side": "SELL",
                     "qty": eval_result.get("qty", 1),
                     "strike": eval_result.get("call_strike", ctx.current_price + 2.5),
                     "price": 2.50, "tag_id": "T1_ENTRY_C"
                 })
                 orders.append({
-                    "track": "Track 1 (Defense)", "type": "PUT", "side": "SELL",
+                    "track": "Track1", "type": "PUT", "side": "SELL",
                     "qty": eval_result.get("qty", 1),
                     "strike": eval_result.get("put_strike", ctx.current_price - 2.5),
                     "price": 2.50, "tag_id": "T1_ENTRY_P"
@@ -66,14 +66,14 @@ class StrategyOrchestrator:
             elif eval_result.get("action") == "HEDGE":
                 side = eval_result.get("side", "BUY")
                 orders.append({
-                    "track": "Track 1 (Defense)", "type": "FUTURES", "side": side,
+                    "track": "Track1", "type": "FUTURES", "side": side,
                     "qty": 1, "tag_id": f"T1_HEDGE_{side}"
                 })
 
         # -----------------------------------------------------------
         # [예시] Track 5: 시가 갭 회귀 전략 (Gap Protocol) 이식부
         # -----------------------------------------------------------
-        track5 = self.strategies.get("track5")
+        track5 = self.strategies.get("Track5")
         if track5:
             # 1) 진입 로직: 아침 개장 직후 갭 발생 평가
             gap_res = track5.evaluate_gap_divergence(
@@ -90,7 +90,7 @@ class StrategyOrchestrator:
                 qty = max(1, qty)
                 
                 orders.append({
-                    "track": "Track 5 (Gap Reversion)",
+                    "track": "Track5",
                     "type": "FUTURES",
                     "side": side,
                     "qty": qty,
@@ -107,7 +107,7 @@ class StrategyOrchestrator:
                     # 청산 주문 생성
                     close_side = "BUY" if track5.gap_state["direction"] == "SHORT" else "SELL"
                     orders.append({
-                        "track": "Track 5 (Gap Reversion)",
+                        "track": "Track5",
                         "type": "FUTURES",
                         "side": close_side,
                         "qty": track5.gap_state.get("entry_qty", 1),
@@ -119,7 +119,7 @@ class StrategyOrchestrator:
         # -----------------------------------------------------------
         # [이식] Track 1: 100% 방어막 유지 (양매도)
         # -----------------------------------------------------------
-        track1 = self.strategies.get("track1")
+        track1 = self.strategies.get("Track1")
         if track1:
             eval_result = track1.evaluate_strategy(
                 current_price=ctx.current_price,
@@ -131,7 +131,7 @@ class StrategyOrchestrator:
             if eval_result.get("action") == "ENTRY":
                 # 진입 주문 생성
                 orders.append({
-                    "track": "Track 1 (Defense)",
+                    "track": "Track1",
                     "type": "CALL",
                     "side": "SELL",
                     "qty": eval_result.get("qty", 1),
@@ -140,7 +140,7 @@ class StrategyOrchestrator:
                     "tag_id": "T1_ENTRY_C"
                 })
                 orders.append({
-                    "track": "Track 1 (Defense)",
+                    "track": "Track1",
                     "type": "PUT",
                     "side": "SELL",
                     "qty": eval_result.get("qty", 1),
@@ -152,7 +152,7 @@ class StrategyOrchestrator:
                 # 헷지 선물 주문
                 side = eval_result.get("side", "BUY")
                 orders.append({
-                    "track": "Track 1 (Defense)",
+                    "track": "Track1",
                     "type": "FUTURES",
                     "side": side,
                     "qty": 1,
@@ -162,7 +162,7 @@ class StrategyOrchestrator:
         # -----------------------------------------------------------
         # [이식] Track 6: 0DTE 당일 옵션 보험
         # -----------------------------------------------------------
-        track6 = self.strategies.get("track6")
+        track6 = self.strategies.get("Track6")
         if track6 and not track6.insurance_state.get("is_active"):
             # TODO: 실제로는 특정 시간(14:00 이후 등)에 평가
             t6_res = track6.evaluate_insurance_buy(
@@ -174,7 +174,7 @@ class StrategyOrchestrator:
                 qty = t6_res.get("qty", 1)
                 for side_opt in ["CALL", "PUT"]:
                     orders.append({
-                        "track": "Track 6 (0DTE Insurance)",
+                        "track": "Track6",
                         "type": side_opt,
                         "side": "BUY",
                         "qty": qty,
@@ -186,7 +186,7 @@ class StrategyOrchestrator:
         # -----------------------------------------------------------
         # [이식] Track 8: 월물 초입 DTE 15일 이상 자본 2% 예산 양매수
         # -----------------------------------------------------------
-        track8 = self.strategies.get("track8")
+        track8 = self.strategies.get("Track8")
         if track8 and not track8.strangle_state.get("is_active"):
             t8_res = track8.evaluate_strangle_entry(
                 current_price=ctx.current_price,
@@ -195,7 +195,7 @@ class StrategyOrchestrator:
             if t8_res.get("trigger"):
                 for side_opt in ["CALL", "PUT"]:
                     orders.append({
-                        "track": "Track 8 (Monthly Strangle)",
+                        "track": "Track8",
                         "type": side_opt,
                         "side": "BUY",
                         "qty": t8_res.get("qty", 1),
@@ -206,7 +206,7 @@ class StrategyOrchestrator:
         # -----------------------------------------------------------
         # [이식] Track 2: 비대칭 휩소 트랩 방어
         # -----------------------------------------------------------
-        track2 = self.strategies.get("track2")
+        track2 = self.strategies.get("Track2")
         if track2:
             t2_res = track2.evaluate_hedge(
                 current_price=ctx.current_price,
@@ -215,7 +215,7 @@ class StrategyOrchestrator:
             if t2_res.get("trigger"):
                 side = t2_res.get("side", "SELL")
                 orders.append({
-                    "track": "Track 2 (Whipsaw Trap)",
+                    "track": "Track2",
                     "type": "FUTURES",
                     "side": side,
                     "qty": t2_res.get("qty", 1),
@@ -226,7 +226,7 @@ class StrategyOrchestrator:
         # -----------------------------------------------------------
         # [이식] Track 3: 통계적 차익거래 (보류/대기)
         # -----------------------------------------------------------
-        track3 = self.strategies.get("track3")
+        track3 = self.strategies.get("Track3")
         if track3 and track3.arb_state.get("is_active"):
             t3_res = track3.evaluate_arbitrage(
                 current_price=ctx.current_price,
@@ -235,7 +235,7 @@ class StrategyOrchestrator:
             )
             if t3_res.get("trigger"):
                 orders.append({
-                    "track": "Track 3 (Arbitrage)",
+                    "track": "Track3",
                     "type": "FUTURES",
                     "side": t3_res.get("side", "BUY"),
                     "qty": t3_res.get("qty", 1),
@@ -245,7 +245,7 @@ class StrategyOrchestrator:
         # -----------------------------------------------------------
         # [이식] Track 4: 감마 스캘핑
         # -----------------------------------------------------------
-        track4 = self.strategies.get("track4")
+        track4 = self.strategies.get("Track4")
         if track4:
             t4_res = track4.evaluate_gamma_scalping(
                 current_price=ctx.current_price,
@@ -254,7 +254,7 @@ class StrategyOrchestrator:
             )
             if t4_res.get("trigger"):
                 orders.append({
-                    "track": "Track 4 (Gamma Scalping)",
+                    "track": "Track4",
                     "type": "FUTURES",
                     "side": t4_res.get("side", "BUY"),
                     "qty": t4_res.get("qty", 1),
@@ -264,7 +264,7 @@ class StrategyOrchestrator:
         # -----------------------------------------------------------
         # [이식] Track 7: 위클리 옵션 테일 리스크 방어
         # -----------------------------------------------------------
-        track7 = self.strategies.get("track7")
+        track7 = self.strategies.get("Track7")
         if track7 and not track7.insurance_state.get("is_active"):
             t7_res = track7.evaluate_insurance_buy(
                 current_price=ctx.current_price,
@@ -274,7 +274,7 @@ class StrategyOrchestrator:
             if t7_res.get("trigger"):
                 for side_opt in ["CALL", "PUT"]:
                     orders.append({
-                        "track": "Track 7 (Weekly Tail)",
+                        "track": "Track7",
                         "type": side_opt,
                         "side": "BUY",
                         "qty": t7_res.get("qty", 1),

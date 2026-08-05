@@ -3,9 +3,9 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
-class WeeklyTailInsuranceBot:
+class Track7:
     """
-    [전략 7] 위클리 테일 보험 봇 (Track 7 Weekly Insurance)
+    [Track7] 위클리 테일 보험 봇 (Track 7 Weekly Insurance)
     - 자본 배분: 매주 상장 후 조건 만족 시 +0.5% 동적 부여
     - 역할:
       1. 매주 위클리 옵션 개장 첫날(새로운 주차 시작 시) 상하방이 넓은 극외가 양매수를 구축.
@@ -20,7 +20,7 @@ class WeeklyTailInsuranceBot:
         self.insurance_qty = self.params.get("insurance_qty", 1)
         
         self.reset_state()
-        logger.info("Weekly Tail Insurance Bot (Strategy 7) Initialized.")
+        logger.info("Weekly Tail Insurance Bot (Track7) Initialized.")
 
     def reset_state(self) -> None:
         self.insurance_state: Dict[str, Any] = {

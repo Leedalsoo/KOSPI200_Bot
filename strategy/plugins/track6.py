@@ -3,9 +3,9 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
-class DailyTailInsuranceBot:
+class Track6:
     """
-    [전략 6] 데일리 테일 보험 봇 (Track 6 Daily 0DTE)
+    [Track6] 데일리 테일 보험 봇 (Track 6 Daily 0DTE)
     - 자본 배분: 매일 변동성 조건 만족 시 +0.1% 동적 부여
     - 역할:
       1. 내재변동성(active_vol)이 기준치 대비 1.3배 이상 폭발할 때 극외가격 양매수(0DTE 롱 스트랭글)를 매입.
@@ -22,7 +22,7 @@ class DailyTailInsuranceBot:
         self.insurance_qty = self.params.get("insurance_qty", 1)
         
         self.reset_state()
-        logger.info("Daily Tail Insurance Bot (Strategy 6) Initialized.")
+        logger.info("Daily Tail Insurance Bot (Track6) Initialized.")
 
     def reset_state(self) -> None:
         self.insurance_state: Dict[str, Any] = {

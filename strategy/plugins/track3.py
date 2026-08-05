@@ -1,12 +1,13 @@
+from decimal import Decimal
 import logging
 import numpy as np
 from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
-class StatisticalArbitrageStrategy:
+class Track3:
     """
-    [전략 3] 통계적 차익거래 모듈 (Statistical Arbitrage / Pairs Trading)
+    [Track3] 통계적 차익거래 모듈 (Statistical Arbitrage / Pairs Trading)
     - 자본 배분: 5% (통계적 무위험 현금 알파 수취 모듈)
     - 역할: 
       1. 현선물 스프레드의 롤링 Z-Score 실시간 계산.
@@ -21,7 +22,66 @@ class StatisticalArbitrageStrategy:
         # 내부 상태 관리
         self.active_position: Optional[str] = None  # "SHORT_SPREAD" 또는 "LONG_SPREAD" 또는 None
         self.cooldown_ticks = 0
-        logger.info("Statistical Arbitrage Strategy (Strategy 3) Initialized with 5% Capital Allocation.")
+        from typing import Dict
+        from uuid import UUID
+        self.pending_legs: Dict[UUID, Dict[str, Any]] = {}
+        logger.info("Statistical Arbitrage Strategy (Track3) Initialized with 5% Capital Allocation.")
+
+    def _calculate_butterfly_legs(self, atm_strike: Decimal, tick_size: Decimal) -> List[Dict[str, Any]]:
+        return [
+            {'strike': atm_strike - tick_size, 'qty': 1, 'side': 'BUY'},
+            {'strike': atm_strike, 'qty': 2, 'side': 'SELL'},
+            {'strike': atm_strike + tick_size, 'qty': 1, 'side': 'BUY'}
+        ]
+
+    def _validate_calendar_spread_iv(self, near_iv: np.ndarray, far_iv: np.ndarray) -> bool:
+        if len(near_iv) < 2 or len(far_iv) < 2 or len(near_iv) != len(far_iv):
+            return False
+        spreads = near_iv - far_iv
+        mean_spread = float(np.mean(spreads[:-1]))
+        current_spread = float(spreads[-1])
+        divergence = abs(current_spread - mean_spread)
+        return divergence > 0.05
+
+    async def _execute_asymmetric_legging(self, otm_spec: Dict[str, Any], atm_spec: Dict[str, Any]) -> Any:
+        from decimal import Decimal
+        from uuid import uuid4
+        import time
+        from core.contracts import OrderRequest
+        now_ns = time.time_ns()
+        client_id = uuid4()
+        otm_order = OrderRequest(
+            decision_id=uuid4(),
+            client_order_id=client_id,
+            instrument_code=otm_spec.get("code", "OTM"),
+            price=otm_spec.get("price", Decimal("1.0")),
+            qty=otm_spec.get("qty", 1),
+            side=otm_spec.get("side", "BUY"),
+            timestamp_ns=now_ns
+        )
+        self.pending_legs[client_id] = atm_spec
+        return otm_order
+
+    async def on_leg_filled(self, report: Any) -> Any:
+        if report.client_order_id not in self.pending_legs:
+            return None
+        
+        atm_spec = self.pending_legs.pop(report.client_order_id)
+        from decimal import Decimal
+        from uuid import uuid4
+        import time
+        from core.contracts import OrderRequest
+        now_ns = time.time_ns()
+        atm_order = OrderRequest(
+            decision_id=uuid4(),
+            client_order_id=uuid4(),
+            instrument_code=atm_spec.get("code", "ATM"),
+            price=atm_spec.get("price", Decimal("1.0")),
+            qty=atm_spec.get("qty", 1),
+            side=atm_spec.get("side", "SELL"),
+            timestamp_ns=now_ns
+        )
+        return atm_order
 
     def calculate_z_score(self, spread_series: List[float]) -> float:
         """

@@ -6,11 +6,11 @@ import numpy as np
 from uuid import uuid4
 
 from core.contracts import ExecutionReport, OrderStatus
-from strategy.plugins.track3_arbitrage import StatisticalArbitrageStrategy
+from strategy.plugins.track3 import Track3
 
 def test_butterfly_legs_closed_wing_ratio() -> None:
     """[목표 A 검증] Butterfly 1:2:1 계약 비율 및 행사가 수학적 등간격 증명"""
-    agent = StatisticalArbitrageStrategy({})
+    agent = Track3({})
     legs = agent._calculate_butterfly_legs(atm_strike=Decimal('350.0'), tick_size=Decimal('2.5'))
     
     assert len(legs) == 3
@@ -29,7 +29,7 @@ def test_butterfly_legs_closed_wing_ratio() -> None:
 
 def test_calendar_iv_spread_numpy_validation() -> None:
     """[목표 B 검증] Numpy 기반 IV 스프레드 괴리 연산 무결성 증명 (양성/음성 및 에지 예외 완벽 입증)"""
-    agent = StatisticalArbitrageStrategy({})
+    agent = Track3({})
     
     # 1. 양성 테스트: 최근 스프레드가 폭발적으로 벌어짐 (스프레드: -0.03 -> 0.05, 괴리: 0.0775 > 0.05 ➡️ True)
     near_iv_pos = np.array([0.15, 0.16, 0.15, 0.15, 0.25])
@@ -48,7 +48,7 @@ def test_calendar_iv_spread_numpy_validation() -> None:
 @pytest.mark.asyncio
 async def test_asymmetric_legging_sequence() -> None:
     """[목표 C 검증] OTM 체결 전까지 ATM 발주 금지 및 체결 후 ATM 즉각 발주 증명"""
-    agent = StatisticalArbitrageStrategy({})
+    agent = Track3({})
     otm_spec = {"code": "OTM1", "price": Decimal('1.0'), "qty": 1, "side": "BUY"}
     atm_spec = {"code": "ATM1", "price": Decimal('3.0'), "qty": 1, "side": "SELL"}
     

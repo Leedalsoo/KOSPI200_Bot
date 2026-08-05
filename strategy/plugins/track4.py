@@ -8,9 +8,9 @@ from uuid import uuid4
 from core.base_agent import BaseAgent
 from core.contracts import MarketTick, OrderRequest
 
-class Track4Gamma(BaseAgent):
+class Track4(BaseAgent):
     """
-    [전략 4] 감마 스캘핑 엔진 (Track 4 Gamma Scalping)
+    [Track4] 감마 스캘핑 엔진 (Track 4 Gamma Scalping)
     - 자본 배분: 10% (동적 감마 스캘핑 및 ATM 베이스캠프 구축)
     """
 
@@ -27,7 +27,7 @@ class Track4Gamma(BaseAgent):
         self._close_history: deque[Decimal] = deque(maxlen=20)
 
     def evaluate_scalping_rebalance(self, market_data: Dict[str, Any], days_to_expiry: float) -> Dict[str, Any]:
-        """[Track 4] 감마 스캘핑 델타 리밸런싱 평가"""
+        """[Track4] 감마 스캘핑 델타 리밸런싱 평가"""
         return {"status": "NORMAL", "signals": []}
 
     async def start(self) -> None:
@@ -148,5 +148,5 @@ class Track4Gamma(BaseAgent):
 
 
 # 하위 호환성을 위한 전략 클래스 별칭
-SmartGammaScalpingStrategy = Track4Gamma
+Track4 = Track4
 

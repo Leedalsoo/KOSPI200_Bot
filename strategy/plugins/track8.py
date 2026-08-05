@@ -3,9 +3,9 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-class MonthlyWideStrangleStrategy:
+class Track8:
     """
-    [전략 8] 월간 넓은 양매수 전략 (Monthly Wide Strangle)
+    [Track8] 월간 넓은 양매수 전략 (Monthly Wide Strangle)
     - 자본 배분: 5% (월물 초입 롱 감마 및 거대 추세 사냥 모듈)
     - 역할:
       1. 월물 옵션 만기 초입(DTE >= 20.0)에 외가격 양매수 포지션을 구축하여 거대 추세와 롱 감마 수익 사냥.

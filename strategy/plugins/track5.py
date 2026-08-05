@@ -4,9 +4,9 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
-class GapProtocolStrategy:
+class Track5:
     """
-    [전략 5] Gap Protocol: 시가 괴리 회귀 저격 로직 (Track 5 Gap Protocol)
+    [Track5] Gap Protocol: 시가 괴리 회귀 저격 로직 (Track 5 Gap Protocol)
     - 자본 배분: 매일 시가 갭 조건 만족 시 +0.1% 동적 부여
     - 역할:
       1. 장 시작 직후(09:00:00) 시초가가 전일 종가 대비 과도하게 괴리(Gap)되어 시작할 때 발동.
@@ -26,7 +26,7 @@ class GapProtocolStrategy:
         self.stop_loss_pts = self.params.get("stop_loss_pts", 1.5)
         
         self.reset_state()
-        logger.info("Gap Protocol Strategy (Strategy 5) Initialized.")
+        logger.info("Gap Protocol Strategy (Track5) Initialized.")
 
     def reset_state(self) -> None:
         self.gap_state: Dict[str, Any] = {

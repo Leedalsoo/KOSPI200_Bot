@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 from decimal import Decimal
-from strategy.plugins.track4_gamma import SmartGammaScalpingStrategy
+from strategy.plugins.track4 import Track4
 
 def test_feature_flag_seal() -> None:
     """[목표 A 검증] 설정 자산 대비 봉인(Seal) 및 활성화 경계값 대칭성 증명"""
-    agent = SmartGammaScalpingStrategy({}, equity_threshold=Decimal("10000000000")) # 100억
+    agent = Track4({}, equity_threshold=Decimal("10000000000")) # 100억
     
     # 1. 미달 자산 (50억 ➡️ False)
     assert agent._check_feature_flag(Decimal("5000000000")) is False
@@ -18,7 +18,7 @@ def test_feature_flag_seal() -> None:
 
 def test_dynamic_deadband_range() -> None:
     """[목표 B 검증] 0.2 ~ 0.6 밴드 수축/확장 정합성 및 극단적/극초기 경계값 검증"""
-    agent = SmartGammaScalpingStrategy({}, Decimal("0"))
+    agent = Track4({}, Decimal("0"))
     
     # 1. 일반적 변동성 범위 검증
     high_vals = np.array([100.0, 105.0])
@@ -50,7 +50,7 @@ def test_dynamic_deadband_range() -> None:
 
 def test_gamma_profit_offset() -> None:
     """[목표 C 검증] 세타 비용 대비 감마 수익 상쇄 및 동률 임계점 분기 증명"""
-    agent = SmartGammaScalpingStrategy({}, Decimal("0"))
+    agent = Track4({}, Decimal("0"))
     
     # 1. 수익 > 비용 (True)
     assert agent._verify_theta_decay_offset(Decimal("1000"), Decimal("500")) is True

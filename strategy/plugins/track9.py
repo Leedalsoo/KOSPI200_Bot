@@ -3,11 +3,11 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-class OvernightInsuranceBot:
+class Track9:
     """
-    [전략 9] 오버나잇 전용 보험 봇 (Track 9 Overnight Insurance)
+    [Track9] 오버나잇 전용 보험 봇 (Track 9 Overnight Insurance)
     - 역할:
-      1. 매 영업일 오후 3시 15분, Track 1 (Defense)의 활성 가두리 매도 수량 파악.
+      1. 매 영업일 오후 3시 15분, Track1의 활성 가두리 매도 수량 파악.
       2. 활성 매도 물량의 50%에 해당하는 타겟 수량만큼 오버나잇용 극외가(OTM) 콜/풋 옵션 양매수(Long Strangle).
       3. 포지션 보유 시 다음날 발생할 수 있는 갭 상승/하락 등 오버나잇 시장 충격 리스크 헷지.
       4. Track 1의 매도 수량에 전적으로 연동되어(Symbiotic) 잉여 수량이 발생하면 부분 축소함.

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 [Trade Replay & Decision Analyzer (매매 리플레이 및 의사결정 분석기)]
-- 모든 전략(Track 1~8) 거래 발생 시 진입/청산 사유, 센서 스냅샷, 대시보드 상태 캡처
+- 모든 전략(Track1~Track8) 거래 발생 시 진입/청산 사유, 센서 스냅샷, 대시보드 상태 캡처
 - 월별(Month) -> 일자별(Date) -> 거래 분석 리스트 계층형 아카이빙 트리 구축
 - "이 거래가 규칙대로 실행되었는지" 100% 자동 규정 준수 판정 (Rule Compliance)
 - "더 좋은 진입·청산 타이밍이 있었는지" AI 타이밍 반가상(Counterfactual) 사후 분석 제공
@@ -32,7 +32,7 @@ class TradeReplayAnalyzer:
     def capture_trade_event(
         self,
         trade_type: str,            # "ENTRY" 또는 "EXIT"
-        track_name: str,            # 예: "Track 5 (Gap)", "Track 3 (Arb)"
+        track_name: str,            # 예: "Track5", "Track3"
         side: str,                  # "BUY" 또는 "SELL"
         asset_type: str,            # "FUTURES" 또는 "OPTIONS"
         price: float,
