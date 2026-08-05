@@ -1534,6 +1534,75 @@ async def simulation_loop() -> None:  # noqa: C901
             else:
                 order_qty = max(1, min(MAX_ORDER_QTY_CAP, int(base_sizing_qty * random.uniform(0.6, 1.2))))
 
+            # ── 8-0. [TRACK 1] 실시간 꼬리표 순환, 테일 방어, 선물 헷지 평가 및 포지션 장부 연동 ──
+            if autobot_active and enabled_strategies.get("Track1", True) and track1 is not None:
+                t1_eval = track1.evaluate_strategy(current_price, round(current_price / 2.5) * 2.5, {"date_str": date_str, "days_to_expiry": simulated_days_to_expiry})
+                for sig in t1_eval.get("signals", []):
+                    act = sig.get("action")
+                    if act == "FENCE_BUILD":
+                        portfolio_options.append({
+                            "type": sig.get("type"), "side": "SELL", "strike": sig.get("strike"),
+                            "price": 2.00, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1", "tag_id": sig.get("tag_id")
+                        })
+                    elif act == "FENCE_CLEAR":
+                        tag_to_clear = sig.get("tag_id")
+                        portfolio_options = [p for p in portfolio_options if not (p.get("activeStrategy") == "Track1" and p.get("tag_id") == tag_to_clear)]
+                    elif act == "FUTURES_ORDER":
+                        hedge_side = sig.get("type")
+                        current_position_qty += (1 if hedge_side == "BUY" else -1)
+                        event_logs.append({
+                            "seq": seq, "date": date_str, "time": time_str,
+                            "event": f"Track1 선물 헷지 {hedge_side} 진입",
+                            "details": f"진입가: {current_price:.2f}"
+                        })
+                    elif act == "FUTURES_UNWIND":
+                        unwind_side = sig.get("type")
+                        current_position_qty += (1 if unwind_side == "BUY" else -1)
+                        event_logs.append({
+                            "seq": seq, "date": date_str, "time": time_str,
+                            "event": f"Track1 선물 헷지 언와인드 {unwind_side}",
+                            "details": f"청산가: {current_price:.2f}"
+                        })
+
+            # ── 8-4. [TRACK 4] 감마 스캘핑 델타 리밸런싱 평가 및 연동 ──
+            if autobot_active and enabled_strategies.get("Track4", True) and track4 is not None:
+                t4_eval = track4.evaluate_scalping_rebalance({
+                    "current_delta": round((current_price - round(current_price / 2.5) * 2.5) * 0.1, 2),
+                    "deadband": 0.3
+                }, simulated_days_to_expiry)
+                for sig in t4_eval.get("signals", []):
+                    if sig.get("action") == "GAMMA_REBALANCE":
+                        rebal_qty = sig.get("qty", 0)
+                        current_position_qty += rebal_qty
+                        event_logs.append({
+                            "seq": seq, "date": date_str, "time": time_str,
+                            "event": "Track4 감마 스캘핑 델타 리밸런싱",
+                            "details": f"수량: {rebal_qty:+d}계약 (Delta 편차 회수)"
+                        })
+
+            # ── 8-5. [TRACK 5] DTE <= 1.0 만기 전용 세타 Decay 수취 스트랭글 평가 ──
+            if autobot_active and enabled_strategies.get("Track5", True) and track5 is not None:
+                t5_eval = track5.evaluate_atm_strangle_decay({
+                    "date_str": date_str,
+                    "iv_spike": (active_vol - BASE_VOLATILITY) * 2.0,
+                    "price_displacement": current_price - prev_price
+                }, simulated_days_to_expiry)
+                for sig in t5_eval.get("signals", []):
+                    if sig.get("action") == "BUILD_ATM_STRANGLE":
+                        call_k = round((current_price + 2.5) / 2.5) * 2.5
+                        put_k = round((current_price - 2.5) / 2.5) * 2.5
+                        portfolio_options.append({
+                            "type": "CALL", "side": "SELL", "strike": call_k, "price": 1.20, "qty": 1, "activeStrategy": "Track5"
+                        })
+                        portfolio_options.append({
+                            "type": "PUT", "side": "SELL", "strike": put_k, "price": 1.20, "qty": 1, "activeStrategy": "Track5"
+                        })
+                        event_logs.append({
+                            "seq": seq, "date": date_str, "time": time_str,
+                            "event": "Track5 DTE<=1.0 세타 Decay 수취 스트랭글 형성",
+                            "details": f"Call: {call_k}, Put: {put_k}"
+                        })
+
             # ── 8-1. 오버나잇 보험용 극외가(OTM) 옵션 매입 파이프라인 (Track 9 연동) ──
             # 매 영업일 15:15:00 ~ 15:20:00 사이 작동
             h_time, m_time = calendar_sim.current_time.hour, calendar_sim.current_time.minute

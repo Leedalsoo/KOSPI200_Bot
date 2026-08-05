@@ -39,7 +39,8 @@ class Track9:
         if self.date_reset_helper.check_and_update(date_str):
             self.reset_state()
 
-        target_insurance_qty = max(1, int(active_sell_qty * 0.5)) if active_sell_qty > 0 else 0
+        # Track 1 가두리 매도 수량에 연동하되, 독립적인 극외가 양매수 롱 공격/보험 지위를 유지하기 위해 최소 1계약 타겟 보장
+        target_insurance_qty = max(1, int(active_sell_qty * 0.5))
         
         if target_insurance_qty != current_ins_qty:
             if target_insurance_qty > current_ins_qty:

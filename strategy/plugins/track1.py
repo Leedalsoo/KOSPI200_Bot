@@ -102,10 +102,11 @@ class Track1:
         current_date = market_data.get("date_str", "UNKNOWN")
         trend_signal = market_data.get("momentum_confirmed", False) 
 
-        # 영업일 변경 세션 감지 및 원자적 리셋
+        days_to_expiry = float(market_data.get("days_to_expiry", 30.0))
+
+        # 영업일 변경 세션 감지 및 일일 헷지 횟수 원자적 리셋 (가두리 매도 포지션은 그대로 이월 유지)
         if self.date_reset_helper.check_and_update(current_date):
             self.last_trading_date = self.date_reset_helper.last_trading_date
-            self.is_market_opened = False
             self.futures_hedge_count = 0
             self.active_hedge = None
             self.rotation_timer.reset()
@@ -118,7 +119,7 @@ class Track1:
             signals.extend(open_signals)
             
         # 틱 메인 루프
-        tick_signals = self.on_tick(current_underlying, trend_signal)
+        tick_signals = self.on_tick(current_underlying, trend_signal, days_to_expiry)
         signals.extend(tick_signals)
         
         return {"signals": signals}
@@ -156,10 +157,29 @@ class Track1:
         logger.info(f"[장 시작 통합 세팅] 넓은 양매수 구축 완료 | 초기 풋매도 가두리 행사가: {put_strike} (#1)")
         return signals
 
-    def on_tick(self, current_price: float, trend_signal: bool) -> List[Dict]:
-        """[2단계] 틱 스트리밍 루프: 꼬리표 순환 및 미아 방어 헷지"""
+    def on_tick(self, current_price: float, trend_signal: bool, days_to_expiry: float = 30.0) -> List[Dict]:
+        """[2단계] 틱 스트리밍 루프: 꼬리표 순환, 미아 방어 헷지 및 만기 D-4 롱 공격 전환"""
         signals: List[Dict[str, Any]] = []
-        if not self.active_fence:
+
+        # 🎯 [만기 D-4 컷오프 프로토콜] 만기 4일 전 시간가치 소멸 시 보유 중인 가두리 매도 포지션 조기 청산
+        if days_to_expiry <= 4.0 and self.active_fence is not None:
+            old_tag = self.active_fence['tag_id']
+            old_type = self.active_fence['type']
+            old_strike = self.active_fence['strike']
+            
+            logger.info(f"⏳ [만기 D-4 컷오프] 남은 만기일 {days_to_expiry:.1f}일 -> 시간가치 소멸에 따른 가두리 매도({old_type} #{old_tag}) 조기 청산 완료 (양매수 포지션만 공격용 보유)")
+            signals.append({
+                "action": "FENCE_CLEAR",
+                "type": old_type,
+                "strike": old_strike,
+                "tag_id": old_tag,
+                "qty": 1,
+                "reason": "만기 D-4 시간가치 소멸 가두리 매도 조기 청산 (양매수 롱 공격 유지)"
+            })
+            self.active_fence = None
+            return signals
+
+        if not self.active_fence or days_to_expiry <= 4.0:
             return signals
 
         # 100% 격돌 및 1.5pt 반전 매 틱 독립 우선 체크 (갭 대응)

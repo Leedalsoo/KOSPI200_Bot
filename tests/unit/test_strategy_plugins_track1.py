@@ -58,20 +58,24 @@ def test_dynamic_futures_delta_hedging() -> None:
 
 
 def test_track1_trading_date_reset() -> None:
-    """영업일 변경 시 is_market_opened 및 카운터 자동 리셋 검증"""
+    """영업일 변경 시 기존 가두리 포지션 이월 유지 및 일일 헷지 카운터 원자적 리셋 검증"""
     agent = Track1({})
     market_data_day1 = {"date_str": "2025-01-10"}
     
-    # Day 1 진입
+    # Day 1 진입 (최초 장 개장 세팅)
     res1 = agent.evaluate_strategy(320.0, 320.0, market_data_day1)
     assert agent.is_market_opened is True
     assert len(res1["signals"]) > 0
+    assert agent.active_fence is not None
+    active_fence_day1 = agent.active_fence
     
-    # Day 2 진입 -> 세션 원자적 리셋 발동
+    # Day 2 진입 -> 영업일 변경 감지 시 포지션은 그대로 이월 유지되고 헷지 회수 카운터만 리셋됨
+    agent.futures_hedge_count = 5  # 헤지 횟수가 올라간 상태 모사
     market_data_day2 = {"date_str": "2025-01-13"}
-    res2 = agent.evaluate_strategy(325.0, 325.0, market_data_day2)
+    _ = agent.evaluate_strategy(320.0, 320.0, market_data_day2)
     assert agent.last_trading_date == "2025-01-13"
-    assert len(res2["signals"]) > 0
+    assert agent.futures_hedge_count == 0  # 헤지 카운트 0 초기화
+    assert agent.active_fence == active_fence_day1  # 가두리 포지션 이월 유지
 
 
 def test_track1_100_percent_strike_exit() -> None:
@@ -103,4 +107,18 @@ def test_track1_signal_qty_field() -> None:
     for s in signals:
         assert "qty" in s
         assert s["qty"] == 1
+
+
+def test_track1_d4_expiry_cutoff_and_long_attack() -> None:
+    """만기 D-4 이하일 경우 시간가치 소멸에 따른 가두리 매도 조기 청산 및 롱 공격 유지 검증"""
+    agent = Track1({})
+    _ = agent.evaluate_strategy(320.0, 320.0, {"date_str": "2025-01-10", "days_to_expiry": 10.0})
+    assert agent.active_fence is not None
+
+    # D-4 진입 (days_to_expiry = 3.5)
+    res_d4 = agent.evaluate_strategy(320.0, 320.0, {"date_str": "2025-01-15", "days_to_expiry": 3.5})
+    actions = [s["action"] for s in res_d4["signals"]]
+    assert "FENCE_CLEAR" in actions
+    assert agent.active_fence is None  # 가두리 매도 조기 청산 완료
+    assert len(agent.long_strangle_positions) > 0  # 롱 공격 포지션은 그대로 보유 유지
 
