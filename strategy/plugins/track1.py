@@ -103,6 +103,15 @@ class Track1:
         trend_signal = market_data.get("momentum_confirmed", False) 
 
         days_to_expiry = float(market_data.get("days_to_expiry", 30.0))
+        active_vol = float(market_data.get("active_vol", 1.0))
+        base_vol = float(market_data.get("base_vol", 1.0))
+
+        # 🌊 [유기체 가두리 크기 동적 조절]
+        # 고변동성 발생 시 2차 외각 링(Outer Ring: 12.5pt)이 쿠션 역할을 수행하도록 fence_distance 확장
+        if active_vol > (base_vol * 1.15):
+            self.fence_distance = 12.5
+        else:
+            self.fence_distance = 7.5
 
         # 영업일 변경 세션 감지 및 일일 헷지 횟수 원자적 리셋 (가두리 매도 포지션은 그대로 이월 유지)
         if self.date_reset_helper.check_and_update(current_date):
@@ -119,46 +128,56 @@ class Track1:
             signals.extend(open_signals)
             
         # 틱 메인 루프
-        tick_signals = self.on_tick(current_underlying, trend_signal, days_to_expiry)
+        tick_signals = self.on_tick(current_underlying, trend_signal, days_to_expiry, current_date=current_date)
         signals.extend(tick_signals)
         
         return {"signals": signals}
 
     def on_market_open(self, current_price: float) -> List[Dict]:
-        """[1단계] 장 시작 직후 넓은 양매수 선제 구축 및 초기 풋매도 가두리 형성"""
+        """[1단계] 장 시작 이중 링(Dual-Ring) 유기체 가두리 선제 구축"""
         signals = []
         self.base_price = current_price
-        call_strike = round((current_price + self.fence_distance)/2.5)*2.5
-        put_strike = round((current_price - self.fence_distance)/2.5)*2.5
         
-        self.long_strangle_positions.append({'type': 'CALL', 'strike': call_strike, 'qty': 1})
-        self.long_strangle_positions.append({'type': 'PUT', 'strike': put_strike, 'qty': 1})
+        # 1차 내각 가두리 (Inner Ring 7.5pt)
+        call_strike_inner = round((current_price + 7.5)/2.5)*2.5
+        put_strike_inner = round((current_price - 7.5)/2.5)*2.5
+
+        # 2차 외각 가두리 (Outer Ring 12.5pt)
+        call_strike_outer = round((current_price + 12.5)/2.5)*2.5
+        put_strike_outer = round((current_price - 12.5)/2.5)*2.5
+        
+        self.long_strangle_positions.append({'type': 'CALL', 'strike': call_strike_outer, 'qty': 1})
+        self.long_strangle_positions.append({'type': 'PUT', 'strike': put_strike_outer, 'qty': 1})
         
         signals.append({
             "action": "TAIL_DEFENSE_BUILD",
-            "call_strike": call_strike,
-            "put_strike": put_strike,
+            "call_strike": call_strike_outer,
+            "put_strike": put_strike_outer,
             "qty": 1,
-            "reason": "[장 시작 세팅] 넓은 양매수(Long Strangle) 구축 완료"
+            "pricing_mode": "MID_PRICE_OFFSET",
+            "limit_offset_ticks": 1,
+            "reason": "🌊 [유기체 세팅] 2차 외각 테일 방어망 구축 완료 (MID_PRICE_OFFSET 슬리피지 0%)"
         })
         
-        # 하방(풋매도) 가두리 구축
-        self.active_fence = {'type': 'PUT', 'strike': put_strike, 'tag_id': 1}
+        # 1차 내각 풋매도 가두리 구축
+        self.active_fence = {'type': 'PUT', 'strike': put_strike_inner, 'tag_id': 1}
         
         signals.append({
             "action": "FENCE_BUILD",
             "type": "PUT",
-            "strike": put_strike,
+            "strike": put_strike_inner,
             "tag_id": 1,
             "qty": 1,
-            "reason": f"초기 풋매도 가두리 (행사가: {put_strike}, #1)"
+            "pricing_mode": "MID_PRICE_OFFSET",
+            "limit_offset_ticks": 1,
+            "reason": f"🌊 [1차 내각 가두리] 풋매도 구축 (행사가: {put_strike_inner}, #1, MID_PRICE_OFFSET)"
         })
         
-        logger.info(f"[장 시작 통합 세팅] 넓은 양매수 구축 완료 | 초기 풋매도 가두리 행사가: {put_strike} (#1)")
+        logger.info(f"[장 시작 유기체 세팅] 2중 링 가두리 구축 완료 | 1차 내각 행사가: {put_strike_inner} (#1)")
         return signals
 
-    def on_tick(self, current_price: float, trend_signal: bool, days_to_expiry: float = 30.0) -> List[Dict]:
-        """[2단계] 틱 스트리밍 루프: 꼬리표 순환, 미아 방어 헷지 및 만기 D-4 롱 공격 전환"""
+    def on_tick(self, current_price: float, trend_signal: bool, days_to_expiry: float = 30.0, current_date: str = "") -> List[Dict]:
+        """[2단계] 틱 스트리밍 루프: 가두리 유기적 개방(Open)/닫힘(Close), 꼬리표 순환 및 미아 방어 헷지"""
         signals: List[Dict[str, Any]] = []
 
         # 🎯 [만기 D-4 컷오프 프로토콜] 만기 4일 전 시간가치 소멸 시 보유 중인 가두리 매도 포지션 조기 청산
@@ -174,6 +193,8 @@ class Track1:
                 "strike": old_strike,
                 "tag_id": old_tag,
                 "qty": 1,
+                "pricing_mode": "PREEMPTIVE_STOP_LIMIT_QUEUE",
+                "limit_offset_ticks": 1,
                 "reason": "만기 D-4 시간가치 소멸 가두리 매도 조기 청산 (양매수 롱 공격 유지)"
             })
             self.active_fence = None
@@ -182,13 +203,18 @@ class Track1:
         if not self.active_fence or days_to_expiry <= 4.0:
             return signals
 
-        # 100% 격돌 및 1.5pt 반전 매 틱 독립 우선 체크 (갭 대응)
+        # 100% 격돌 및 1.5pt 반전 매 틱 독립 우선 체크 (유기적 가두리 닫힘/Unwind 루프)
         hedge_exit_signals = self.check_hedge_exit_conditions(current_price)
         if hedge_exit_signals:
             signals.extend(hedge_exit_signals)
             return signals
 
-        # [시나리오 A] 상대방 90% 도달 시 순환 (이익 확정)
+        # 🛡️ [15:15 타임 가드] 장 마감 15분 전 신규 가두리 순환 차단
+        current_time_str = self.time_service.get_current_time().strftime("%H:%M:%S") if hasattr(self, "time_service") else ""
+        if current_time_str >= "15:15:00":
+            return signals
+
+        # [시나리오 A] 상대방 90% 도달 시 순환 (이익 확정 및 지정가 큐 연계)
         if self.check_opposite_90_reached(current_price):
             if self.rotation_timer.is_expired():
                 rotation_signals = self.execute_fence_rotation(current_price)
@@ -214,7 +240,9 @@ class Track1:
                     "action": "FUTURES_ORDER", 
                     "type": self.active_hedge, 
                     "price": current_price,
-                    "reason": f"선물 헷지 #{self.futures_hedge_count} 발동"
+                    "pricing_mode": "MID_PRICE_OFFSET",
+                    "limit_offset_ticks": 1,
+                    "reason": f"선물 헷지 #{self.futures_hedge_count} 발동 (MID_PRICE_OFFSET 슬리피지 0%)"
                 })
                 logger.info(f"🚨 [선물 헷지 발동 #{self.futures_hedge_count}] {self.active_hedge} 체결 (진입: {current_price})")
                 
@@ -266,7 +294,9 @@ class Track1:
             "strike": old_strike,
             "tag_id": old_tag,
             "qty": 1,
-            "reason": f"꼬리표 #{old_tag} 순환 청산"
+            "pricing_mode": "PREEMPTIVE_STOP_LIMIT_QUEUE",
+            "limit_offset_ticks": 1,
+            "reason": f"꼬리표 #{old_tag} 순환 선제 지정가 청산"
         })
         
         # 기저점(Base) 재설정 및 반대편 가두리
@@ -282,7 +312,9 @@ class Track1:
             "strike": new_strike,
             "tag_id": old_tag + 1,
             "qty": 1,
-            "reason": f"신규 꼬리표 #{old_tag + 1} ({new_type})"
+            "pricing_mode": "MID_PRICE_OFFSET",
+            "limit_offset_ticks": 1,
+            "reason": f"신규 꼬리표 #{old_tag + 1} ({new_type}, MID_PRICE_OFFSET)"
         })
         logger.info(f"🏗️ [신규 가두리] {new_type}매도 (행사가: {new_strike}, #{old_tag + 1})")
         return signals

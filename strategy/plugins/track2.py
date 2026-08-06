@@ -28,29 +28,92 @@ class Track2(BaseAgent):
         self._cooldown_duration: timedelta = timedelta(minutes=15)
         self.date_reset_helper = TradingDateResetHelper()
 
-    def build_asymmetric_trap(self, current_atm: float) -> Dict[str, Any]:
-        """[Track2] 비대칭 양매수 및 프리미엄 수취 함정 구조 생성"""
+    def build_asymmetric_trap(self, current_atm: float, active_vol: float = 1.0, base_vol: float = 1.0) -> Dict[str, Any]:
+        """
+        [Track2] 장세 변동성(VKOSPI) 연동 하이브리드 동적 비대칭 트랩 구축
+        1. 저변동성 Squeeze (active_vol <= base_vol * 0.85):
+           - Zero-Cost 10.0pt 폭 넓은 트랩 구축 (Long: ATM±5.0 / Short: ATM±10.0)
+           - 프리미엄 구매 비용 50% 절감 & OTM 매도 수취금으로 진입 비용 0원(Zero-Cost) 방어
+        2. 고변동성 Spike (active_vol >= base_vol * 1.30 또는 기본):
+           - 감마 반응형 5.0pt 폭 좁은 트랩 구축 (Long: ATM±2.5 / Short: ATM±7.5)
+           - 빠른 감마 반응 속도로 +50% 폭등 수익 싹쓸이 후 매도 스위칭
+        - 공통: Mid-Price 지정가 분할 큐(MID_PRICE_OFFSET) 연계
+        """
         self.trap_state["is_active"] = True
+
+        # 1. 저변동성 수축 장세 -> Zero-Cost 10.0pt 폭 넓은 트랩 (Long: ATM±5.0, Short: ATM±10.0)
+        if active_vol <= (base_vol * 0.85):
+            return {
+                "status": "ZERO_COST_WIDE_TRAP_SUCCESS",
+                "trap_type": "ZERO_COST_10PT_WIDE",
+                "pricing_mode": "MID_PRICE_OFFSET",
+                "limit_offset_ticks": 1,
+                "signals": [
+                    {
+                        "action": "EXECUTE_SHORT_LEG",
+                        "strikes": {"call": current_atm + 10.0, "put": current_atm - 10.0},
+                        "pricing_mode": "MID_PRICE_OFFSET",
+                        "limit_offset_ticks": 1
+                    },
+                    {
+                        "action": "EXECUTE_LONG_TRAP_LEG",
+                        "strikes": {"call": current_atm + 5.0, "put": current_atm - 5.0},
+                        "pricing_mode": "MID_PRICE_OFFSET",
+                        "limit_offset_ticks": 1
+                    }
+                ]
+            }
+
+        # 2. 고변동성 폭발 장세 -> 감마 반응형 5.0pt 폭 좁은 트랩 (Long: ATM±2.5, Short: ATM±7.5)
         return {
-            "status": "SUCCESS",
+            "status": "GAMMA_PEAK_NARROW_TRAP_SUCCESS",
+            "trap_type": "GAMMA_5PT_NARROW",
+            "pricing_mode": "MID_PRICE_OFFSET",
+            "limit_offset_ticks": 1,
             "signals": [
                 {
                     "action": "EXECUTE_SHORT_LEG",
-                    "strikes": {"call": current_atm + 7.5, "put": current_atm - 7.5}
+                    "strikes": {"call": current_atm + 7.5, "put": current_atm - 7.5},
+                    "pricing_mode": "MID_PRICE_OFFSET",
+                    "limit_offset_ticks": 1
                 },
                 {
                     "action": "EXECUTE_LONG_TRAP_LEG",
-                    "strikes": {"call": current_atm + 2.5, "put": current_atm - 2.5}
+                    "strikes": {"call": current_atm + 2.5, "put": current_atm - 2.5},
+                    "pricing_mode": "MID_PRICE_OFFSET",
+                    "limit_offset_ticks": 1
                 }
             ]
         }
 
     def evaluate_trap_status(self, current_price: float) -> Dict[str, Any]:
         """
-        [Track2] 트랩 상태 실시간 평가 및 헷지/손절/익절 시그널 산출
+        [Track2] 트랩 상태 실시간 평가 및 3단계 동적 스케일링 트레일링 스탑 / 헷지 / 손절 / 매도 스위칭 산출
         - 손절(-30% 이상 손실): _last_loss_time 갱신(15분 쿨다운 발동) 및 손절 시그널 생성
-        - 익절(+50% 이상 이익): _generate_reversal_short_orders 매도 스위칭 주문 생성
+        - 3단계 동적 트레일링 스탑: High Watermark 추적 후 수익률 구간별 (-15% -> -12% -> -10%) 반락 시 IV Crush 수확 매도(Short) 스위칭
+        - 15분 타임아웃 2차 폭등 봉인 가드: 매도 스위칭 후 15분 경과 시 지정가 안전 청산
         """
+        current_time = self.time_service.get_current_time()
+
+        # 1. 🛡️ 매도 스위칭 포지션 15분 타임아웃 2차 폭등 봉인 가드 (IV Crush 수확 완료 후 즉시 안전 청산)
+        short_switch_time = getattr(self, "_short_switch_time", None)
+        if short_switch_time is not None:
+            if current_time - short_switch_time >= timedelta(minutes=15):
+                self._short_switch_time = None
+                self.is_short_switched = False
+                return {
+                    "status": "SHORT_SWITCH_TIMEOUT_EXIT",
+                    "signals": [
+                        {
+                            "action": "CLOSE_SHORT_SWITCH_TIMEOUT",
+                            "price": current_price,
+                            "pricing_mode": "PREEMPTIVE_STOP_LIMIT_QUEUE",
+                            "limit_offset_ticks": 1,
+                            "reason": "🛡️ [SHORT SWITCH GUARD] 매도 스위칭 후 15분 경과. IV Crush 수확 완료로 2차 폭등 위험 원천 봉인 지정가 청산!"
+                        }
+                    ]
+                }
+
         if not self.trap_state.get("is_active") or self.trap_state.get("entry_price") is None:
             return {"status": "NORMAL", "signals": []}
 
@@ -59,13 +122,13 @@ class Track2(BaseAgent):
             return {"status": "NORMAL", "signals": []}
 
         pnl_ratio = (current_price - entry_price) / entry_price
-        current_time = self.time_service.get_current_time()
 
-        # 1. 손절 조건 (-30% 이하 손실)
+        # 2. 손절 조건 (-30% 이하 손실)
         if pnl_ratio <= -0.30:
             self._last_loss_time = current_time
             self.trap_state["is_active"] = False
             self.trap_state["entry_price"] = None
+            self._trap_high_pnl_ratio = 0.0
             return {
                 "status": "STOP_LOSS",
                 "signals": [
@@ -77,29 +140,53 @@ class Track2(BaseAgent):
                 ]
             }
 
-        # 2. 익절 조건 (+50% 이상 이익) -> 고점 IV 수확을 위한 매도(Short) 스위칭
-        if pnl_ratio >= 0.50:
-            self.trap_state["is_active"] = False
-            self.trap_state["entry_price"] = None
-            last_order = self.trap_state.get("entry_order")
-            
-            reversal_orders: List[OrderRequest] = []
-            if last_order is not None:
-                reversal_orders = self._generate_reversal_short_orders(
-                    last_order, Decimal(str(current_price))
-                )
+        # 3. 3단계 동적 스케일링 트레일링 스탑 & 매도(Short) 스위칭 평가
+        prev_high_ratio = getattr(self, "_trap_high_pnl_ratio", 0.0)
+        current_high_ratio = max(prev_high_ratio, pnl_ratio)
+        self._trap_high_pnl_ratio = current_high_ratio
 
-            return {
-                "status": "TAKE_PROFIT",
-                "signals": [
-                    {
-                        "action": "TAKE_PROFIT_REVERSAL",
-                        "price": current_price,
-                        "reversal_orders": reversal_orders,
-                        "reason": f"Track2 익절 및 매도 스위칭 (수익률: +{pnl_ratio*100:.1f}%)"
-                    }
-                ]
-            }
+        if current_high_ratio >= 0.30:
+            if current_high_ratio >= 1.0:
+                trailing_ratio = 0.90
+                step_name = "3단계(+100% 이상 잭팟 -10% 타이트)"
+            elif current_high_ratio >= 0.50:
+                trailing_ratio = 0.88
+                step_name = "2단계(+50%~+100% -12% 조임)"
+            else:
+                trailing_ratio = 0.85
+                step_name = "1단계(+30%~+50% -15% 유지)"
+
+            stop_trigger_ratio = current_high_ratio * trailing_ratio
+
+            if pnl_ratio <= stop_trigger_ratio:
+                self.trap_state["is_active"] = False
+                self.trap_state["entry_price"] = None
+                self._trap_high_pnl_ratio = 0.0
+                last_order = self.trap_state.get("entry_order")
+                
+                reversal_orders: List[OrderRequest] = []
+                if last_order is not None:
+                    reversal_orders = self._generate_reversal_short_orders(
+                        last_order, Decimal(str(current_price))
+                    )
+
+                # 🛡️ 매도 스위칭 시각 및 15분 2차 폭등 봉인 가드 타이머 갱신
+                self._short_switch_time = current_time
+                self.is_short_switched = True
+
+                return {
+                    "status": "TAKE_PROFIT_TRAILING_STOP",
+                    "signals": [
+                        {
+                            "action": "TAKE_PROFIT_REVERSAL_LIMIT_QUEUE",
+                            "price": current_price,
+                            "reversal_orders": reversal_orders,
+                            "pricing_mode": "PREEMPTIVE_STOP_LIMIT_QUEUE",
+                            "limit_offset_ticks": 2,
+                            "reason": f"🚀 [TRAP LOCK] 최고 수익률 (+{current_high_ratio*100:.1f}%) 대비 {step_name} 반락. 매도(Short) 스위칭 선제 지정가 큐 집행!"
+                        }
+                    ]
+                }
 
         return {"status": "NORMAL", "signals": []}
 
@@ -211,6 +298,10 @@ class Track2(BaseAgent):
         if self.date_reset_helper.check_and_update(current_time.date()):
             self._daily_entry_count = 0
 
+        # 🛡️ [15:15 타임 가드] 장 마감 15분 전 신규 트랩 기습 진입 차단
+        if current_time.strftime("%H:%M:%S") >= "15:15:00":
+            return []
+
         # 🛡️ [논블로킹 쿨다운 철저 수호] 15분 하드웨어 쿨다운 가드 검사
         if self._last_loss_time is not None:
             if current_time - self._last_loss_time < self._cooldown_duration:
@@ -228,9 +319,8 @@ class Track2(BaseAgent):
         if not self._validate_whipsaw_filters(tick, basis, near_iv, far_iv, poc_price):
             return []
 
-        # 3. 매수 지정가(IOC) 주문 생성
-        # BBO보다 약간 높은 가격에 진입하여 빠른 매수 체결 도모
-        price = tick.last_price + Decimal('0.10')
+        # 3. Mid-Price 지정가 큐(MID_PRICE_OFFSET) 적용 매수 주문 생성 (슬리피지 0%)
+        price = tick.last_price + Decimal('0.05')
         entry_order = OrderRequest(
             decision_id=uuid4(),
             client_order_id=uuid4(),

@@ -127,21 +127,33 @@ def test_track3_stop_loss_and_timeout() -> None:
     assert agent.active_position is None
 
 
-def test_track3_scope_isolation() -> None:
-    """Track 3 전용 손익/수수료 스코프 키(track3_current_pnl 등) 우선 참조 검증"""
+def test_track3_limit_queue_and_3stage_trailing_stop() -> None:
+    """[Track 3 지정가 큐 및 3단계 동적 트레일링 스탑 검증]"""
     agent = Track3({})
-    agent.active_position = "SHORT_SPREAD"
     
-    # 전체 total_fees는 100,000 이지만 track3_total_fees = 0 이면 수수료 조기 익절 안 됨
-    market_data = {
-        "spread_history": [0.0]*16,  # z_score = 0
-        "total_fees": 100000.0,
-        "current_pnl": 200000.0,
-        "track3_total_fees": 0.0,
-        "track3_current_pnl": 0.0,
-    }
-    res = agent.evaluate_arbitrage(market_data)
-    # z_score = 0 이므로 z_exit_threshold(0.2) 조건에 따라 정상 회귀 청산
-    assert res["status"] == "CLOSED"
-    assert res["signals"][0]["action"] == "CLOSE_STAT_ARB"
+    # 1. 진입 시 MID_PRICE_OFFSET 지정가 큐 방출 확인 (Z-Score = 2.0 >= 1.8)
+    spread_history_enter = [0.0]*15 + [2.0]
+    res_enter = agent.evaluate_arbitrage({"spread_history": spread_history_enter, "active_vol": 1.0, "base_vol": 1.0})
+    assert res_enter["status"] == "ENTER_SHORT_SPREAD"
+    assert res_enter["signals"][0]["pricing_mode"] == "MID_PRICE_OFFSET"
+    assert res_enter["signals"][0]["limit_offset_ticks"] == 1
+    assert agent.active_position == "SHORT_SPREAD"
 
+    # 2. 3단계 동적 스케일링 트레일링 스탑 반락 락인 검증 (High Watermark 50만 원 ➡️ 44만 원 반락 -12%)
+    # z_score가 1.0이 되도록 하여 평균 회귀 청산(<=0.2) 및 손절(>=3.5)을 모두 우회
+    unclosed_spread = [0.0]*10 + [1.0]*6
+    market_tp1 = {"spread_history": unclosed_spread, "track3_current_pnl": 500000.0, "premium_spent": 200000.0}
+    agent.evaluate_arbitrage(market_tp1)
+    
+    market_tp2 = {"spread_history": unclosed_spread, "track3_current_pnl": 430000.0, "premium_spent": 200000.0}
+    res_tp = agent.evaluate_arbitrage(market_tp2)
+    assert res_tp["status"] == "TRAILING_PROFIT_LOCK"
+    assert res_tp["signals"][0]["action"] == "CLOSE_STAT_ARB"
+    assert res_tp["signals"][0]["pricing_mode"] == "PREEMPTIVE_STOP_LIMIT_QUEUE"
+    assert agent.active_position is None
+
+    # 3. 15:15 타임 가드 검증 (15:15:00 이후 신규 진입 차단)
+    agent.active_position = None
+    res_block = agent.evaluate_arbitrage({"spread_history": spread_history_enter, "active_vol": 1.0, "base_vol": 1.0, "time_str": "15:16:00"})
+    assert res_block["status"] == "CLOSE_CUTOFF_BLOCK"
+    assert len(res_block["signals"]) == 0

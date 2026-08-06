@@ -131,6 +131,12 @@ class Track3:
         
         z_score, is_valid = self.calculate_z_score(spread_history)
         
+        # VKOSPI 변동성 연동 동적 Z-Score 진입 임계치 산정 (하드코딩 1.8 탈피)
+        active_vol = float(market_data.get("active_vol", 1.0))
+        base_vol = float(market_data.get("base_vol", 1.0))
+        vol_ratio = active_vol / max(0.1, base_vol)
+        effective_z_entry = max(1.5, self.z_entry_threshold * vol_ratio)
+
         signals = []
         status = "HOLD"
         
@@ -147,47 +153,102 @@ class Track3:
                 "signals": []
             }
 
-        # 1. 포지션이 없는 경우: 진입 조건 탐색
+        # 1. 포지션이 없는 경우: 진입 조건 탐색 (Mid-Price 지정가 큐 방출)
         if self.active_position is None:
+            time_str = market_data.get("time_str", "09:00:00")
+            if time_str >= "15:15:00":
+                return {
+                    "strategy": "Strategy_3_StatArb",
+                    "active": False,
+                    "current_z_score": z_score,
+                    "status": "CLOSE_CUTOFF_BLOCK",
+                    "signals": []
+                }
+
             if self.cooldown_ticks == 0:
-                if z_score >= self.z_entry_threshold:
+                if z_score >= effective_z_entry:
                     self.active_position = "SHORT_SPREAD"
                     self.holding_ticks = 0
+                    self._arb_high_pnl = 0.0
                     status = "ENTER_SHORT_SPREAD"
                     signals.append({
                         "action": "EXECUTE_STAT_ARB",
                         "type": "SHORT_SPREAD",
                         "z_score": z_score,
+                        "pricing_mode": "MID_PRICE_OFFSET",
+                        "limit_offset_ticks": 1,
+                        "fallback_market_timeout_sec": 2.0,
                         "qty": 1,
-                        "reason": f"Z-Score ({z_score:.2f}) exceeded upper threshold (+{self.z_entry_threshold}). Selling spread."
+                        "reason": f"Z-Score ({z_score:.2f}) exceeded dynamic threshold (+{effective_z_entry:.2f}). Selling spread via Limit Queue."
                     })
-                elif z_score <= -self.z_entry_threshold:
+                elif z_score <= -effective_z_entry:
                     self.active_position = "LONG_SPREAD"
                     self.holding_ticks = 0
+                    self._arb_high_pnl = 0.0
                     status = "ENTER_LONG_SPREAD"
                     signals.append({
                         "action": "EXECUTE_STAT_ARB",
                         "type": "LONG_SPREAD",
                         "z_score": z_score,
+                        "pricing_mode": "MID_PRICE_OFFSET",
+                        "limit_offset_ticks": 1,
+                        "fallback_market_timeout_sec": 2.0,
                         "qty": 1,
-                        "reason": f"Z-Score ({z_score:.2f}) breached lower threshold (-{self.z_entry_threshold}). Buying spread."
+                        "reason": f"Z-Score ({z_score:.2f}) breached dynamic threshold (-{effective_z_entry:.2f}). Buying spread via Limit Queue."
                     })
 
-        # 2. 포지션을 보유 중인 경우: 평균 회귀, 손절, 타임아웃 및 수수료 방어 탐색
+        # 2. 포지션을 보유 중인 경우: 3단계 동적 트레일링 스탑, 평균 회귀, 손절, 타임아웃 및 수수료 방어 탐색
         else:
             self.holding_ticks += 1
             
-            # (A) Z-Score 극단 이탈 손절 판정
+            # (A) 3단계 동적 스케일링 트레일링 스탑 락인 평가
+            prev_high = getattr(self, "_arb_high_pnl", 0.0)
+            current_high = max(prev_high, current_pnl)
+            self._arb_high_pnl = current_high
+            spent = float(market_data.get("premium_spent", 200000.0))
+
+            if current_high > 30000.0:
+                pnl_ratio = current_high / max(1.0, spent)
+                if pnl_ratio >= 2.0:
+                    trailing_ratio = 0.90
+                    step_name = "3단계(+100% 이상 잭팟 -10% 타이트)"
+                elif pnl_ratio >= 1.3:
+                    trailing_ratio = 0.88
+                    step_name = "2단계(+30%~+100% -12% 조임)"
+                else:
+                    trailing_ratio = 0.85
+                    step_name = "1단계(+30% 미만 -15% 유지)"
+
+                stop_trigger_pnl = current_high * trailing_ratio
+
+                if current_pnl <= stop_trigger_pnl:
+                    action_type = "CLOSE_SHORT_SPREAD" if self.active_position == "SHORT_SPREAD" else "CLOSE_LONG_SPREAD"
+                    signals.append({
+                        "action": "CLOSE_STAT_ARB",
+                        "type": action_type,
+                        "pricing_mode": "PREEMPTIVE_STOP_LIMIT_QUEUE",
+                        "limit_offset_ticks": 2,
+                        "fallback_market_timeout_sec": 2.0,
+                        "z_score": z_score,
+                        "qty": 1,
+                        "reason": f"🚀 [STAT ARB LOCK] High Watermark (KRW {current_high:,.0f}) 대비 {step_name} 반락. 선제 지정가 익절!"
+                    })
+                    self.active_position = None
+                    self.cooldown_ticks = 20
+                    self.holding_ticks = 0
+                    return {"strategy": "Strategy_3_StatArb", "active": False, "status": "TRAILING_PROFIT_LOCK", "signals": signals}
+
+            # (B) Z-Score 극단 이탈 손절 판정
             is_stop_loss = False
             if self.active_position == "SHORT_SPREAD" and z_score >= self.z_stop_loss_threshold:
                 is_stop_loss = True
             elif self.active_position == "LONG_SPREAD" and z_score <= -self.z_stop_loss_threshold:
                 is_stop_loss = True
 
-            # (B) 최대 보유시간 타임아웃 판정
+            # (C) 최대 보유시간 타임아웃 판정
             is_timeout = (self.holding_ticks >= self.max_holding_ticks)
 
-            # (C) 수수료 방어 조기 익절 판정
+            # (D) 수수료 방어 조기 익절 판정
             is_fee_cover_exit = (total_fees > 0 and current_pnl >= total_fees * 1.2)
 
             if is_stop_loss:
@@ -225,6 +286,8 @@ class Track3:
                 signals.append({
                     "action": "CLOSE_STAT_ARB",
                     "type": "CLOSE_SHORT_SPREAD",
+                    "pricing_mode": "MID_PRICE_OFFSET",
+                    "limit_offset_ticks": 1,
                     "z_score": z_score,
                     "qty": 1,
                     "reason": reason_str
@@ -239,6 +302,8 @@ class Track3:
                 signals.append({
                     "action": "CLOSE_STAT_ARB",
                     "type": "CLOSE_LONG_SPREAD",
+                    "pricing_mode": "MID_PRICE_OFFSET",
+                    "limit_offset_ticks": 1,
                     "z_score": z_score,
                     "qty": 1,
                     "reason": reason_str

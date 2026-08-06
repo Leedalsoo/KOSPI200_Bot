@@ -9,6 +9,28 @@ from core.contracts import MarketTick, OrderRequest
 from infra.time_service import TimeService
 from strategy.plugins.track2 import Track2
 
+def test_track2_hybrid_dynamic_trap() -> None:
+    """[Track 2] 저변동성 Zero-Cost 10pt 트랩 vs 고변동성 5pt 좁은 트랩 동적 스위칭 검증"""
+    ts = TimeService(mode="BACKTEST")
+    agent = Track2({}, ts)
+
+    # 1. 저변동성 수축 장세 (active_vol = 0.8 <= base_vol 1.0 * 0.85) -> Zero-Cost 10.0pt 폭 넓은 트랩 (Long: ATM±5.0 / Short: ATM±10.0)
+    trap_low = agent.build_asymmetric_trap(current_atm=350.0, active_vol=0.8, base_vol=1.0)
+    assert trap_low["status"] == "ZERO_COST_WIDE_TRAP_SUCCESS"
+    assert trap_low["trap_type"] == "ZERO_COST_10PT_WIDE"
+    assert trap_low["pricing_mode"] == "MID_PRICE_OFFSET"
+    assert trap_low["signals"][0]["strikes"] == {"call": 360.0, "put": 340.0}
+    assert trap_low["signals"][1]["strikes"] == {"call": 355.0, "put": 345.0}
+
+    # 2. 고변동성 폭발 장세 (active_vol = 1.4 >= base_vol 1.0 * 1.30) -> 감마 반응형 5.0pt 폭 좁은 트랩 (Long: ATM±2.5 / Short: ATM±7.5)
+    trap_high = agent.build_asymmetric_trap(current_atm=350.0, active_vol=1.4, base_vol=1.0)
+    assert trap_high["status"] == "GAMMA_PEAK_NARROW_TRAP_SUCCESS"
+    assert trap_high["trap_type"] == "GAMMA_5PT_NARROW"
+    assert trap_high["pricing_mode"] == "MID_PRICE_OFFSET"
+    assert trap_high["signals"][0]["strikes"] == {"call": 357.5, "put": 342.5}
+    assert trap_high["signals"][1]["strikes"] == {"call": 352.5, "put": 347.5}
+
+
 def test_market_trigger_bbw_and_zscore() -> None:
     """[원칙 1 검증] BBW 스퀴즈 및 거래량 Z-Score > 3.0 조건 결합 연산 무결성 증명"""
     ts = TimeService(mode="BACKTEST")
@@ -180,21 +202,33 @@ def test_track2_evaluate_trap_status_stop_loss() -> None:
 
 
 def test_track2_evaluate_trap_status_take_profit() -> None:
-    """익절(+50% 이상 이익) 감지 시 매도 스위칭 주문 생성 및 TAKE_PROFIT 상태 산출 검증"""
+    """익절 3단계 동적 스케일링 반락 감지 시 매도 스위칭 지정가 큐 생성 및 TAKE_PROFIT_TRAILING_STOP 산출 검증"""
     ts = TimeService(mode="BACKTEST")
     agent = Track2({}, ts)
     
     long_order = OrderRequest(uuid4(), uuid4(), "OPT_TRAP", Decimal("2.00"), 10, "BUY")
     agent.trap_state = {"is_active": True, "entry_price": Decimal("2.00"), "entry_order": long_order}
     
-    # 현재가 3.20 (+60% 이익)
-    eval_res = agent.evaluate_trap_status(3.20)
-    assert eval_res["status"] == "TAKE_PROFIT"
+    # 1. 현재가 3.20 (+60% 이익) ➡️ High Watermark 갱신
+    agent.evaluate_trap_status(3.20)
+    assert agent._trap_high_pnl_ratio == pytest.approx(0.60)
+
+    # 2. 현재가 2.80 (최고 +60% 대비 -12% 이상 반락) ➡️ 선제 매도 스위칭 지정가 큐 발동
+    eval_res = agent.evaluate_trap_status(2.80)
+    assert eval_res["status"] == "TAKE_PROFIT_TRAILING_STOP"
     assert agent.trap_state["is_active"] is False
     
     signals = eval_res["signals"]
     assert len(signals) == 1
+    assert signals[0]["action"] == "TAKE_PROFIT_REVERSAL_LIMIT_QUEUE"
+    assert signals[0]["pricing_mode"] == "PREEMPTIVE_STOP_LIMIT_QUEUE"
     reversal_orders = signals[0]["reversal_orders"]
     assert len(reversal_orders) == 1
     assert reversal_orders[0].side == "SELL"
+
+    # 3. 15분 경과 후 2차 폭등 봉인 가드 검증 (15분 후 지정가 안전 청산 방출)
+    ts.set_virtual_time(datetime.now() + timedelta(minutes=16))
+    res_timeout = agent.evaluate_trap_status(2.80)
+    assert res_timeout["status"] == "SHORT_SWITCH_TIMEOUT_EXIT"
+    assert res_timeout["signals"][0]["action"] == "CLOSE_SHORT_SWITCH_TIMEOUT"
 

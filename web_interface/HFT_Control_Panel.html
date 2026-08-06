@@ -12,6 +12,15 @@
   <!-- Recharts CDN 로드 (D3 의존성 포함) -->
   <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
   <script src="https://unpkg.com/recharts@2.12.0/umd/Recharts.js"></script>
+  <script>
+    // 🛡️ file:/// 로컬 더블클릭 구동 시 브라우저 콘솔 소음 및 CORS/Babel 경고 필터링 가드
+    window.Babel && (window.Babel.disableScriptTags = false);
+    const originalWarn = console.warn;
+    console.warn = function(...args) {
+      if (args[0] && typeof args[0] === 'string' && args[0].includes('Babel transformer')) return;
+      originalWarn.apply(console, args);
+    };
+  </script>
   <style>
     /* 🛡️ HFT 프리미엄 다크 테마 글로벌 CSS 정의 */
     * {

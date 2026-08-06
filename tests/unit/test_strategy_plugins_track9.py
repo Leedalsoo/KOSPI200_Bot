@@ -42,6 +42,7 @@ def test_track9_event_volatility_spike_and_crush() -> None:
     res_spike = agent.evaluate_event_volatility_spike(market_spike)
     assert res_spike["status"] == "EVENT_ENTERED"
     assert res_spike["signals"][0]["action"] == "ENTER_EVENT_STRANGLE"
+    assert res_spike["signals"][0]["pricing_mode"] == "MID_PRICE_OFFSET"
     assert agent.event_active is True
 
     # 2. iv_crush = -3.5 <= -3.0 (Vol Crush 발생) ➡️ 청산
@@ -52,6 +53,7 @@ def test_track9_event_volatility_spike_and_crush() -> None:
     res_crush = agent.evaluate_event_volatility_spike(market_crush)
     assert res_crush["status"] == "EVENT_CLOSED"
     assert res_crush["signals"][0]["action"] == "CLOSE_EVENT_STRANGLE"
+    assert res_crush["signals"][0]["pricing_mode"] == "MID_PRICE_OFFSET"
     assert agent.event_active is False
 
 

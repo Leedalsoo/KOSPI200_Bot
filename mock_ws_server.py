@@ -1580,28 +1580,16 @@ async def simulation_loop() -> None:  # noqa: C901
                             "details": f"수량: {rebal_qty:+d}계약 (Delta 편차 회수)"
                         })
 
-            # ── 8-5. [TRACK 5] DTE <= 1.0 만기 전용 세타 Decay 수취 스트랭글 평가 ──
+            # ── 8-5. [TRACK 5] Pure Gap Divergence Protocol 시초가 갭 역방향 평가 ──
             if autobot_active and enabled_strategies.get("Track5", True) and track5 is not None:
-                t5_eval = track5.evaluate_atm_strangle_decay({
-                    "date_str": date_str,
-                    "iv_spike": (active_vol - BASE_VOLATILITY) * 2.0,
-                    "price_displacement": current_price - prev_price
-                }, simulated_days_to_expiry)
-                for sig in t5_eval.get("signals", []):
-                    if sig.get("action") == "BUILD_ATM_STRANGLE":
-                        call_k = round((current_price + 2.5) / 2.5) * 2.5
-                        put_k = round((current_price - 2.5) / 2.5) * 2.5
-                        portfolio_options.append({
-                            "type": "CALL", "side": "SELL", "strike": call_k, "price": 1.20, "qty": 1, "activeStrategy": "Track5"
-                        })
-                        portfolio_options.append({
-                            "type": "PUT", "side": "SELL", "strike": put_k, "price": 1.20, "qty": 1, "activeStrategy": "Track5"
-                        })
-                        event_logs.append({
-                            "seq": seq, "date": date_str, "time": time_str,
-                            "event": "Track5 DTE<=1.0 세타 Decay 수취 스트랭글 형성",
-                            "details": f"Call: {call_k}, Put: {put_k}"
-                        })
+                t5_eval = track5.evaluate_gap_divergence(
+                    open_price=current_price,
+                    prev_close_price=prev_price,
+                    active_vol=active_vol,
+                    current_regime="NORMAL",
+                    date_str=date_str
+                )
+                pass
 
             # ── 8-1. 오버나잇 보험용 극외가(OTM) 옵션 매입 파이프라인 (Track 9 연동) ──
             # 매 영업일 15:15:00 ~ 15:20:00 사이 작동

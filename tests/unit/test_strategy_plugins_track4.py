@@ -130,4 +130,72 @@ async def test_track4_deactivation_unwind() -> None:
     assert agent.active_hedge_qty == 0
 
 
+def test_track4_limit_queue_and_3stage_trailing_stop() -> None:
+    """[Track 4 신규 기능 검증] 지정가 큐 델타 리밸런싱 및 3단계 동적 스케일링 스탑 검증"""
+    agent = Track4({})
+    
+    # 1. 델타 0.5 > 데드밴드(0.3) ➡️ MID_PRICE_OFFSET 지정가 큐 리밸런싱
+    market_data = {"current_delta": 0.5, "deadband": 0.3}
+    res_reb = agent.evaluate_scalping_rebalance(market_data, days_to_expiry=10.0)
+    assert res_reb["status"] == "REBALANCE"
+    assert res_reb["signals"][0]["action"] == "GAMMA_REBALANCE"
+    assert res_reb["signals"][0]["pricing_mode"] == "MID_PRICE_OFFSET"
+
+    # 2. 3단계 동적 스케일링 트레일링 스탑 검증 (High Watermark 50만 원 ➡️ 44만 원 반락 -12%)
+    market_tp1 = {"track4_current_pnl": 500000.0, "premium_spent": 200000.0}
+    agent.evaluate_scalping_take_profit(market_tp1)
+    
+    market_tp2 = {"track4_current_pnl": 430000.0, "premium_spent": 200000.0}  # 50만 * 0.88 = 44만 원 이하
+    res_tp = agent.evaluate_scalping_take_profit(market_tp2)
+    assert res_tp["status"] == "PROFIT_TAKEN_TRAILING_STOP"
+    assert res_tp["signals"][0]["action"] == "CLOSE_GAMMA_SCALP_LIMIT"
+    assert res_tp["signals"][0]["pricing_mode"] == "PREEMPTIVE_STOP_LIMIT_QUEUE"
+
+
+def test_track4_hybrid_basecamp_entry() -> None:
+    """[Track 4 하이브리드 베이스캠프 검증] 저변동성 5pt 폭 OTM 1단 vs 고변동성 ATM 정중앙 베이스캠프 스위칭 검증"""
+    agent = Track4({})
+    
+    # 1. 저변동성 (active_vol = 0.8 <= 0.85) ➡️ 5.0pt 폭 OTM 1단 베이스캠프 (Call: 352.5, Put: 347.5)
+    res_wide = agent.evaluate_scalping_basecamp_entry(
+        current_price=350.0,
+        active_vol=0.8,
+        base_vol=1.0,
+        date_str="2026-08-06"
+    )
+    assert res_wide["status"] == "WIDE_BASECAMP_TRIGGERED"
+    assert res_wide["signals"][0]["action"] == "BUILD_HYBRID_BASECAMP"
+    assert res_wide["signals"][0]["call_strike"] == 352.5
+    assert res_wide["signals"][0]["put_strike"] == 347.5
+    assert agent.basecamp_active is True
+
+    # 2. 영업일 변경 후 고변동성 (active_vol = 1.4 >= 1.30) ➡️ ATM 정중앙 베이스캠프 (Call: 350.0, Put: 350.0)
+    res_atm = agent.evaluate_scalping_basecamp_entry(
+        current_price=350.0,
+        active_vol=1.4,
+        base_vol=1.0,
+        date_str="2026-08-07"
+    )
+    assert res_atm["status"] == "ATM_BASECAMP_TRIGGERED"
+    assert res_atm["signals"][0]["action"] == "BUILD_HYBRID_BASECAMP"
+    assert res_atm["signals"][0]["call_strike"] == 350.0
+    assert res_atm["signals"][0]["put_strike"] == 350.0
+    assert agent.basecamp_active is True
+
+    # 3. 15:15 타임 가드 검증 (15:15:00 이후 진입 차단)
+    agent.basecamp_active = False
+    res_block = agent.evaluate_scalping_basecamp_entry(
+        current_price=350.0,
+        active_vol=0.8,
+        base_vol=1.0,
+        date_str="2026-08-08",
+        time_str="15:16:00"
+    )
+    assert res_block["status"] == "CLOSE_CUTOFF_BLOCK"
+    assert len(res_block["signals"]) == 0
+
+
+
+
+
 

@@ -129,21 +129,59 @@ class Track9:
         if not self.event_active:
             if is_event_upcoming or iv_spike >= 4.0:
                 self.event_active = True
+                self.event_high_pnl = max(0.0, current_pnl)
                 signals.append({
                     "action": "ENTER_EVENT_STRANGLE",
-                    "reason": f"Event upcoming ({is_event_upcoming}) / IV Spike ({iv_spike:.2f}). Entering Event Long Strangle.",
+                    "reason": f"Event upcoming ({is_event_upcoming}) / IV Spike ({iv_spike:.2f}). Entering Event Long Strangle via Mid-Price Queue.",
+                    "pricing_mode": "MID_PRICE_OFFSET",
+                    "limit_offset_ticks": 1,
+                    "fallback_market_timeout_sec": 2.0,
                     "qty": 1
                 })
                 return {"status": "EVENT_ENTERED", "signals": signals}
 
-        # 2. 보유 조건: Vol Crush (iv_crush <= -3.0) 발생 또는 수수료 커버 시 청산
+        # 2. 보유 조건: Vol Crush, 수수료 커버, 또는 3단계 동적 트레일링 스탑 청산
         else:
+            if current_pnl > getattr(self, "event_high_pnl", 0.0):
+                self.event_high_pnl = current_pnl
+
+            spent = market_data.get("premium_spent", 250000.0)
+            high_pnl = getattr(self, "event_high_pnl", 0.0)
+            
+            # 3단계 동적 반락 비율 결정
+            pnl_ratio = high_pnl / max(1.0, spent)
+            if pnl_ratio >= 2.0:
+                trailing_ratio = 0.90
+                step_name = "3단계(+100% 이상 잭팟 -10% 타이트)"
+            elif pnl_ratio >= 1.3:
+                trailing_ratio = 0.88
+                step_name = "2단계(+30%~+100% -12% 조임)"
+            else:
+                trailing_ratio = 0.85
+                step_name = "1단계(+30% 미만 -15% 유지)"
+
+            stop_trigger_pnl = high_pnl * trailing_ratio
+
+            # 최고점 대비 반락 시 지정가 스탑 락인
+            if high_pnl > 50000.0 and current_pnl <= stop_trigger_pnl:
+                self.event_active = False
+                signals.append({
+                    "action": "CLOSE_EVENT_STRANGLE",
+                    "pricing_mode": "PREEMPTIVE_STOP_LIMIT_QUEUE",
+                    "limit_offset_ticks": 2,
+                    "reason": f"🚀 [EVENT JACKPOT LOCK] High Watermark (KRW {high_pnl:,.0f}) 대비 {step_name} 반락. 선제 지정가 익절!",
+                    "qty": 1
+                })
+                return {"status": "EVENT_TRAILING_STOP", "signals": signals}
+
             is_fee_cover_exit = (total_fees > 0 and current_pnl >= total_fees * 1.2)
             if iv_crush <= -3.0 or is_fee_cover_exit:
                 self.event_active = False
                 reason_str = f"Event passed. Vol Crush ({iv_crush:.2f}) detected." if not is_fee_cover_exit else f"Fee cover profit lock triggered (PnL: KRW {current_pnl:,.0f} >= 1.2x Fees)."
                 signals.append({
                     "action": "CLOSE_EVENT_STRANGLE",
+                    "pricing_mode": "MID_PRICE_OFFSET",
+                    "limit_offset_ticks": 1,
                     "reason": reason_str,
                     "qty": 1
                 })

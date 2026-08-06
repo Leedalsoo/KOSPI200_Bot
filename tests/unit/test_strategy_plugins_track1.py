@@ -122,3 +122,16 @@ def test_track1_d4_expiry_cutoff_and_long_attack() -> None:
     assert agent.active_fence is None  # 가두리 매도 조기 청산 완료
     assert len(agent.long_strangle_positions) > 0  # 롱 공격 포지션은 그대로 보유 유지
 
+
+def test_track1_hybrid_safety_fence_distance() -> None:
+    """[Track 1] 저변동성 7.5pt 가두리 vs 고변동성 12.5pt 안전 확장 가두리 동적 스위칭 검증"""
+    agent = Track1({})
+
+    # 1. 평시/저변동성 (active_vol=1.0 <= base_vol 1.0 * 1.15) -> 7.5pt 넓은 가두리
+    res_low = agent.evaluate_strategy(350.0, 350.0, {"active_vol": 1.0, "base_vol": 1.0})
+    assert agent.fence_distance == 7.5
+
+    # 2. 고변동성 폭발 (active_vol=1.3 > base_vol 1.0 * 1.15) -> 12.5pt 밖으로 더 멀리 밀어내는 안전 보강형 가두리
+    res_high = agent.evaluate_strategy(350.0, 350.0, {"active_vol": 1.3, "base_vol": 1.0})
+    assert agent.fence_distance == 12.5
+
