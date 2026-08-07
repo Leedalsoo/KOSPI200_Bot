@@ -270,17 +270,6 @@ class Track8:
             })
             return {"status": "RISK_SCALE_UP", "signals": signals}
 
-        if self.strangle_state["is_active"] and total_fees > 0 and current_pnl >= total_fees * 1.2:
-            signals.append({
-                "action": "FLAT_STRANGLE",
-                "qty_call": self.strangle_state["qty_call"],
-                "qty_put": self.strangle_state["qty_put"],
-                "qty": 1,
-                "reason": f"Fee cover profit lock triggered (PnL: KRW {current_pnl:,.0f} >= 1.2x Fees)."
-            })
-            self.reset_state()
-            return {"status": "PROFIT_TAKEN", "signals": signals}
-
         return {"status": "HOLD", "signals": []}
 
     def evaluate_expiry_cutoff(self, 

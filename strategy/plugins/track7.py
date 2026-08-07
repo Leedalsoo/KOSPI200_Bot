@@ -244,16 +244,11 @@ class Track7:
                 })
                 return {"status": "SKEW_STOP_LOSS", "signals": signals}
 
-            # Skew 정상 회귀 (|skew| <= 0.5) 또는 수수료 커버 시 1차 지정가 청산
-            is_fee_cover_exit = total_fees > 0 and current_pnl >= total_fees * 1.2
-            if abs(skew) <= 0.5 or is_fee_cover_exit:
+            # Skew 정상 회귀 (|skew| <= 0.5) 시 1차 지정가 청산
+            if abs(skew) <= 0.5:
                 self.skew_active = False
                 self.skew_limit_pending = False
-                reason_str = (
-                    f"IV Skew 정상 회귀({skew:.2f}) 1차 지정가 청산."
-                    if not is_fee_cover_exit
-                    else f"수수료 커버 익절 (PnL: KRW {current_pnl:,.0f})."
-                )
+                reason_str = f"IV Skew 정상 회귀({skew:.2f}) 1차 지정가 청산."
                 signals.append({
                     "action": "CLOSE_SKEW_ARB_LIMIT",
                     "skew": skew,

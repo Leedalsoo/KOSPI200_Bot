@@ -174,10 +174,9 @@ class Track9:
                 })
                 return {"status": "EVENT_TRAILING_STOP", "signals": signals}
 
-            is_fee_cover_exit = (total_fees > 0 and current_pnl >= total_fees * 1.2)
-            if iv_crush <= -3.0 or is_fee_cover_exit:
+            if iv_crush <= -3.0:
                 self.event_active = False
-                reason_str = f"Event passed. Vol Crush ({iv_crush:.2f}) detected." if not is_fee_cover_exit else f"Fee cover profit lock triggered (PnL: KRW {current_pnl:,.0f} >= 1.2x Fees)."
+                reason_str = f"Event passed. Vol Crush ({iv_crush:.2f}) detected."
                 signals.append({
                     "action": "CLOSE_EVENT_STRANGLE",
                     "pricing_mode": "MID_PRICE_OFFSET",

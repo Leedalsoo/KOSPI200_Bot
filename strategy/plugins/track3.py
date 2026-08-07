@@ -248,9 +248,6 @@ class Track3:
             # (C) 최대 보유시간 타임아웃 판정
             is_timeout = (self.holding_ticks >= self.max_holding_ticks)
 
-            # (D) 수수료 방어 조기 익절 판정
-            is_fee_cover_exit = (total_fees > 0 and current_pnl >= total_fees * 1.2)
-
             if is_stop_loss:
                 reason_str = f"Z-Score extreme breach ({z_score:.2f} >= {self.z_stop_loss_threshold}). Stop loss triggered."
                 action_type = "CLOSE_SHORT_SPREAD" if self.active_position == "SHORT_SPREAD" else "CLOSE_LONG_SPREAD"
@@ -281,8 +278,8 @@ class Track3:
                 self.holding_ticks = 0
                 status = "TIMEOUT_EXIT"
 
-            elif self.active_position == "SHORT_SPREAD" and (z_score <= self.z_exit_threshold or is_fee_cover_exit):
-                reason_str = f"Z-Score returned to mean ({z_score:.2f})." if not is_fee_cover_exit else f"Fee cover profit lock triggered (PnL: ₩{current_pnl:,.0f} >= 1.2x Fees: ₩{total_fees:,.0f})."
+            elif self.active_position == "SHORT_SPREAD" and z_score <= self.z_exit_threshold:
+                reason_str = f"Z-Score returned to mean ({z_score:.2f})."
                 signals.append({
                     "action": "CLOSE_STAT_ARB",
                     "type": "CLOSE_SHORT_SPREAD",
@@ -297,8 +294,8 @@ class Track3:
                 self.holding_ticks = 0
                 status = "CLOSED"
 
-            elif self.active_position == "LONG_SPREAD" and (z_score >= -self.z_exit_threshold or is_fee_cover_exit):
-                reason_str = f"Z-Score returned to mean ({z_score:.2f})." if not is_fee_cover_exit else f"Fee cover profit lock triggered (PnL: ₩{current_pnl:,.0f} >= 1.2x Fees: ₩{total_fees:,.0f})."
+            elif self.active_position == "LONG_SPREAD" and z_score >= -self.z_exit_threshold:
+                reason_str = f"Z-Score returned to mean ({z_score:.2f})."
                 signals.append({
                     "action": "CLOSE_STAT_ARB",
                     "type": "CLOSE_LONG_SPREAD",

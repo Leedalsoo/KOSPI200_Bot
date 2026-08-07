@@ -406,9 +406,19 @@
                   const idx = Math.floor(val);
                   const isExpiry = expiryIndicesSet.has(idx);
                   let dateLabel = '';
+                  let dayOfWeek = '';
                   if (idx >= 0 && idx < fixed25Dates.length) {
                     const dateStr = fixed25Dates[idx];
-                    dateLabel = dateStr && dateStr.length >= 10 ? dateStr.slice(5) : dateStr;
+                    if (dateStr && dateStr.length >= 10) {
+                      dateLabel = dateStr.slice(5);
+                      const days = ['일', '월', '화', '수', '목', '금', '토'];
+                      const dt = new Date(dateStr);
+                      if (!isNaN(dt.getTime())) {
+                        dayOfWeek = `(${days[dt.getDay()]})`;
+                      }
+                    } else {
+                      dateLabel = dateStr;
+                    }
                   }
                   if (!dateLabel) return null;
                   return (
@@ -416,13 +426,24 @@
                       <text
                         x={0}
                         y={0}
-                        dy={12}
+                        dy={10}
                         textAnchor="middle"
                         fill={isExpiry ? '#F59E0B' : '#94A3B8'}
                         fontSize={isExpiry ? 10 : 9}
-                        fontWeight={isExpiry ? 900 : 400}
+                        fontWeight={isExpiry ? 900 : 600}
                       >
-                        {isExpiry ? `🚨${dateLabel}(D-0만기)` : dateLabel}
+                        {isExpiry ? `🚨${dateLabel}` : dateLabel}
+                      </text>
+                      <text
+                        x={0}
+                        y={0}
+                        dy={22}
+                        textAnchor="middle"
+                        fill={isExpiry ? '#F59E0B' : '#64748B'}
+                        fontSize={9}
+                        fontWeight={isExpiry ? 800 : 500}
+                      >
+                        {isExpiry ? `(D-0만기)` : dayOfWeek}
                       </text>
                     </g>
                   );
@@ -1123,9 +1144,124 @@
     });
 
     // ==============================================================================
+    // 3-B.2. [신설] 개별 전략 전용 이론 합성 미니 페이오프 차트 (포지션 유무 동적 렌더링 & X축 고정 뷰포트)
+    // ==============================================================================
+    const SingleStrategyPayoffDiagram = memo(({ positions, currentPrice }) => {
+      const activePositions = positions || [];
+      const hasPos = activePositions.length > 0;
+      const cPrice = typeof currentPrice === 'number' && currentPrice > 0 ? currentPrice : 375.0;
+
+      // X축 범위: 상장 전체 행사가 및 지수 포함 [315.0, 415.0] 고정
+      const minX = 315.0;
+      const maxX = 415.0;
+
+      const chartData = useMemo(() => {
+        if (!hasPos) return [];
+
+        const points = [];
+        const step = 2.5;
+        for (let s = minX; s <= maxX; s += step) {
+          let netPayoff = 0.0;
+          activePositions.forEach(p => {
+            if (!p) return;
+            const strike = Number(p.strike) || cPrice;
+            const qty = Number(p.qty) || 1;
+            const price = Number(p.price) || 0;
+            const side = p.side;
+            const pType = p.type;
+
+            if (pType === 'CALL') {
+              const intrinsic = Math.max(0, s - strike);
+              if (side === 'BUY') {
+                netPayoff += (intrinsic - price) * qty * 250000;
+              } else {
+                netPayoff += (price - intrinsic) * qty * 250000;
+              }
+            } else if (pType === 'PUT') {
+              const intrinsic = Math.max(0, strike - s);
+              if (side === 'BUY') {
+                netPayoff += (intrinsic - price) * qty * 250000;
+              } else {
+                netPayoff += (price - intrinsic) * qty * 250000;
+              }
+            } else if (pType === 'FUTURES' || p.asset_type === 'FUTURES') {
+              if (side === 'BUY') {
+                netPayoff += (s - price) * qty * 250000;
+              } else {
+                netPayoff += (price - s) * qty * 250000;
+              }
+            }
+          });
+          points.push({ x: s, y: netPayoff });
+        }
+        return points;
+      }, [activePositions, hasPos, minX, maxX, cPrice]);
+
+      return (
+        <div style={{
+          width: '100%',
+          height: '75px',
+          backgroundColor: '#0F172A',
+          borderRadius: '6px',
+          border: '1px solid #334155',
+          marginTop: '6px',
+          marginBottom: '4px',
+          padding: '4px 0',
+          position: 'relative',
+          overflow: 'hidden'
+        }}>
+          {!hasPos && (
+            <div style={{
+              position: 'absolute',
+              top: '4px',
+              right: '8px',
+              fontSize: '9px',
+              color: '#475569',
+              fontFamily: 'monospace',
+              pointerEvents: 'none'
+            }}>
+              대기중 (빈 프레임)
+            </div>
+          )}
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={{ top: 8, right: 10, bottom: 4, left: 10 }}>
+              <XAxis 
+                type="number" 
+                dataKey="x" 
+                domain={[minX, maxX]} 
+                hide={true} 
+              />
+              <YAxis 
+                type="number" 
+                dataKey="y" 
+                hide={true} 
+              />
+              <ReferenceLine y={0} stroke="#334155" strokeWidth={1} />
+              <ReferenceLine 
+                x={cPrice} 
+                stroke="#38BDF8" 
+                strokeWidth={1.5} 
+              />
+              {hasPos && (
+                <Line
+                  type="monotone"
+                  dataKey="y"
+                  stroke="#8B5CF6"
+                  strokeWidth={1.5}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    });
+
+    // ==============================================================================
     // 3-C. [신설] 8대 전략 통합 4x2 그리드 매트릭스 대시보드 (위아래 4개씩 동일 크기 배치)
     // ==============================================================================
-    const MasterMultiStrategyMatrixDashboard = memo(({ weights, strategyPnL, portfolioOptions, futuresQty }) => {
+    const MasterMultiStrategyMatrixDashboard = memo(({ weights, strategyPnL, portfolioOptions, futuresQty, currentPrice }) => {
       const pnlData = strategyPnL || {};
       const weightData = weights || {};
       const options = portfolioOptions || [];
@@ -1262,54 +1398,135 @@
                     </div>
                   </div>
 
-                  {/* 📌 [전략 카드 세부 포지션 블록]: 선물 / CALL / PUT / 꼬리표 상세 노출 */}
+                  {/* 📌 [개별 전략 전용 미니 이론 합성 페이오프 차트] */}
+                  <SingleStrategyPayoffDiagram 
+                    positions={stratPositions} 
+                    currentPrice={currentPrice} 
+                  />
+
+                  {/* 📌 [전략 카드 세부 포지션 2차원 표 매트릭스]: (헤더: FUTURE | PUT | CALL, 행: 매도(빨강) / 매수(초록)) */}
                   <div style={{
-                    marginTop: '8px',
-                    padding: '6px 8px',
-                    borderRadius: '6px',
-                    backgroundColor: '#1E293B',
+                    marginTop: '6px',
+                    backgroundColor: '#0F172A',
+                    borderRadius: '8px',
                     border: '1px solid #334155',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '4px',
-                    fontSize: '10px',
-                    fontFamily: 'monospace'
+                    overflow: 'hidden',
+                    fontFamily: 'monospace',
+                    fontSize: '9px'
                   }}>
-                    {/* 1. 선물 (FUTURES) 포지션 */}
-                    {stratFutures.length > 0 ? (
-                      stratFutures.map((f, i) => (
-                        <div key={`fut-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: f.side === 'BUY' ? '#EF4444' : '#3B82F6' }}>
-                          <span>[선물] <strong style={{ textDecoration: 'underline' }}>{f.side === 'BUY' ? '매수' : '매도'}</strong> {f.qty}계약</span>
-                          <span>@{typeof f.price === 'number' ? f.price.toFixed(2) : (Number(f.price) || 0).toFixed(2)}P {f.tag_id && <span style={f.tag_id === 'O/N' ? { fontSize: '9px', padding: '1px 4px', backgroundColor: '#F59E0B', borderRadius: '3px', color: '#000000', fontWeight: 'bold' } : { fontSize: '8px', padding: '1px 3px', backgroundColor: '#334155', borderRadius: '3px', color: '#94A3B8' }}>{f.tag_id}</span>}</span>
-                        </div>
-                      ))
-                    ) : (
-                      <div style={{ color: '#475569', fontSize: '9px' }}>선물: 보유 없음</div>
-                    )}
+                    {/* 1행: 헤더 행 ([빈칸] | FUTURE | PUT | CALL) */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: '0.8fr 1.4fr 1.4fr 1.4fr',
+                      backgroundColor: '#1E293B',
+                      borderBottom: '1px solid #334155',
+                      textAlign: 'center',
+                      fontWeight: 800,
+                      color: '#94A3B8',
+                      padding: '3px 0'
+                    }}>
+                      <div style={{ borderRight: '1px solid #334155' }}></div>
+                      <div style={{ borderRight: '1px solid #334155' }}>FUTURE</div>
+                      <div style={{ borderRight: '1px solid #334155' }}>PUT</div>
+                      <div>CALL</div>
+                    </div>
 
-                    {/* 2. 콜 옵션 (CALL) 포지션 */}
-                    {stratCalls.length > 0 ? (
-                      stratCalls.map((c, i) => (
-                        <div key={`call-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#EF4444' }}>
-                          <span>[CALL] {c.side === 'BUY' ? '매수' : '매도'} K:{c.strike}</span>
-                          <span>{typeof c.price === 'number' ? c.price.toFixed(2) : (Number(c.price) || 0).toFixed(2)}P ({c.qty}계약) {c.tag_id && <span style={c.tag_id === 'O/N' ? { fontSize: '9px', padding: '1px 4px', backgroundColor: '#F59E0B', borderRadius: '3px', color: '#000000', fontWeight: 'bold' } : { fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(239, 68, 68, 0.2)', borderRadius: '3px', color: '#EF4444', border: '1px solid #EF4444' }}>{c.tag_id}</span>}</span>
-                        </div>
-                      ))
-                    ) : (
-                      <div style={{ color: '#475569', fontSize: '9px' }}>콜옵션: 보유 없음</div>
-                    )}
+                    {/* 2행: 매도 행 (매도 (빨강) | FUTURE 매도 | PUT 매도 | CALL 매도) */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: '0.8fr 1.4fr 1.4fr 1.4fr',
+                      borderBottom: '1px solid #334155',
+                      textAlign: 'center',
+                      alignItems: 'center',
+                      padding: '3px 0',
+                      minHeight: '22px'
+                    }}>
+                      <div style={{ color: '#EF4444', fontWeight: 800, borderRight: '1px solid #334155' }}>매도</div>
+                      
+                      {/* FUTURE 매도 */}
+                      <div style={{ borderRight: '1px solid #334155', color: '#F8FAFC', padding: '0 2px' }}>
+                        {stratFutures.filter(p => p.side === 'SELL').length > 0 ? (
+                          stratFutures.filter(p => p.side === 'SELL').map((f, i) => (
+                            <div key={`f-s-${i}`}>
+                              @{typeof f.price === 'number' ? f.price.toFixed(1) : (Number(f.price) || 0).toFixed(1)} [{f.qty}]
+                              {f.tag_id && <span style={{ marginLeft: '3px', fontSize: '7.5px', padding: '0 3px', borderRadius: '2px', backgroundColor: f.tag_id === 'O/N' ? '#F59E0B' : '#334155', color: f.tag_id === 'O/N' ? '#000000' : '#94A3B8', fontWeight: f.tag_id === 'O/N' ? 'bold' : 'normal' }}>{f.tag_id}</span>}
+                            </div>
+                          ))
+                        ) : '-'}
+                      </div>
 
-                    {/* 3. 풋 옵션 (PUT) 포지션 */}
-                    {stratPuts.length > 0 ? (
-                      stratPuts.map((p, i) => (
-                        <div key={`put-${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#3B82F6' }}>
-                          <span>[PUT] {p.side === 'BUY' ? '매수' : '매도'} K:{p.strike}</span>
-                          <span>{typeof p.price === 'number' ? p.price.toFixed(2) : (Number(p.price) || 0).toFixed(2)}P ({p.qty}계약) {p.tag_id && <span style={p.tag_id === 'O/N' ? { fontSize: '9px', padding: '1px 4px', backgroundColor: '#F59E0B', borderRadius: '3px', color: '#000000', fontWeight: 'bold' } : { fontSize: '8px', padding: '1px 3px', backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: '3px', color: '#3B82F6', border: '1px solid #3B82F6' }}>{p.tag_id}</span>}</span>
-                        </div>
-                      ))
-                    ) : (
-                      <div style={{ color: '#475569', fontSize: '9px' }}>풋옵션: 보유 없음</div>
-                    )}
+                      {/* PUT 매도 */}
+                      <div style={{ borderRight: '1px solid #334155', color: '#F8FAFC', padding: '0 2px' }}>
+                        {stratPuts.filter(p => p.side === 'SELL').length > 0 ? (
+                          stratPuts.filter(p => p.side === 'SELL').map((p, i) => (
+                            <div key={`p-s-${i}`}>
+                              {(Number(p.strike) || 0).toFixed(1)} [{p.qty}]
+                              {p.tag_id && <span style={{ marginLeft: '3px', fontSize: '7.5px', padding: '0 3px', borderRadius: '2px', backgroundColor: p.tag_id === 'O/N' ? '#F59E0B' : '#334155', color: p.tag_id === 'O/N' ? '#000000' : '#94A3B8', fontWeight: p.tag_id === 'O/N' ? 'bold' : 'normal' }}>{p.tag_id}</span>}
+                            </div>
+                          ))
+                        ) : '-'}
+                      </div>
+
+                      {/* CALL 매도 */}
+                      <div style={{ color: '#F8FAFC', padding: '0 2px' }}>
+                        {stratCalls.filter(p => p.side === 'SELL').length > 0 ? (
+                          stratCalls.filter(p => p.side === 'SELL').map((c, i) => (
+                            <div key={`c-s-${i}`}>
+                              {(Number(c.strike) || 0).toFixed(1)} [{c.qty}]
+                              {c.tag_id && <span style={{ marginLeft: '3px', fontSize: '7.5px', padding: '0 3px', borderRadius: '2px', backgroundColor: c.tag_id === 'O/N' ? '#F59E0B' : '#334155', color: c.tag_id === 'O/N' ? '#000000' : '#94A3B8', fontWeight: c.tag_id === 'O/N' ? 'bold' : 'normal' }}>{c.tag_id}</span>}
+                            </div>
+                          ))
+                        ) : '-'}
+                      </div>
+                    </div>
+
+                    {/* 3행: 매수 행 (매수 (초록) | FUTURE 매수 | PUT 매수 | CALL 매수) */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: '0.8fr 1.4fr 1.4fr 1.4fr',
+                      textAlign: 'center',
+                      alignItems: 'center',
+                      padding: '3px 0',
+                      minHeight: '22px'
+                    }}>
+                      <div style={{ color: '#10B981', fontWeight: 800, borderRight: '1px solid #334155' }}>매수</div>
+
+                      {/* FUTURE 매수 */}
+                      <div style={{ borderRight: '1px solid #334155', color: '#F8FAFC', padding: '0 2px' }}>
+                        {stratFutures.filter(p => p.side === 'BUY').length > 0 ? (
+                          stratFutures.filter(p => p.side === 'BUY').map((f, i) => (
+                            <div key={`f-b-${i}`}>
+                              @{typeof f.price === 'number' ? f.price.toFixed(1) : (Number(f.price) || 0).toFixed(1)} [{f.qty}]
+                              {f.tag_id && <span style={{ marginLeft: '3px', fontSize: '7.5px', padding: '0 3px', borderRadius: '2px', backgroundColor: f.tag_id === 'O/N' ? '#F59E0B' : '#334155', color: f.tag_id === 'O/N' ? '#000000' : '#94A3B8', fontWeight: f.tag_id === 'O/N' ? 'bold' : 'normal' }}>{f.tag_id}</span>}
+                            </div>
+                          ))
+                        ) : '-'}
+                      </div>
+
+                      {/* PUT 매수 */}
+                      <div style={{ borderRight: '1px solid #334155', color: '#F8FAFC', padding: '0 2px' }}>
+                        {stratPuts.filter(p => p.side === 'BUY').length > 0 ? (
+                          stratPuts.filter(p => p.side === 'BUY').map((p, i) => (
+                            <div key={`p-b-${i}`}>
+                              {(Number(p.strike) || 0).toFixed(1)} [{p.qty}]
+                              {p.tag_id && <span style={{ marginLeft: '3px', fontSize: '7.5px', padding: '0 3px', borderRadius: '2px', backgroundColor: p.tag_id === 'O/N' ? '#F59E0B' : '#334155', color: p.tag_id === 'O/N' ? '#000000' : '#94A3B8', fontWeight: p.tag_id === 'O/N' ? 'bold' : 'normal' }}>{p.tag_id}</span>}
+                            </div>
+                          ))
+                        ) : '-'}
+                      </div>
+
+                      {/* CALL 매수 */}
+                      <div style={{ color: '#F8FAFC', padding: '0 2px' }}>
+                        {stratCalls.filter(p => p.side === 'BUY').length > 0 ? (
+                          stratCalls.filter(p => p.side === 'BUY').map((c, i) => (
+                            <div key={`c-b-${i}`}>
+                              {(Number(c.strike) || 0).toFixed(1)} [{c.qty}]
+                              {c.tag_id && <span style={{ marginLeft: '3px', fontSize: '7.5px', padding: '0 3px', borderRadius: '2px', backgroundColor: c.tag_id === 'O/N' ? '#F59E0B' : '#334155', color: c.tag_id === 'O/N' ? '#000000' : '#94A3B8', fontWeight: c.tag_id === 'O/N' ? 'bold' : 'normal' }}>{c.tag_id}</span>}
+                            </div>
+                          ))
+                        ) : '-'}
+                      </div>
+                    </div>
                   </div>
 
                   {/* 카드 하단: 실현 손익 및 비중 / 총 보유량 */}
@@ -2856,7 +3073,7 @@
 
 
             {/* 📊 [신설 통합] 8대 전략 통합 가로 100% 매트릭스 대시보드 (PnL + 프로세스 + 선물/옵션 체결 포지션) */}
-            <MasterMultiStrategyMatrixDashboard weights={strategyWeights} strategyPnL={strategyPnL} portfolioOptions={portfolioOptions} futuresQty={futuresQty} />
+            <MasterMultiStrategyMatrixDashboard weights={strategyWeights} strategyPnL={strategyPnL} portfolioOptions={portfolioOptions} futuresQty={futuresQty} currentPrice={currentPrice} />
 
             {/* 🚀 누적 수익률 차트 (기존 StrategyPnLBarChart 위치로 이동, 가로 100% 전체 폭 확장 적용) */}
             <section style={{ ...styles.card, gridColumn: '1 / -1', height: '360px' }}>

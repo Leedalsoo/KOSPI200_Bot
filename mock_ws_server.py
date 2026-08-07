@@ -616,6 +616,25 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
     
     # ── [NEW] Track 8: Monthly Wide Strangle Strategy ──
     track8 = Track8(config={})
+    t8_init = track8.evaluate_entry(
+        dte=simulated_days_to_expiry,
+        budget=initial_capital * 0.050,
+        current_price=current_price,
+        current_regime="NORMAL",
+        date_str=calendar_sim.current_date.strftime("%Y-%m-%d")
+    )
+    if t8_init.get("status") == "TRIGGERED":
+        for signal in t8_init.get("signals", []):
+            portfolio_options.append({
+                "type": "PUT", "side": "BUY", "strike": float(signal.get("put_strike")), "price": 1.50, "qty": int(signal.get("qty_put")),
+                "activeStrategy": "Track8", "is_insurance": True
+            })
+            portfolio_options.append({
+                "type": "CALL", "side": "BUY", "strike": float(signal.get("call_strike")), "price": 1.20, "qty": int(signal.get("qty_call")),
+                "activeStrategy": "Track8", "is_insurance": True
+            })
+            logger.warning("⚠️ [MONTHLY STRANGLE BUY] 월간 지정가 분할 큐 양매수 진입! (예산지출: KRW %s / 콜: %d계약 / 풋: %d계약)", 
+                           f"{signal.get('cost', 0.0):,.0f}", signal.get("qty_call", 1), signal.get("qty_put", 2))
 
     # ── [NEW] Track 9: Overnight Insurance Strategy ──
     track9 = Track9(config={})
@@ -1348,11 +1367,11 @@ async def simulation_loop() -> None:  # noqa: C901
             # 2. 위클리 옵션 센서
             time_str_val = calendar_sim.current_time.strftime("%H:%M:%S")
             is_new_week_start = (date_changed and calendar_sim.current_time.weekday() == 0)
-            track7_allocated_capital = total_equity * 0.005  # Track 7 할당 자본 0.5%
+            track7_allocated_capital = total_equity * 0.02  # Track 7 할당 자본 2.0%
             weekly_state = weekly_sensor.scan_weekly_market(current_price, track7_allocated_capital, is_new_week_start)
             
-            # 3. 데일리 / 0DTE 옵션 센서 (Track 6 할당 자본 0.1%)
-            track6_allocated_capital = total_equity * 0.001  # Track 6 할당 자본 0.1%
+            # 3. 데일리 / 0DTE 옵션 센서 (Track 6 할당 자본 2.0%)
+            track6_allocated_capital = total_equity * 0.02  # Track 6 할당 자본 2.0%
             daily_state = daily_sensor.monitor_daily_risk(active_vol, BASE_VOLATILITY, track6_allocated_capital)
 
             # 횡보장 노이즈 필터 동작을 위해 최근 10틱 가격 보관 및 표준편차 산출
@@ -1984,9 +2003,10 @@ async def simulation_loop() -> None:  # noqa: C901
                     
                     calculated_fee += liq_fee
                     
-                    # 🛡️ Track1 넓은 양매수(BUY) 테일 보험 포지션은 절대로 지우지 않고 보존!
+                    # 🛡️ 양매수를 기본으로 하는 모든 롱 옵션(BUY) 포지션은 증거금을 발생시키지 않으므로 절대로 지우지 않고 100% 보존!
                     t1_long_buys = [p for p in portfolio_options if p.get("activeStrategy") == "Track1" and p.get("side") == "BUY"]
-                    portfolio_options = t1_long_buys
+                    protected_long_buys = [p for p in portfolio_options if p.get("side") == "BUY"]
+                    portfolio_options = protected_long_buys
                     current_position_qty = 0
                     
                     # 만약 t1_long_buys가 전혀 없으면 즉시 넓은 양매수 재건!
@@ -2060,16 +2080,23 @@ async def simulation_loop() -> None:  # noqa: C901
                                     # 진입 수수료 부과
                                     calculated_fee += arb_qty * current_price * FUTURES_MULTIPLIER * FUTURES_FEE_RATE
                                     
+                                    track3_atm = round(current_price / 2.5) * 2.5
                                     if t_type == "SHORT_SPREAD":
                                         current_position_qty -= arb_qty
                                         track3_net_qty = -arb_qty
+                                        # 선물 숏 + 합성 컨버전 옵션 레그 (Call BUY + Put SELL) 주입
                                         portfolio_options.append({"type": "FUTURES", "side": "SELL", "strike": 0, "price": round(current_price, 2), "qty": arb_qty, "activeStrategy": "Track3", "tag_id": "ARB"})
-                                        logger.info("⚡ [TRACK 3 ARB] %s - 스프레드 매도(선물 숏) %d계약 진입! (진입가: %.2f)", signal.get('reason'), arb_qty, current_price)
+                                        portfolio_options.append({"type": "CALL", "side": "BUY", "strike": track3_atm, "price": 4.50, "qty": arb_qty, "activeStrategy": "Track3", "tag_id": "ARB"})
+                                        portfolio_options.append({"type": "PUT", "side": "SELL", "strike": track3_atm, "price": 4.50, "qty": arb_qty, "activeStrategy": "Track3", "tag_id": "ARB"})
+                                        logger.info("⚡ [TRACK 3 ARB] %s - 스프레드 매도(선물 숏 + 컨버전 옵션 1쌍) %d계약 진입! (진입가: %.2f)", signal.get('reason'), arb_qty, current_price)
                                     elif t_type == "LONG_SPREAD":
                                         current_position_qty += arb_qty
                                         track3_net_qty = arb_qty
+                                        # 선물 롱 + 합성 리버설 옵션 레그 (Call SELL + Put BUY) 주입
                                         portfolio_options.append({"type": "FUTURES", "side": "BUY", "strike": 0, "price": round(current_price, 2), "qty": arb_qty, "activeStrategy": "Track3", "tag_id": "ARB"})
-                                        logger.info("⚡ [TRACK 3 ARB] %s - 스프레드 매수(선물 롱) %d계약 진입! (진입가: %.2f)", signal.get('reason'), arb_qty, current_price)
+                                        portfolio_options.append({"type": "CALL", "side": "SELL", "strike": track3_atm, "price": 4.50, "qty": arb_qty, "activeStrategy": "Track3", "tag_id": "ARB"})
+                                        portfolio_options.append({"type": "PUT", "side": "BUY", "strike": track3_atm, "price": 4.50, "qty": arb_qty, "activeStrategy": "Track3", "tag_id": "ARB"})
+                                        logger.info("⚡ [TRACK 3 ARB] %s - 스프레드 매수(선물 롱 + 리버설 옵션 1쌍) %d계약 진입! (진입가: %.2f)", signal.get('reason'), arb_qty, current_price)
                                         
                                     trade_replay_analyzer.capture_trade_event(
                                         trade_type="ENTRY",
@@ -2082,7 +2109,7 @@ async def simulation_loop() -> None:  # noqa: C901
                                         realized_pnl=0.0,
                                         sensor_snapshot={"zScore": 1.8, "activeVol": round(active_vol, 2), "vpin": 0.15},
                                         state_snapshot={"capital": round(current_capital, 2), "equity": round(total_equity, 2), "marginRatio": round(margin_ratio, 1), "slippageMs": dynamic_slippage_ms},
-                                        entry_reason="Track 3 Z-Score 1.8 차익거래 시그널 발생",
+                                        entry_reason="Track 3 Z-Score 1.8 합성 차익거래 시그널 발생",
                                         date_str=date_str
                                     )
 
@@ -2099,13 +2126,13 @@ async def simulation_loop() -> None:  # noqa: C901
                                     if t_type == "CLOSE_SHORT_SPREAD":
                                         current_position_qty += arb_qty # 숏 청산
                                         realized_pnl = (track3_entry_price - current_price) * track3_entry_qty * FUTURES_MULTIPLIER
-                                        portfolio_options = [p for p in portfolio_options if not (p.get("activeStrategy") == "Track3" and p.get("type") == "FUTURES")]
-                                        logger.info("💰 [TRACK 3 ARB CLOSE] %s - 숏 스프레드 청산! (틱 마진 MTM에 기반영)", signal.get('reason'))
+                                        portfolio_options = [p for p in portfolio_options if not p.get("activeStrategy") == "Track3"]
+                                        logger.info("💰 [TRACK 3 ARB CLOSE] %s - 숏 스프레드 및 옵션 차익 레그 전량 청산! (틱 마진 MTM에 기반영)", signal.get('reason'))
                                     elif t_type == "CLOSE_LONG_SPREAD":
                                         current_position_qty -= arb_qty # 롱 청산
                                         realized_pnl = (current_price - track3_entry_price) * track3_entry_qty * FUTURES_MULTIPLIER
-                                        portfolio_options = [p for p in portfolio_options if not (p.get("activeStrategy") == "Track3" and p.get("type") == "FUTURES")]
-                                        logger.info("💰 [TRACK 3 ARB CLOSE] %s - 롱 스프레드 청산! (틱 마진 MTM에 기반영)", signal.get('reason'))
+                                        portfolio_options = [p for p in portfolio_options if not p.get("activeStrategy") == "Track3"]
+                                        logger.info("💰 [TRACK 3 ARB CLOSE] %s - 롱 스프레드 및 옵션 차익 레그 전량 청산! (틱 마진 MTM에 기반영)", signal.get('reason'))
                                     
                                     trade_replay_analyzer.capture_trade_event(
                                         trade_type="EXIT",
@@ -2318,7 +2345,7 @@ async def simulation_loop() -> None:  # noqa: C901
                     if weekly_state.get("weekly_entry_ready"):
                         t7_res = track7.evaluate_insurance_buy(
                             current_price=current_price,
-                            budget=total_equity * 0.005,
+                            budget=total_equity * 0.02,
                             date_str=date_str,
                             is_new_week_start=is_new_week_start,
                             active_vol=active_vol
@@ -2699,11 +2726,16 @@ async def simulation_loop() -> None:  # noqa: C901
             # ── 10.5 [NEW] Track 4: Smart Gamma Scalping & D-3 Attack Mode ──
             t4_has_pos = any(p.get("activeStrategy") == "Track4" for p in portfolio_options)
             t4_enabled = enabled_strategies.get("Track4", True)
+            
+            # 🛡️ [TRACK 4 STATE SYNC] 계좌 내 Track4 롱 양매수 포지션 존재 시 scalp_state 자동 동기화 (중복 진입 방지)
+            if t4_has_pos and track4:
+                track4.scalp_state["is_active"] = True
+
             if autobot_active and not track3_override and (t4_enabled or t4_has_pos):
                 current_atm = round(current_price / 2.5) * 2.5
                 
-                # 신규 베이스캠프 양매수 구축은 t4_enabled 및 D-4(4.0) 이상 일 때만 실행
-                if t4_enabled and simulated_days_to_expiry >= 4.0 and not track4.scalp_state.get("is_active"):
+                # 신규 베이스캠프 양매수 구축은 계좌 내 미보유(not t4_has_pos) 및 상태 미작동 시에만 1회 실행
+                if t4_enabled and simulated_days_to_expiry >= 4.0 and (not t4_has_pos) and (not track4.scalp_state.get("is_active")):
                     gamma_qty = 0 if total_equity < 15_000_000.0 else max(1, int(total_equity / 30_000_000.0))
                     if gamma_qty > 0:
                         track4.scalp_state["is_active"] = True
@@ -2771,12 +2803,13 @@ async def simulation_loop() -> None:  # noqa: C901
                     # PUT: 지수 하락 시 이익, CALL: 지수 상승 시 이익
                     if pos_type == "PUT":
                         intrinsic = max(0.0, strike_val - current_price)
-                        trigger = (strike_val - current_price) >= -5.0
                     elif pos_type == "CALL":
                         intrinsic = max(0.0, current_price - strike_val)
-                        trigger = (current_price - strike_val) >= -5.0
                     else:
                         continue  # 알 수 없는 타입 건너뜀
+
+                    # 🛡️ [CRITICAL FIX] 조기 +0원 청산 차단: 내재가치가 최소 1.0pt (25만원) 이상 실제 유의미하게 발생 시에만 익절 청산!
+                    trigger = intrinsic >= 1.0
 
                     if trigger:
                         # 1. 평가이익 계산 및 실현 (지수 기반 내재가치 정직 수취 — 이중계상 방지 롤백: 실현이익 가산)
