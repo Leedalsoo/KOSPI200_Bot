@@ -1,4 +1,5 @@
 import logging
+import math
 from collections import deque
 from typing import Dict, Any
 
@@ -20,19 +21,41 @@ class FuturesSensor:
         logger.info("Futures Analytics Sensor initialized.")
 
     def update_sensor(self, futures_price: float, spot_price: float, open_interest: int) -> Dict[str, Any]:
+        # 🛡️ [데이터 정합성 가드] None 또는 NaN 유입 시 예외 방지 안전 가드
+        if futures_price is None or spot_price is None or open_interest is None:
+            logger.warning("📡 [FUTURES SENSOR] Missing input data (futures_price=%s, spot_price=%s, oi=%s)", futures_price, spot_price, open_interest)
+            return {
+                "futures_price": futures_price or 0.0,
+                "spot_price": spot_price or 0.0,
+                "basis": self.basis,
+                "open_interest": open_interest or 0,
+                "oi_trend_alert": self.oi_trend_alert
+            }
+        
+        if math.isnan(futures_price) or math.isnan(spot_price) or math.isnan(float(open_interest)):
+            logger.warning("📡 [FUTURES SENSOR] NaN detected in input data.")
+            return {
+                "futures_price": futures_price,
+                "spot_price": spot_price,
+                "basis": self.basis,
+                "open_interest": open_interest,
+                "oi_trend_alert": self.oi_trend_alert
+            }
+
         # 1. 실시간 베이시스 산출
         self.basis = round(futures_price - spot_price, 2)
         
-        # 2. 미결제약정 추세 감지
-        self.oi_history.append(open_interest)
+        # 2. 미결제약정 추세 감지 (음수 미결제약정 방어)
+        safe_oi = max(0, open_interest)
+        self.oi_history.append(safe_oi)
         self.oi_trend_alert = False
         
         if len(self.oi_history) >= 10:
             avg_oi = sum(list(self.oi_history)[:-1]) / (len(self.oi_history) - 1)
             # 최근 미결제약정이 평균 대비 1.5배 급증한 경우 추세 휩쏘 경보 설정
-            if avg_oi > 0 and open_interest >= avg_oi * 1.5:
+            if avg_oi > 0 and safe_oi >= avg_oi * 1.5:
                 self.oi_trend_alert = True
-                logger.warning("📡 [FUTURES SENSOR ALERT] 미결제약정 급증 감지 (현재 OI: %d / 10틱 평균: %.1f) - 선물 추세 휩쏘 위험 경보!", open_interest, avg_oi)
+                logger.warning("📡 [FUTURES SENSOR ALERT] 미결제약정 급증 감지 (현재 OI: %d / 10틱 평균: %.1f) - 선물 추세 휩쏘 위험 경보!", safe_oi, avg_oi)
 
         return {
             "futures_price": futures_price,
@@ -60,6 +83,13 @@ class WeeklyOptionsSensor:
         """
         위클리 옵션 진입 적격성 판단 (상장 첫날 여부 및 최소 가용 예산 한도)
         """
+        # 🛡️ [데이터 정합성 가드] budget 결측/음수/NaN 방어
+        if budget is None or math.isnan(budget) or budget <= 0:
+            return {
+                "weekly_entry_ready": False,
+                "reason": "Invalid or zero budget."
+            }
+
         weekly_entry_ready = False
         reason = "Wait for new week start."
 
@@ -95,6 +125,25 @@ class DailyOptionsSensor:
         """
         데일리 보험(전략 6) 기동을 위한 초단기 옵션 위험도 분석
         """
+        # 🛡️ [데이터 정합성 가드] active_vol/base_vol/budget 결측/음수/NaN 방어
+        if active_vol is None or base_vol is None or budget is None:
+            return {
+                "daily_vol_alert": False,
+                "reason": "Missing volatility or budget inputs."
+            }
+        
+        if math.isnan(active_vol) or math.isnan(base_vol) or math.isnan(budget):
+            return {
+                "daily_vol_alert": False,
+                "reason": "NaN volatility or budget inputs."
+            }
+
+        if base_vol <= 0 or budget <= 0:
+            return {
+                "daily_vol_alert": False,
+                "reason": "Invalid zero or negative base volatility/budget."
+            }
+
         daily_vol_alert = False
         reason = "Normal market volatility."
 
@@ -112,3 +161,4 @@ class DailyOptionsSensor:
             "daily_vol_alert": daily_vol_alert,
             "reason": reason
         }
+

@@ -42,7 +42,20 @@ class TradeReplayAnalyzer:
         sensor_snapshot: Dict[str, Any],
         state_snapshot: Dict[str, Any],
         entry_reason: Optional[str] = None,
-        date_str: Optional[str] = None
+        date_str: Optional[str] = None,
+        order_purpose: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+        broker_order_id: Optional[str] = None,
+        fill_id: Optional[str] = None,
+        parent_order_id: Optional[str] = None,
+        parent_position_id: Optional[str] = None,
+        hedge_ref_id: Optional[str] = None,
+        requested_price: Optional[float] = None,
+        market_price: Optional[float] = None,
+        execution_price: Optional[float] = None,
+        slippage_cost: float = 0.0,
+        fee: float = 0.0,
+        order_type: str = "LIMIT"
     ) -> Dict[str, Any]:
         """
         거래 발생 시 센서, 대시보드 상태, 규정 준수 및 AI 타이밍 분석 자동 생성 및 월/일 트리 기록
@@ -56,7 +69,13 @@ class TradeReplayAnalyzer:
                 self.last_sim_date = date_str
             curr_date = self.last_sim_date
 
-        trade_id = f"TRD-{int(time.time())}-{str(uuid.uuid4())[:6]}"
+        if not fill_id:
+            seq_num = len(self.trade_records) + 1
+            clean_date = curr_date.replace("-", "")
+            clean_order_id = str(client_order_id).replace("-", "")[:8] if client_order_id else "00000000"
+            trade_id = f"TRD-{clean_date}-{seq_num:06d}-{clean_order_id}"
+        else:
+            trade_id = fill_id
         curr_month = curr_date[:7] if len(curr_date) >= 7 else (time.strftime("%Y-%m") if self.mode in ("LIVE", "MOCK") else "2025-01")
         
         # 1. 규칙 준수 (Rule Compliance) 자동 판정
@@ -71,21 +90,59 @@ class TradeReplayAnalyzer:
             sensor_snapshot=sensor_snapshot
         )
 
+        # 3. Order Purpose (HEDGE vs STRATEGY) 사후 추적성 메타데이터 보존
+        inferred_purpose = order_purpose
+        if not inferred_purpose:
+            reason_upper = (reason or "").upper()
+            if any(k in reason_upper for k in ["INSURANCE", "HEDGE", "TAIL", "COVER"]):
+                inferred_purpose = "RISK_HEDGE"
+            elif "ARB" in reason_upper:
+                inferred_purpose = "ARBITRAGE"
+            else:
+                inferred_purpose = "STRATEGY_" + trade_type
+
+        exec_price = execution_price if execution_price is not None else price
+        req_price = requested_price if requested_price is not None else price
+        mkt_price = market_price if market_price is not None else price
+
         record = {
             "tradeId": trade_id,
+            "clientOrderId": client_order_id or trade_id,
+            "brokerOrderId": broker_order_id or trade_id,
+            "parentOrderId": parent_order_id,
+            "parentPositionId": parent_position_id,
+            "hedgeRefId": hedge_ref_id,
             "dateStr": curr_date,
             "monthStr": curr_month,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "tradeType": trade_type,
+            "orderPurpose": inferred_purpose,
+            "orderType": order_type,
             "trackName": track_name,
+            "strategyId": track_name,
             "side": side,
             "assetType": asset_type,
             "price": round(price, 2),
+            "requestedPrice": round(req_price, 2),
+            "marketPrice": round(mkt_price, 2),
+            "executionPrice": round(exec_price, 2),
             "qty": qty,
+            "filledQty": qty,
+            "slippageCost": round(slippage_cost, 2),
+            "fee": round(fee, 2),
             "reason": reason,
             "entryReason": entry_reason or (reason if trade_type == "ENTRY" else "이전 규칙에 의한 정상 진입"),
             "exitReason": reason if trade_type == "EXIT" else "-",
             "realizedPnL": round(realized_pnl, 2),
+            "riskState": {
+                "drawdown_rate": state_snapshot.get("drawdown_rate", 0.0),
+                "daily_loss_used": state_snapshot.get("daily_loss_used", 0.0),
+                "margin_ratio": state_snapshot.get("margin_ratio", 0.0),
+                "used_margin": state_snapshot.get("used_margin", 0.0),
+                "available_funds": state_snapshot.get("available_funds", 0.0),
+                "risk_halt": state_snapshot.get("risk_halt", False),
+                "emergency_stop": state_snapshot.get("emergency_stop", False)
+            },
             "sensorSnapshot": sensor_snapshot,
             "stateSnapshot": state_snapshot,
             "ruleCompliance": compliance_res,

@@ -216,20 +216,21 @@ class TimeUtils:
 
 class WallClockTimer:
     """
-    실제 wall-clock 경과시간(초) 기반 타임아웃 헬퍼
+    경과시간(초) 기반 타임아웃 헬퍼 (Wall Clock 및 Virtual Simulation Time 겸용)
     """
-    def __init__(self, timeout_seconds: float) -> None:
+    def __init__(self, timeout_seconds: float, current_sim_time: Optional[float] = None) -> None:
         self.timeout_seconds: float = timeout_seconds
-        self.start_time: float = time.time()
+        self.start_time: float = current_sim_time if current_sim_time is not None else time.time()
 
-    def reset(self) -> None:
+    def reset(self, current_sim_time: Optional[float] = None) -> None:
         """타이머 리셋"""
-        self.start_time = time.time()
+        self.start_time = current_sim_time if current_sim_time is not None else time.time()
 
-    def elapsed(self) -> float:
+    def elapsed(self, current_sim_time: Optional[float] = None) -> float:
         """경과 시간(초) 반환"""
-        return time.time() - self.start_time
+        now = current_sim_time if current_sim_time is not None else time.time()
+        return now - self.start_time
 
-    def is_expired(self) -> bool:
+    def is_expired(self, current_sim_time: Optional[float] = None) -> bool:
         """타임아웃 여부 반환"""
-        return self.elapsed() >= self.timeout_seconds
+        return self.elapsed(current_sim_time) >= self.timeout_seconds

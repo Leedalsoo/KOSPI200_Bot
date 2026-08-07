@@ -2477,6 +2477,27 @@
             if (parsedData.monthlyReturn !== undefined) {
               setMonthlyReturn(parsedData.monthlyReturn);
             }
+            if (parsedData.realizedPnl !== undefined) {
+              window._realizedPnl = parsedData.realizedPnl;
+            }
+            if (parsedData.unrealizedPnl !== undefined) {
+              window._unrealizedPnl = parsedData.unrealizedPnl;
+            }
+            if (parsedData.hedgePnl !== undefined) {
+              window._hedgePnl = parsedData.hedgePnl;
+            }
+            if (parsedData.netPnl !== undefined) {
+              window._netPnl = parsedData.netPnl;
+            }
+            if (parsedData.restartCount !== undefined) {
+              window._restartCount = parsedData.restartCount;
+            }
+            if (parsedData.isMarketOpenedToday !== undefined) {
+              window._isMarketOpenedToday = parsedData.isMarketOpenedToday;
+            }
+            if (parsedData.replaySpeed !== undefined) {
+              window._replaySpeed = parsedData.replaySpeed;
+            }
 
 
 

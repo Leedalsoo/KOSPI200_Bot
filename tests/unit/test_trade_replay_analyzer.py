@@ -69,4 +69,8 @@ def test_trade_replay_analyzer_mode_date_routing():
         sensor_snapshot={}, state_snapshot={}, date_str="2025-03-10"
     )
     assert rec_virt["dateStr"] == "2025-03-10"
+    assert "riskState" in rec_virt
+    assert "drawdown_rate" in rec_virt["riskState"]
+    assert "daily_loss_used" in rec_virt["riskState"]
+
 

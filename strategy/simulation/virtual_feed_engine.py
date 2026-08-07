@@ -13,6 +13,16 @@ class HistoricalReplayEngine:
         self.scenario_ticks: List[Dict[str, Any]] = []
         self.current_idx = 0
         self.is_active = False
+        self.replay_stats: Dict[str, int] = {
+            "total_ticks": 0,
+            "processed_ticks": 0,
+            "skipped_ticks": 0,
+            "duplicate_ticks": 0,
+            "sequence_errors": 0,
+            "timestamp_errors": 0,
+            "invalid_price_ticks": 0,
+            "missing_field_ticks": 0
+        }
 
     def load_scenario(self, scenario_name: str, start_price: Optional[float] = None) -> None:
         """
@@ -21,6 +31,17 @@ class HistoricalReplayEngine:
         self.scenario_ticks.clear()
         self.current_idx = 0
         self.is_active = True
+        random.seed(42)  # 🎲 시나리오 재생 재현성 보장용 시드 고정
+        self.replay_stats = {
+            "total_ticks": 0,
+            "processed_ticks": 0,
+            "skipped_ticks": 0,
+            "duplicate_ticks": 0,
+            "sequence_errors": 0,
+            "timestamp_errors": 0,
+            "invalid_price_ticks": 0,
+            "missing_field_ticks": 0
+        }
         
         # 1. 2020년 3월 코로나 팬데믹 서킷브레이커 폭락장 모사 시나리오 틱 생성
         if scenario_name == "COVID_PANIC_2020":

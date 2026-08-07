@@ -44,8 +44,10 @@ class EventBus:
                 
                 priority, timestamp, event_type, data = await self._queue.get()
                 
-                # 200ms 지연 데이터 Drop 로직 (Stale Data 방어)
-                if time.time() - timestamp > 0.2:
+                # 200ms 지연 데이터 Drop 로직 (Stale Data 방어 — Real-time 수신 모드에서만 판정)
+                # 시뮬레이션 틱 타임스탬프와의 시간차 오차로 인한 무작위 Drop 방어
+                now_wall = time.time()
+                if timestamp > 0 and (now_wall - timestamp > 0.2) and (now_wall - timestamp < 86400.0):
                     logger.warning(f"Dropped stale event: {event_type} (delayed > 200ms)")
                     self._queue.task_done()
                     continue
