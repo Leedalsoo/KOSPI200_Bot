@@ -823,7 +823,7 @@ async def simulation_loop() -> None:  # noqa: C901
     global price_history_60, spread_history_120, track5_active_qty, insurance_budget_pool, calculated_fee
     global SIM_CAPITAL_RATIO, SIM_VOL_LEVEL, SIM_DAILY_SHOCK_PTS
     global SIM_STRESS_CIRCUIT_BREAKER, SIM_STRESS_FLASH_CRASH, SIM_STRESS_IV_EXPLOSION, SIM_STRESS_SLIPPAGE_MS
-    global already_rolled_this_month, strategy_realized_pnl  # Phase 1.1 + 2.4
+    global already_rolled_this_month, strategy_realized_pnl, is_market_opened_today  # Phase 1.1 + 2.4
 
 
     global last_tracked_hour, hourly_start_equity, month_start_capital

@@ -157,3 +157,25 @@ def test_track3_limit_queue_and_3stage_trailing_stop() -> None:
     res_block = agent.evaluate_arbitrage({"spread_history": spread_history_enter, "active_vol": 1.0, "base_vol": 1.0, "time_str": "15:16:00"})
     assert res_block["status"] == "CLOSE_CUTOFF_BLOCK"
     assert len(res_block["signals"]) == 0
+
+def test_track3_intraday_cutoff_forced_flatten() -> None:
+    """15:15 장 마감 윈도우 진입 시 보유 중인 Track 3 포지션 100% 강제 Flat 및 신규 진입 차단 검증"""
+    agent = Track3({})
+    agent.active_position = "SHORT_SPREAD"
+    agent.holding_ticks = 15
+    
+    # 1. 15:15:00 도달 시 MARKET_CLOSE_FLATTEN 및 CLOSE_STAT_ARB 시그널 방출 확인
+    spread_normal = [0.0]*16
+    res_flatten = agent.evaluate_arbitrage({"spread_history": spread_normal, "time_str": "15:15:00"})
+    assert res_flatten["status"] == "MARKET_CLOSE_FLATTEN"
+    assert len(res_flatten["signals"]) == 1
+    assert res_flatten["signals"][0]["action"] == "CLOSE_STAT_ARB"
+    assert res_flatten["signals"][0]["type"] == "CLOSE_SHORT_SPREAD"
+    assert agent.active_position is None
+    
+    # 2. 15:15:10 다음 틱에서 멱등성 유지 (추가 청산 시그널 중복 방출 0건 및 CLOSE_CUTOFF_BLOCK 유지)
+    res_next_tick = agent.evaluate_arbitrage({"spread_history": spread_normal, "time_str": "15:15:10"})
+    assert res_next_tick["status"] == "CLOSE_CUTOFF_BLOCK"
+    assert len(res_next_tick["signals"]) == 0
+    assert agent.active_position is None
+

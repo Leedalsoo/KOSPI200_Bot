@@ -5,20 +5,25 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>KOSPI200 HFT Emergency Control Panel</title>
-  <!-- React, ReactDOM, Babel CDN 로드 -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- React, ReactDOM, Babel CDN 로드 (file:// 오리진 호환을 위해 crossorigin 제거) -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <!-- Recharts CDN 로드 (D3 의존성 포함) -->
   <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
   <script src="https://unpkg.com/recharts@2.12.0/umd/Recharts.js"></script>
   <script>
-    // 🛡️ file:/// 로컬 더블클릭 구동 시 브라우저 콘솔 소음 및 CORS/Babel 경고 필터링 가드
+    // 🛡️ file:/// 로컬 더블클릭 구동 시 브라우저 콘솔 소음, Frame Security 및 CORS/Babel 경고 필터링 가드
     window.Babel && (window.Babel.disableScriptTags = false);
     const originalWarn = console.warn;
     console.warn = function(...args) {
-      if (args[0] && typeof args[0] === 'string' && args[0].includes('Babel transformer')) return;
+      if (args[0] && typeof args[0] === 'string' && (args[0].includes('Babel transformer') || args[0].includes('Unsafe attempt to load URL') || args[0].includes('security origins'))) return;
       originalWarn.apply(console, args);
+    };
+    const originalError = console.error;
+    console.error = function(...args) {
+      if (args[0] && typeof args[0] === 'string' && (args[0].includes('Unsafe attempt to load URL') || args[0].includes('security origins'))) return;
+      originalError.apply(console, args);
     };
   </script>
   <style>
@@ -2313,9 +2318,9 @@
       }, []);
 
       const connect = useCallback(() => {
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsProtocol = (window.location.protocol === 'https:' || window.location.protocol === 'wss:') ? 'wss:' : 'ws:';
         let host = window.location.host;
-        if (!host || host === 'localhost' || host.includes('3000') || host.includes('8082')) {
+        if (!host || host === 'localhost' || host.includes('3000') || host.includes('8082') || window.location.protocol === 'file:') {
           host = 'localhost:8080';
         }
         const wsUrl = `${wsProtocol}//${host}`;

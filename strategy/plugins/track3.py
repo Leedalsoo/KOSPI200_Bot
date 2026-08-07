@@ -197,9 +197,31 @@ class Track3:
                         "reason": f"Z-Score ({z_score:.2f}) breached dynamic threshold (-{effective_z_entry:.2f}). Buying spread via Limit Queue."
                     })
 
-        # 2. 포지션을 보유 중인 경우: 3단계 동적 트레일링 스탑, 평균 회귀, 손절, 타임아웃 및 수수료 방어 탐색
+        # 2. 포지션을 보유 중인 경우: 3단계 동적 트레일링 스탑, 평균 회귀, 손절, 타임아웃, 장마감 강제 Flat 및 수수료 방어 탐색
         else:
             self.holding_ticks += 1
+            
+            # (0) 🛡️ [INTRADAY CUTOFF] 15:15:00 마감 윈도우 강제 Flat (오버나잇 갭 및 대규모 손실 방지)
+            time_str = market_data.get("time_str", "09:00:00")
+            if time_str >= "15:15:00":
+                action_type = "CLOSE_SHORT_SPREAD" if self.active_position == "SHORT_SPREAD" else "CLOSE_LONG_SPREAD"
+                signals.append({
+                    "action": "CLOSE_STAT_ARB",
+                    "type": action_type,
+                    "z_score": z_score,
+                    "qty": 1,
+                    "reason": f"⏰ [INTRADAY CUTOFF] 장 마감(15:15) 도달로 Strategy 3 오버나잇 방지 강제 Flat 청산 (Hold ticks: {self.holding_ticks})"
+                })
+                self.active_position = None
+                self.cooldown_ticks = 20
+                self.holding_ticks = 0
+                return {
+                    "strategy": "Strategy_3_StatArb",
+                    "active": False,
+                    "current_z_score": z_score,
+                    "status": "MARKET_CLOSE_FLATTEN",
+                    "signals": signals
+                }
             
             # (A) 3단계 동적 스케일링 트레일링 스탑 락인 평가
             prev_high = getattr(self, "_arb_high_pnl", 0.0)
