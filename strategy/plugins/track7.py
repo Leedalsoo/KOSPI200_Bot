@@ -2,12 +2,13 @@
 import logging
 from typing import Dict, Any, Optional
 
-from strategy.common import AtomicBudgetManager, TradingDateResetHelper
+from strategy.common import AtomicBudgetManager, TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer
+from strategy.strategy_contract import StrategyContract
 
 logger = logging.getLogger(__name__)
 
 
-class Track7:
+class Track7(StrategyContract):
     """
     [Track7] Volatility Arbitrage / Skew Trading & Weekly Tail Insurance
     - 자본 배분: 매주 상장 후 조건 만족 시 +0.5% 동적 부여

@@ -2,10 +2,12 @@ from decimal import Decimal
 import logging
 from typing import Dict, Any, List, Optional
 from strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer
+from strategy.strategy_contract import StrategyContract
 
 logger = logging.getLogger(__name__)
 
-class Track1:
+class Track1(StrategyContract):
+
     """
     [Track1] 꼬리표 순환형 다이내믹 가두리 및 미아 포지션 선물 헷지 루프 (Track 1 Tail Defense)
     - 자본 배분: 30% (공방 일체형 핵심 테일 방어선)

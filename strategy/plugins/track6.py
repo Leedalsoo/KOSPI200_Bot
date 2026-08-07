@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 import logging
 from typing import Dict, Any, Optional
-from strategy.common import TradingDateResetHelper, AtomicBudgetManager
+from strategy.common import TradingDateResetHelper, AtomicBudgetManager, ExecutionCostCalculator, WallClockTimer
+from strategy.strategy_contract import StrategyContract
 
 logger = logging.getLogger(__name__)
 
-class Track6:
+class Track6(StrategyContract):
     """
     [Track6] 데일리 테일 보험 봇 (Track 6 Daily 0DTE)
     - 자본 배분: 매일 변동성 조건 만족 시 +0.1% 동적 부여

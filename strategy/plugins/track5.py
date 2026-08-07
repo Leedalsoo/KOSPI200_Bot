@@ -2,11 +2,12 @@
 import logging
 import math
 from typing import Dict, Any
-from strategy.common import TradingDateResetHelper
+from strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer
+from strategy.strategy_contract import StrategyContract
 
 logger = logging.getLogger(__name__)
 
-class Track5:
+class Track5(StrategyContract):
     """
     [Track5] Pure Gap Divergence Protocol (시초가 갭 역방향 회귀 저격 전용 봇)
     - 자본 배분: 매일 시가 갭 조건 만족 시 +0.1% 동적 부여

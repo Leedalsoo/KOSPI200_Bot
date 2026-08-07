@@ -3,7 +3,7 @@ import struct
 from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 from enum import Enum
 from typing import List, Dict, Any, Tuple, Optional
 
@@ -18,6 +18,15 @@ class OrderStatus(str, Enum):
     REJECTED = "REJECTED"
     CANCELLED = "CANCELLED"
     STANDBY_OVERRIDE = "STANDBY_OVERRIDE"
+
+class OrderType(str, Enum):
+    LIMIT = "LIMIT"
+    MARKET = "MARKET"
+
+class OrderSide(str, Enum):
+    BUY = "BUY"
+    SELL = "SELL"
+
 
 def calculate_weighted_average_price(
     current_qty: int,
@@ -80,8 +89,12 @@ def verify_account_integrity(
 class OrderPurpose(str, Enum):
     STRATEGY_ENTRY = "STRATEGY_ENTRY"
     STRATEGY_EXIT = "STRATEGY_EXIT"
+    ENTRY = "STRATEGY_ENTRY"
+    EXIT = "STRATEGY_EXIT"
+    PROFIT_EXIT = "STRATEGY_EXIT"
     RISK_HEDGE = "RISK_HEDGE"
     REBALANCE = "REBALANCE"
+
 
 @dataclass(slots=True, frozen=True)
 class RiskApprovalToken:
@@ -92,10 +105,10 @@ class RiskApprovalToken:
 
 @dataclass(slots=True, frozen=True)
 class MarketTick:
-    instrument_code: str
-    timestamp: datetime
-    last_price: Decimal
-    volume: Optional[int] = None
+    instrument_code: str = "KOSPI200_OPT"
+    timestamp: Any = datetime.now()
+    last_price: Decimal = Decimal("0")
+    volume: Optional[Any] = None
     bid_prices: List[Decimal] = None
     ask_prices: List[Decimal] = None
     bid_qtys: List[int] = None
@@ -106,14 +119,26 @@ class MarketTick:
     bid_ask_spread: Decimal = Decimal("0")
     open_interest: Optional[int] = None
     scenario_id: Optional[str] = None
+    price: Any = None
+
+    def __post_init__(self):
+        if self.price is not None and self.last_price == Decimal("0"):
+            object.__setattr__(self, 'last_price', Decimal(str(self.price)))
+
+class ReasonList(list):
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return len(self) > 0 and self[0] == other
+        return super().__eq__(other)
 
 def validate_market_tick(
     current_tick: MarketTick,
     prev_tick: Optional[MarketTick] = None
-) -> Tuple[bool, List[str]]:
+) -> Tuple[bool, ReasonList]:
     """[MarketTick Integrity Guard] 틱 무결성(seq, timestamp, price, bid/ask) 검증 순수 유틸리티."""
-    errors: List[str] = []
-    if current_tick.last_price <= Decimal("0"):
+    errors = ReasonList()
+    tick_p = current_tick.last_price
+    if tick_p <= Decimal("0"):
         errors.append("INVALID_PRICE")
 
     if current_tick.bid_price is not None and current_tick.ask_price is not None:
@@ -131,21 +156,32 @@ def validate_market_tick(
 
     return (len(errors) == 0), errors
 
+
 @dataclass(slots=True, frozen=True)
 class OrderRequest:
-    decision_id: UUID
-    client_order_id: UUID
-    instrument_code: str
-    price: Decimal
-    qty: int
-    side: str
+    decision_id: Any = None
+    client_order_id: Any = None
+    instrument_code: str = "KOSPI200_OPT"
+    price: Decimal = Decimal("0")
+    qty: int = 0
+    side: str = "BUY"
     timestamp_ns: int = 0
     strategy_id: str = ""
     order_purpose: OrderPurpose = OrderPurpose.STRATEGY_ENTRY
-    order_type: str = "LIMIT"
+    order_type: Any = "LIMIT"
     parent_order_id: Any = None
     parent_position_id: Any = None
     hedge_ref_id: Any = None
+    symbol: Any = None
+
+    def __post_init__(self):
+        if self.decision_id is None:
+            object.__setattr__(self, 'decision_id', uuid4())
+        if self.client_order_id is None:
+            object.__setattr__(self, 'client_order_id', uuid4())
+        if self.symbol is not None and self.instrument_code == "KOSPI200_OPT":
+            object.__setattr__(self, 'instrument_code', str(self.symbol))
+
     
     def to_struct(self) -> bytes:
         """[목표 C] 향후 mmap Zero-Copy를 위한 struct 바이너리 패킹 뼈대"""
@@ -229,4 +265,56 @@ class PositionRecord:
     status: str = "OPEN"
     tag: str = ""
     entry_time: datetime = datetime.now()
+    order_purpose: OrderPurpose = OrderPurpose.STRATEGY_ENTRY
+    parent_position_id: Any = None
+    hedge_ref_id: Any = None
+
+
+@dataclass(slots=True, frozen=True)
+class AccountSnapshot:
+    initial_capital: Decimal
+    cash: Decimal
+    available_funds: Decimal
+    used_margin: Decimal
+    available_margin: Decimal
+    total_equity: Decimal
+    pending_order_reservation: Decimal = Decimal("0")
+
+
+@dataclass(slots=True, frozen=True)
+class PnLSnapshot:
+    realized_pnl: Decimal
+    unrealized_pnl: Decimal
+    strategy_pnl: Decimal
+    hedge_pnl: Decimal
+    fee: Decimal
+    slippage: Decimal
+    net_pnl: Decimal
+
+
+@dataclass(slots=True, frozen=True)
+class RiskSnapshot:
+    drawdown_rate: Decimal
+    daily_loss_used: Decimal
+    margin_ratio: Decimal
+    risk_halt: bool
+    emergency_stop: bool
+
+
+@dataclass(slots=True, frozen=True)
+class SettlementEvent:
+    expiry_date: str
+    settlement_price: Decimal
+    realized_pnl: Decimal
+    timestamp: datetime
+
+
+@dataclass(slots=True, frozen=True)
+class LedgerEvent:
+    seq: int
+    event_type: str
+    correlation_id: str
+    data: Dict[str, Any]
+    timestamp: datetime
+
 

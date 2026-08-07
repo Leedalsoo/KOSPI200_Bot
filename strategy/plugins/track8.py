@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 import logging
 from typing import Dict, Any, Optional
-from strategy.common import TradingDateResetHelper, AtomicBudgetManager
+from strategy.common import TradingDateResetHelper, AtomicBudgetManager, ExecutionCostCalculator, WallClockTimer
+from strategy.strategy_contract import StrategyContract
+
+
 
 logger = logging.getLogger(__name__)
 
-class Track8:
+class Track8(StrategyContract):
     """
     [Track8] Macro Regime Protection & Monthly Wide Strangle
     - 자본 배분: 5% (월물 초입 지정가 분할 큐 및 D-4 다이내믹 조건부 홀딩 모듈)

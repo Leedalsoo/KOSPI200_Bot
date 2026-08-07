@@ -8,11 +8,12 @@ from uuid import uuid4
 
 from core.base_agent import BaseAgent
 from core.contracts import MarketTick, OrderRequest
-from strategy.common import TradingDateResetHelper
+from strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer
+from strategy.strategy_contract import StrategyContract
 
 logger = logging.getLogger(__name__)
 
-class Track4(BaseAgent):
+class Track4(StrategyContract):
     """
     [Track4] 감마 스캘핑 엔진 (Track 4 Gamma Scalping)
     - 자본 배분: 10% (동적 감마 스캘핑 및 ATM 베이스캠프 구축)

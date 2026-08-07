@@ -2,11 +2,12 @@ from decimal import Decimal
 import logging
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
-from strategy.common import TradingDateResetHelper
+from strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer
+from strategy.strategy_contract import StrategyContract
 
 logger = logging.getLogger(__name__)
 
-class Track3:
+class Track3(StrategyContract):
     """
     [Track3] 통계적 차익거래 모듈 (Statistical Arbitrage / Pairs Trading)
     - 자본 배분: 5% (통계적 무위험 현금 알파 수취 모듈)
