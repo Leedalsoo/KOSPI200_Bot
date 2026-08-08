@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class Track5(StrategyContract):
     """
     [Track5] Pure Gap Divergence Protocol (시초가 갭 역방향 회귀 저격 전용 봇)
-    - 자본 배분: 매일 시가 갭 조건 만족 시 +0.1% 동적 부여
+    - 자본 배분: 2.0% (상시 고정 배분)
     - 역할:
       1. 장 시작 직후(09:00:00) 시초가 괴리(Z-Score) 발생 시 역방향 저격 진입 (Mid-Price 지정가 큐).
       2. ATR 및 VKOSPI 일일 변동성 연동 동적 손절선 & 동적 트레일링 익절 락인.

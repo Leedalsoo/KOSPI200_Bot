@@ -246,11 +246,11 @@ except ImportError:
     logger.critical("websockets 라이브러리가 설치되어 있지 않습니다. 'pip install websockets'를 먼저 실행해 주세요.")
     sys.exit(1)
 
-# 🛡️ [수수료 및 거래승수 정의]
+# 🛡️ [수수료 및 거래승수 정의 - PROMOTED TO MINI FUTURES BASELINE]
 FUTURES_FEE_RATE = 0.00003
 OPTIONS_FEE_RATE = 0.0015
-FUTURES_MULTIPLIER = 250000
-OPTIONS_MULTIPLIER = 250000
+FUTURES_MULTIPLIER = 50000  # PROMOTED BASELINE: 미니선물 계약승수 (50,000원)
+OPTIONS_MULTIPLIER = 250000  # 정규옵션 계약승수 (250,000원)
 
 # ── 🏗️ [아키텍처 기반 상수] ──────────────────────────────────────────────────
 # 전략 이름 중앙 정의 — 모든 전략별 딕셔너리는 이 목록에서만 생성
@@ -1069,6 +1069,28 @@ async def simulation_loop() -> None:  # noqa: C901
                                 "event": f"Track 5 Gap Trigger ({action})",
                                 "details": f"{reason} / 수량: {track5_active_qty}계약"
                             })
+
+                # ── 🌅 [Track 9] 장 시작 09:00~09:05 오버나잇 헷지 70% 선제 익절 락인 ──
+                if autobot_active and track9 and ("09:00:00" <= time_str <= "09:05:00") and last_insurance_qty > 0:
+                    early_res = track9.evaluate_early_morning_profit_take(time_str, last_insurance_qty)
+                    if early_res.get("status") == "EARLY_PROFIT_TAKE":
+                        for sig in early_res.get("signals", []):
+                            u_qty = sig.get("qty", 1)
+                            if u_qty > 0 and last_insurance_qty >= u_qty:
+                                last_insurance_qty -= u_qty
+                                realized_early_gain = u_qty * 150000.0  # 선제 70% 익절 락인 이월금
+                                current_capital += realized_early_gain
+                                total_equity = current_capital + accumulated_reserve
+                                logger.info(
+                                    "🌅 [TRACK 9 PROFIT LOCK] 09:00~09:05 오버나잇 헷지 %d계약(70%%) 선제 익절! +₩%s 락인",
+                                    u_qty, f"{realized_early_gain:,.0f}"
+                                )
+                                event_logs.append({
+                                    "seq": seq, "date": date_str, "time": time_str,
+                                    "event": "Track 9 09:00~09:05 선제 70% 익절 락인",
+                                    "details": f"수량: {u_qty}계약 / 확정 이익: +₩{realized_early_gain:,.0f}"
+                                })
+
 
             # ── 🔌 장애 자동 복구 모사 ──
             if main_engine_broken:
@@ -2024,42 +2046,58 @@ async def simulation_loop() -> None:  # noqa: C901
             margin_haircut = 2.0 if (HARDENED_STRESS_MODE and iv_explosion_active) else 1.0
             used_margin, margin_ratio = _recalc_margin(portfolio_options, current_position_qty, current_price, current_capital, margin_haircut)
             
-            if autobot_active and emergency_cooldown_ticks == 0 and (margin_ratio > MARGIN_LIQUIDATION_THRESHOLD or total_equity < (daily_hwm * DAILY_DRAWDOWN_THRESHOLD)):
-                if len(portfolio_options) > 0 or current_position_qty != 0:
-                    logger.warning("🚨 [EMERGENCY PROTECTION] MarginDietGuard/ZeroLossGuard 트리거! 위험 매도/선물 포지션 비상 청산 집행 (Track 1 테일 보험 제외).")
+            TEST_PRESERVE_POSITIONS_ON_EMERGENCY = True  # 테스트 환경 비상 포지션 보존 정책 (KEEP)
+            
+            if autobot_active and (margin_ratio > MARGIN_LIQUIDATION_THRESHOLD or total_equity < (daily_hwm * DAILY_DRAWDOWN_THRESHOLD)):
+                if emergency_cooldown_ticks == 0:
                     guard_trigger_count += 1
                     emergency_cooldown_ticks = 15
-                    
-                    liq_fee = 0.0
-                    for pos in portfolio_options:
-                        strike_val = float(pos["strike"])
-                        qty_val = int(pos["qty"])
-                        liq_fee += strike_val * qty_val * OPTIONS_MULTIPLIER * OPTIONS_FEE_RATE
-                    
-                    futures_liq_value = abs(current_position_qty) * current_price * FUTURES_MULTIPLIER
-                    liq_fee += futures_liq_value * FUTURES_FEE_RATE
-                    
-                    calculated_fee += liq_fee
-                    
-                    # 🛡️ 양매수를 기본으로 하는 모든 롱 옵션(BUY) 포지션은 증거금을 발생시키지 않으므로 절대로 지우지 않고 100% 보존!
-                    t1_long_buys = [p for p in portfolio_options if p.get("activeStrategy") == "Track1" and p.get("side") == "BUY"]
-                    protected_long_buys = [p for p in portfolio_options if p.get("side") == "BUY"]
-                    portfolio_options = protected_long_buys
-                    current_position_qty = 0
-                    
-                    # 만약 t1_long_buys가 전혀 없으면 즉시 넓은 양매수 재건!
-                    if not t1_long_buys and track1:
-                        rebuild_sigs = track1.on_market_open(current_price)
-                        for sig in rebuild_sigs:
-                            if sig.get("action") == "TAIL_DEFENSE_BUILD":
-                                portfolio_options.append({"type": "CALL", "side": "BUY", "strike": sig.get("call_strike"), "price": 1.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1", "tag_id": "TAIL"})
-                                portfolio_options.append({"type": "PUT", "side": "BUY", "strike": sig.get("put_strike"), "price": 1.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1", "tag_id": "TAIL"})
-                    
-                    # 🛡️ 청산 후 재진입 가능하도록 전략 상태 초기화
-                    if track2:
-                        track2.trap_state["is_active"] = False
-                    if track4:
-                        track4.scalp_state["is_active"] = False
+                
+                if TEST_PRESERVE_POSITIONS_ON_EMERGENCY:
+                    # 🛡️ [TEST MODE] MarginDietGuard 정상 발동 & 신규 ENTRY 차단, 단 기존 포지션(Track 1~9, 특히 Track 2/3/5)은 100% KEEP 보존
+                    logger.warning("🚨 [EMERGENCY PROTECTION ACTIVE] MarginDietGuard 트리거! (TEST MODE: 신규 ENTRY 차단 & 기존 포지션 100%% KEEP 보존 중). Margin Ratio: %.1f%%", margin_ratio)
+                    event_logs.append({
+                        "seq": seq, "date": date_str, "time": time_str,
+                        "event": "RISK_HALT",
+                        "risk_state": "EMERGENCY_PROTECTION",
+                        "entry_blocked": True,
+                        "position_action": "KEEP",
+                        "forced_liquidation": False,
+                        "position_preserved": True,
+                        "details": f"마진 비율 {margin_ratio:.1f}% 트리거 | 기존 포지션(Track 2/3/5 포함) 강제 청산 억제 및 Risk/PnL 관찰 지속"
+                    })
+                else:
+                    if len(portfolio_options) > 0 or current_position_qty != 0:
+                        logger.warning("🚨 [EMERGENCY PROTECTION] MarginDietGuard/ZeroLossGuard 트리거! 위험 매도/선물 포지션 비상 청산 집행 (Track 1 테일 보험 제외).")
+                        
+                        liq_fee = 0.0
+                        for pos in portfolio_options:
+                            strike_val = float(pos["strike"])
+                            qty_val = int(pos["qty"])
+                            liq_fee += strike_val * qty_val * OPTIONS_MULTIPLIER * OPTIONS_FEE_RATE
+                        
+                        futures_liq_value = abs(current_position_qty) * current_price * FUTURES_MULTIPLIER
+                        liq_fee += futures_liq_value * FUTURES_FEE_RATE
+                        
+                        calculated_fee += liq_fee
+                        
+                        t1_long_buys = [p for p in portfolio_options if p.get("activeStrategy") == "Track1" and p.get("side") == "BUY"]
+                        protected_long_buys = [p for p in portfolio_options if p.get("side") == "BUY"]
+                        portfolio_options = protected_long_buys
+                        current_position_qty = 0
+                        
+                        if not t1_long_buys and track1:
+                            rebuild_sigs = track1.on_market_open(current_price)
+                            for sig in rebuild_sigs:
+                                if sig.get("action") == "TAIL_DEFENSE_BUILD":
+                                    portfolio_options.append({"type": "CALL", "side": "BUY", "strike": sig.get("call_strike"), "price": 1.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1", "tag_id": "TAIL"})
+                                    portfolio_options.append({"type": "PUT", "side": "BUY", "strike": sig.get("put_strike"), "price": 1.50, "qty": BASE_TRACK1_QTY, "activeStrategy": "Track1", "tag_id": "TAIL"})
+                        
+                        if track2:
+                            track2.trap_state["is_active"] = False
+                        if track4:
+                            track4.scalp_state["is_active"] = False
+
 
 
             # ── 10.2.2 [NEW] 포트폴리오 넷 델타(Net Delta) 산출 ──
@@ -2165,17 +2203,34 @@ async def simulation_loop() -> None:  # noqa: C901
                                     # 청산 수수료 부과
                                     calculated_fee += track3_entry_qty * current_price * FUTURES_MULTIPLIER * FUTURES_FEE_RATE
                                     
+                                    # Track 3 Multi-Leg 옵션 레그 손익 정산 (삭제 이전 이익/손실 정밀 합산)
+                                    t3_option_pnl = 0.0
+                                    for pos in portfolio_options:
+                                        if pos.get("activeStrategy") == "Track3":
+                                            k = float(pos.get("strike", 0.0))
+                                            entry_opt_price = float(pos.get("price", 0.0))
+                                            q = int(pos.get("qty", 1))
+                                            side = pos.get("side")
+                                            p_type = pos.get("type")
+                                            if k > 0:
+                                                current_opt_val = max(0.0, current_price - k) if p_type == "CALL" else max(0.0, k - current_price)
+                                                if side == "BUY":
+                                                    t3_option_pnl += (current_opt_val - entry_opt_price) * q * OPTIONS_MULTIPLIER
+                                                elif side == "SELL":
+                                                    t3_option_pnl += (entry_opt_price - current_opt_val) * q * OPTIONS_MULTIPLIER
+
                                     if t_type == "CLOSE_SHORT_SPREAD":
-                                        current_position_qty += arb_qty # 숏 청산
-                                        realized_pnl = (track3_entry_price - current_price) * track3_entry_qty * FUTURES_MULTIPLIER
+                                        current_position_qty += arb_qty
+                                        futures_pnl = (track3_entry_price - current_price) * track3_entry_qty * FUTURES_MULTIPLIER
+                                        realized_pnl = futures_pnl + t3_option_pnl
                                         portfolio_options = [p for p in portfolio_options if not p.get("activeStrategy") == "Track3"]
-                                        logger.info("💰 [TRACK 3 ARB CLOSE] %s - 숏 스프레드 및 옵션 차익 레그 전량 청산! (틱 마진 MTM에 기반영)", signal.get('reason'))
+                                        logger.info("💰 [TRACK 3 ARB CLOSE] %s - 숏 차익 전량 청산! (Futures: ₩%s, Option: ₩%s ➡️ Net: ₩%s)", signal.get("reason"), f"{futures_pnl:,.0f}", f"{t3_option_pnl:,.0f}", f"{realized_pnl:,.0f}")
                                     elif t_type == "CLOSE_LONG_SPREAD":
-                                        current_position_qty -= arb_qty # 롱 청산
-                                        realized_pnl = (current_price - track3_entry_price) * track3_entry_qty * FUTURES_MULTIPLIER
+                                        current_position_qty -= arb_qty
+                                        futures_pnl = (current_price - track3_entry_price) * track3_entry_qty * FUTURES_MULTIPLIER
+                                        realized_pnl = futures_pnl + t3_option_pnl
                                         portfolio_options = [p for p in portfolio_options if not p.get("activeStrategy") == "Track3"]
-                                        logger.info("💰 [TRACK 3 ARB CLOSE] %s - 롱 스프레드 및 옵션 차익 레그 전량 청산! (틱 마진 MTM에 기반영)", signal.get('reason'))
-                                    
+                                        logger.info("💰 [TRACK 3 ARB CLOSE] %s - 롱 차익 전량 청산! (Futures: ₩%s, Option: ₩%s ➡️ Net: ₩%s)", signal.get("reason"), f"{futures_pnl:,.0f}", f"{t3_option_pnl:,.0f}", f"{realized_pnl:,.0f}")
                                     trade_replay_analyzer.capture_trade_event(
                                         trade_type="EXIT",
                                         track_name="Track3",

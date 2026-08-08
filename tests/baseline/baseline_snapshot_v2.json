@@ -1,0 +1,19 @@
+{
+  "snapshot_version": "v2.0_mini_futures_promoted",
+  "status": "PROMOTED_BASELINE",
+  "human_approval": "APPROVED",
+  "promotion_date": "2026-08-08",
+  "instrument": "Mini KOSPI 200 Futures",
+  "contract_multiplier_futures": 50000.0,
+  "contract_multiplier_options": 250000.0,
+  "strategy_defaults": {
+    "track3": {
+      "max_group_limit": 2,
+      "z_score_threshold": -2.00
+    }
+  },
+  "architecture_state": "FROZEN",
+  "virtual_broker_state": "PRESERVED",
+  "risk_control_state": "PRESERVED",
+  "regression_status": "219_PASS"
+}

@@ -114,7 +114,7 @@ class TradeReplayAnalyzer:
             "hedgeRefId": hedge_ref_id,
             "dateStr": curr_date,
             "monthStr": curr_month,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": date_str if (date_str and len(date_str) >= 10) else time.strftime("%Y-%m-%d %H:%M:%S"),
             "tradeType": trade_type,
             "orderPurpose": inferred_purpose,
             "orderType": order_type,
@@ -242,3 +242,148 @@ class TradeReplayAnalyzer:
             for d, r_list in d_dict.items():
                 res[m][d] = r_list
         return res
+
+    def _get_time_bucket(self, time_str: str) -> str:
+        """시간 문자열(HH:MM:SS)을 5개 장중 Time Bucket으로 분류"""
+        if not time_str or len(time_str) < 5:
+            return "T2_MORNING_TREND"
+        t = time_str.split(" ")[-1] if " " in time_str else time_str
+        if "09:00:00" <= t < "09:05:00":
+            return "T1_GAP_OPEN"
+        elif "09:05:00" <= t < "11:30:00":
+            return "T2_MORNING_TREND"
+        elif "11:30:00" <= t < "13:30:00":
+            return "T3_MIDDAY_SIDEWAYS"
+        elif "13:30:00" <= t < "15:00:00":
+            return "T4_AFTERNOON_CONVERGE"
+        elif "15:00:00" <= t <= "15:20:00":
+            return "T5_EOD_CUTOFF"
+        return "T2_MORNING_TREND"
+
+    def generate_time_bucket_pnl_analysis(self) -> Dict[str, Any]:
+        """
+        [시간대별·전략별 진입/청산 손익 자동 분해 알고리즘]
+        - T1~T5 시간대별 / Track 1~9 전략별
+          · 진입/청산 건수
+          · Gross PnL, Total Fees, Slippage Cost, Net PnL
+          · 승률 (Win Rate), Avg Trade PnL, Max Profit, Max Loss
+        """
+        buckets = ["T1_GAP_OPEN", "T2_MORNING_TREND", "T3_MIDDAY_SIDEWAYS", "T4_AFTERNOON_CONVERGE", "T5_EOD_CUTOFF"]
+        analysis: Dict[str, Dict[str, Dict[str, Any]]] = {b: {} for b in buckets}
+
+        for rec in self.trade_records:
+            t_str = rec.get("timestamp", "09:00:00")
+            b_name = self._get_time_bucket(t_str)
+            track = rec.get("trackName", "Track1")
+
+            if track not in analysis[b_name]:
+                analysis[b_name][track] = {
+                    "entries": 0,
+                    "exits": 0,
+                    "gross_pnl": 0.0,
+                    "total_fee": 0.0,
+                    "slippage_cost": 0.0,
+                    "net_pnl": 0.0,
+                    "wins": 0,
+                    "losses": 0,
+                    "max_profit": 0.0,
+                    "max_loss": 0.0,
+                    "pnl_list": []
+                }
+
+            t_stat = analysis[b_name][track]
+            trade_type = rec.get("tradeType", "ENTRY")
+            pnl = float(rec.get("realizedPnL", 0.0))
+            fee = float(rec.get("fee", 0.0))
+            slip = float(rec.get("slippageCost", 0.0))
+
+            if trade_type == "ENTRY":
+                t_stat["entries"] += 1
+            else:
+                t_stat["exits"] += 1
+                t_stat["gross_pnl"] += (pnl + fee + slip)
+                t_stat["total_fee"] += fee
+                t_stat["slippage_cost"] += slip
+                t_stat["net_pnl"] += pnl
+                t_stat["pnl_list"].append(pnl)
+
+                if pnl > 0:
+                    t_stat["wins"] += 1
+                    t_stat["max_profit"] = max(t_stat["max_profit"], pnl)
+                elif pnl < 0:
+                    t_stat["losses"] += 1
+                    t_stat["max_loss"] = min(t_stat["max_loss"], pnl)
+
+        # 승률, 평균 PnL 및 최종 정산
+        for b_name, tracks in analysis.items():
+            for track, s in tracks.items():
+                total_closed = s["wins"] + s["losses"]
+                pnl_lst = s.pop("pnl_list", [])
+                s["win_rate_pct"] = round((s["wins"] / total_closed * 100.0), 1) if total_closed > 0 else 0.0
+                s["avg_trade_pnl"] = round(sum(pnl_lst) / max(1, total_closed), 2) if total_closed > 0 else 0.0
+                s["gross_pnl"] = round(s["gross_pnl"], 2)
+                s["total_fee"] = round(s["total_fee"], 2)
+                s["slippage_cost"] = round(s["slippage_cost"], 2)
+                s["net_pnl"] = round(s["net_pnl"], 2)
+                s["max_profit"] = round(s["max_profit"], 2)
+                s["max_loss"] = round(s["max_loss"], 2)
+
+        return analysis
+
+    def generate_trade_analysis_report(self) -> Dict[str, Any]:
+        """
+        [최적 파라미터 조절 기준 진단 보고서 자동 생성]
+        - 각 전략별 최대 손실 시간대 진단
+        - 주요 손실 요인(슬리피지 과다, 휩쏘, 수수료 적자 등) 도출
+        - NO AUTOMATIC STRATEGY MODIFICATION 서명 포함 권고사항 제공
+        """
+        bucket_analysis = self.generate_time_bucket_pnl_analysis()
+        strategy_summary: Dict[str, Dict[str, Any]] = {}
+
+        for b_name, tracks in bucket_analysis.items():
+            for track, s in tracks.items():
+                if track not in strategy_summary:
+                    strategy_summary[track] = {
+                        "total_net_pnl": 0.0,
+                        "worst_bucket": b_name,
+                        "worst_bucket_pnl": s["net_pnl"],
+                        "total_slippage": 0.0,
+                        "total_fee": 0.0,
+                        "win_trades": 0,
+                        "loss_trades": 0
+                    }
+                st = strategy_summary[track]
+                st["total_net_pnl"] += s["net_pnl"]
+                st["total_slippage"] += s["slippage_cost"]
+                st["total_fee"] += s["total_fee"]
+                st["win_trades"] += s["wins"]
+                st["loss_trades"] += s["losses"]
+
+                if s["net_pnl"] < st["worst_bucket_pnl"]:
+                    st["worst_bucket_pnl"] = s["net_pnl"]
+                    st["worst_bucket"] = b_name
+
+        # 전략별 최적 수정 기준(Config Recommendations) 매핑 (전략 자동 수정 금지 원칙)
+        recommendations: Dict[str, List[str]] = {}
+        for track, st in strategy_summary.items():
+            recs = []
+            if st["total_slippage"] > abs(st["total_net_pnl"]) * 0.3:
+                recs.append("⚠️ Primary Cost: Slippage. Review entry threshold and pricing_mode (Suggested Investigation).")
+            if st["worst_bucket"] == "T3_MIDDAY_SIDEWAYS":
+                recs.append("⚠️ Worst Time Bucket: T3 (Midday Sideways). Review cooldown_ticks and entry z_score_threshold.")
+            if st["worst_bucket"] == "T5_EOD_CUTOFF":
+                recs.append("⚠️ Worst Time Bucket: T5 (EOD Cutoff). Review afternoon entry cutoff time.")
+            if not recs:
+                recs.append("✅ Strategy performance stable in test parameters.")
+
+            recs.append("🛡️ [NOTE] NO AUTOMATIC STRATEGY MODIFICATION (Strict Preservation Rule)")
+            recommendations[track] = recs
+
+        return {
+            "time_bucket_analysis": bucket_analysis,
+            "strategy_summary": strategy_summary,
+            "config_recommendations": recommendations,
+            "signature": "NO AUTOMATIC STRATEGY MODIFICATION"
+        }
+
+

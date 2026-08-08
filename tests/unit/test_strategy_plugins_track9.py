@@ -54,7 +54,25 @@ def test_track9_event_volatility_spike_and_crush() -> None:
     assert res_crush["status"] == "EVENT_CLOSED"
     assert res_crush["signals"][0]["action"] == "CLOSE_EVENT_STRANGLE"
     assert res_crush["signals"][0]["pricing_mode"] == "MID_PRICE_OFFSET"
+    # 3. reset_state() 시 event_active 리셋 확인
+    agent.reset_state()
     assert agent.event_active is False
+
+def test_track9_early_morning_profit_take() -> None:
+    """[Track 9 09:00~09:05 선제 70% 익절 락인 검증]"""
+    agent = Track9({})
+    
+    # 1. 09:02:00 시간대 & current_ins_qty = 2 ➡️ 70% (1계약) 선제 익절 신호 방출
+    res = agent.evaluate_early_morning_profit_take(time_str="09:02:00", current_ins_qty=2)
+    assert res["status"] == "EARLY_PROFIT_TAKE"
+    assert res["signals"][0]["action"] == "EARLY_PROFIT_TAKE"
+    assert res["signals"][0]["qty"] == 1
+    assert res["signals"][0]["unwind_ratio"] == 0.80
+
+    # 2. 09:10:00 (이미 1회 실행됨) ➡️ EARLY_PROFIT_TAKEN (중복 방지)
+    res_late = agent.evaluate_early_morning_profit_take(time_str="09:10:00", current_ins_qty=2)
+    assert res_late["status"] == "EARLY_PROFIT_TAKEN"
+
 
 
 @pytest.mark.asyncio

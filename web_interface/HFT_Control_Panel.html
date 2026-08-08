@@ -1156,9 +1156,10 @@
       const hasPos = activePositions.length > 0;
       const cPrice = typeof currentPrice === 'number' && currentPrice > 0 ? currentPrice : 375.0;
 
-      // X축 범위: 상장 전체 행사가 및 지수 포함 [315.0, 415.0] 고정
-      const minX = 315.0;
-      const maxX = 415.0;
+      // X축 범위: 지수가 우측 90% 오버하기 전에 현재 지수(cPrice) 중심으로 동적 이동 (Centered Sliding Window)
+      const halfSpan = 30.0;
+      const minX = Math.floor((cPrice - halfSpan) / 2.5) * 2.5;
+      const maxX = Math.ceil((cPrice + halfSpan) / 2.5) * 2.5;
 
       const chartData = useMemo(() => {
         if (!hasPos) return [];

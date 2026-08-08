@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class Track6(StrategyContract):
     """
     [Track6] 데일리 테일 보험 봇 (Track 6 Daily 0DTE)
-    - 자본 배분: 매일 변동성 조건 만족 시 +0.1% 동적 부여
+    - 자본 배분: 매일 변동성 조건 만족 시 +2.0% 동적 부여
     - HFT 슬리피지 극복 명세:
       1. 변동성 폭발(active_vol >= base_vol * 1.3) 감지 시 0.5초 단위 호가 추격(Sub-second Escalation) 및 IOC 하이브리드 지정가 큐 투입.
       2. 호가창 스프레드가 3틱 이상 벌어지거나 비유동성 공백 시 진입 차단(Liquidity Depth Guard).

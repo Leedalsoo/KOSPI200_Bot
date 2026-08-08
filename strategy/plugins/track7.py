@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class Track7(StrategyContract):
     """
     [Track7] Volatility Arbitrage / Skew Trading & Weekly Tail Insurance
-    - 자본 배분: 매주 상장 후 조건 만족 시 +0.5% 동적 부여
+    - 자본 배분: 매주 상장 후 조건 만족 시 +2.0% 동적 부여
     - 주요 업그레이드 메커니즘:
       1. 위클리 옵션 개장 첫날(is_new_week_start) 지정가 분할 예약 매수 큐(Limit Queue) 배치. (15:15 미체결 취소 및 익일 동적 재배치)
       2. Call/Put IV Skew 괴리(|skew| >= 3.0) 탐지 시 1차 지정가 예약 진입 -> 타임아웃 미체결 시 2차 예비 시장가(Fallback) 전환.
@@ -25,13 +25,15 @@ class Track7(StrategyContract):
         self.strike_offset = self.params.get("strike_offset", 15.0)
         # 매수 계약수
         self.insurance_qty = self.params.get("insurance_qty", 1)
+        # 만기 청산 모드 (기본: D-0 CUTOFF 만기 당일 15:15 원자적 100% Flat / D-4: 금요일 당일 사전 청산)
+        self.expiry_mode = self.params.get("expiry_mode", "D-0 CUTOFF")
 
         self.skew_active: bool = False
         self.skew_limit_pending: bool = False
         self.date_reset_helper = TradingDateResetHelper()
         self.budget_manager = AtomicBudgetManager(initial_budget=0.0)
         self.reset_state()
-        logger.info("Volatility Arbitrage & Weekly Insurance Strategy (Track7) Initialized.")
+        logger.info(f"Volatility Arbitrage & Weekly Insurance Strategy (Track7) Initialized with expiry_mode={self.expiry_mode}.")
 
     def reset_state(self) -> None:
         self.insurance_state: Dict[str, Any] = {
@@ -266,12 +268,25 @@ class Track7(StrategyContract):
         """
         [위클리 옵션 최종 거래일/만기 당일 15:00 지정가 우선 컷오프 및 15:15 예비 시장가 청산(Fallback) 판단]
         - 공휴일 전일 당겨진 만기일 및 목요/월요 위클리 옵션 만기일에 정확히 연동.
+        - expiry_mode == 'D-4'인 경우 금요일 당일 사전 청산 지원.
         """
         if self.date_reset_helper.check_and_update(date_str):
             self.reset_state()
 
         if not self.insurance_state["is_active"]:
             return {"status": "INACTIVE", "signals": []}
+
+        # D-4 모드: 금요일(진입 당일) 장 마감 직전 사전 청산 처리
+        if self.expiry_mode == "D-4" and self.insurance_state.get("bought_date") == date_str and time_str >= "15:00:00":
+            signals = [{
+                "action": "CLOSE_WEEKLY_INSURANCE_PREEMPTIVE_D4",
+                "reason": "expiry_mode=D-4 설정에 따른 금요일 장 마감 전 사전 청산",
+                "put_strike": self.insurance_state["long_put_strike"],
+                "call_strike": self.insurance_state["long_call_strike"],
+                "qty": self.insurance_qty,
+            }]
+            self.reset_state()
+            return {"status": "D4_PREEMPTIVE_CLOSED", "signals": signals}
 
         # is_expiry_day 매개변수가 우선 적용되며, 기존 is_week_end 하위 호환 지원
         expiry_active = is_expiry_day if is_expiry_day is not None else is_week_end
@@ -283,7 +298,7 @@ class Track7(StrategyContract):
                     "status": "CUTOFF_LIMIT_PENDING",
                     "signals": [{
                         "action": "CLOSE_WEEKLY_INSURANCE_LIMIT",
-                        "reason": "위클리 옵션 최종 거래일(만기일) 15:00 지정가 우선 청산 선제 투입",
+                        "reason": "위클리 옵션 최종 거래일(만기일 목요일) 15:00 지정가 우선 청산 선제 투입",
                         "put_strike": self.insurance_state["long_put_strike"],
                         "call_strike": self.insurance_state["long_call_strike"],
                         "qty": self.insurance_qty,

@@ -8,19 +8,20 @@ system:
   log_level: "INFO"
 
 # 8대 전략 자본 배분 비율 (Capital Allocation Weights)
-# - 상시 할당 고정 비중 (총 60%)
-# - 조건부 동적 이벤트 비중 (Track 5: +0.1%, Track 6: +0.1%, Track 7: +0.5%)
+# - 상시 할당 고정 비중 (총 62%)
+# - 조건부 동적 이벤트 비중 (Track 6: +2.0%, Track 7: +2.0%)
 strategy_allocation:
   base_weights:
     track1_defense: 30.0    # Track 1: Tail Defense (30%)
     track2_trap: 10.0       # Track 2: Asymmetric Trap (10%)
     track3_arbitrage: 5.0   # Track 3: Stat Arbitrage (5%)
     track4_gamma: 10.0      # Track 4: Gamma Scalping (10%)
+    track5_gap: 2.0         # Track 5: Gap Protocol (상시 고정 2.0%)
     track8_monthly: 5.0     # Track 8: Monthly Wide Strangle (5%)
   dynamic_rates:
-    track5_gap: 0.1         # Track 5: Gap Protocol (조건 발동 시 0.1%)
-    track6_daily: 0.1       # Track 6: Daily 0DTE (조건 발동 시 0.1%)
-    track7_weekly: 0.5      # Track 7: Weekly Insurance (조건 발동 시 0.5%)
+    track6_daily: 2.0       # Track 6: Daily 0DTE (조건 발동 시 2.0%)
+    track7_weekly: 2.0      # Track 7: Weekly Insurance (조건 발동 시 2.0%)
+
 
 risk_limits:
   max_drawdown_limit: 0.30  # 30% MDD Limit

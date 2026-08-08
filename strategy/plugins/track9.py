@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 from typing import Dict, Any, Optional
-from strategy.common import TradingDateResetHelper, AtomicBudgetManager, ExecutionCostCalculator, WallClockTimer
+from strategy.common import TradingDateResetHelper, AtomicBudgetManager, ExecutionCostCalculator, WallClockTimer, DynamicProfitRebuildEvaluator
 from strategy.strategy_contract import StrategyContract
 
 
@@ -25,11 +25,20 @@ class Track9(StrategyContract):
         self.event_active: bool = False
         self.date_reset_helper = TradingDateResetHelper()
         self.budget_manager = AtomicBudgetManager(initial_budget=0.0)
+        
+        # Dynamic Profit Take & Rebuild Evaluator
+        self.rebuild_evaluator = DynamicProfitRebuildEvaluator()
+        self.profit_target = float(self.config.get("profit_target", 400000.0))
+
         self.reset_state()
         logger.info("Track 9 Event Driven & Overnight Insurance Strategy initialized.")
 
+
     def reset_state(self) -> None:
         self.event_active = False
+        self.early_profit_take_executed_today: bool = False
+        self.reentry_executed_today: bool = False
+        self.state: str = "OVERNIGHT_HEDGE"
 
     def evaluate_insurance(self, 
                             current_price: float, 
@@ -42,7 +51,6 @@ class Track9(StrategyContract):
         if self.date_reset_helper.check_and_update(date_str):
             self.reset_state()
 
-        # Track 1 가두리 매도 수량에 연동하되, 독립적인 극외가 양매수 롱 공격/보험 지위를 유지하기 위해 최소 1계약 타겟 보장
         target_insurance_qty = max(1, int(active_sell_qty * 0.5))
         
         if target_insurance_qty != current_ins_qty:
@@ -61,6 +69,9 @@ class Track9(StrategyContract):
                     "signals": [
                         {
                             "action": "ADD_INSURANCE",
+                            "strategy_id": "Track9",
+                            "order_purpose": "ENTRY",
+                            "entry_reason": "OVERNIGHT_HEDGE",
                             "diff_qty": diff_qty,
                             "put_strike": insurance_put_strike,
                             "call_strike": insurance_call_strike,
@@ -82,6 +93,8 @@ class Track9(StrategyContract):
                     "signals": [
                         {
                             "action": "REDUCE_INSURANCE",
+                            "strategy_id": "Track9",
+                            "order_purpose": "EXIT",
                             "diff_qty": diff_qty,
                             "target_qty": target_insurance_qty,
                             "qty": diff_qty
@@ -94,11 +107,109 @@ class Track9(StrategyContract):
                 "signals": [
                     {
                         "action": "HOLD_INSURANCE",
+                        "strategy_id": "Track9",
                         "target_qty": target_insurance_qty,
                         "qty": 0
                     }
                 ]
             }
+
+    def evaluate_early_morning_profit_take(
+        self,
+        time_str: str,
+        current_ins_qty: int,
+        unrealized_pnl: float = 0.0,
+        gap_rate: float = 0.0
+    ) -> Dict[str, Any]:
+        """
+        [🌅 09:00~09:05 선제적 Early Profit Take 로직]
+        장 개장 후 09:00~09:05 사이 오버나잇 헷지 옵션 가치의 80%(80~100%)를 선제 익절 청산하여
+        Vol Crush(변동성 급락) 및 옵션 프리미엄 소멸 마찰 손실을 회피하고 이익을 즉시 락인합니다.
+        """
+        if self.early_profit_take_executed_today:
+            return {"status": "EARLY_PROFIT_TAKEN", "signals": []}
+
+        if "09:00:00" <= time_str <= "09:05:00" and current_ins_qty > 0:
+            ratio = float(self.config.get("TRACK9_EARLY_PROFIT_TAKE_RATIO", 0.80))
+            unwind_qty = max(1, int(current_ins_qty * ratio))
+            self.early_profit_take_executed_today = True
+            self.state = "EARLY_PROFIT_TAKEN"
+            
+            logger.info(
+                "🌅 [09:00~09:05 EARLY PROFIT TAKE] 오버나잇 헷지 옵션 선제 %d계약(%.0f%%) 익절 청산 락인!",
+                unwind_qty, ratio * 100.0
+            )
+            return {
+                "status": "EARLY_PROFIT_TAKE",
+                "signals": [
+                    {
+                        "action": "EARLY_PROFIT_TAKE",
+                        "strategy_id": "Track9",
+                        "order_purpose": "EXIT",
+                        "exit_reason": "EARLY_PROFIT_TAKE",
+                        "qty": unwind_qty,
+                        "unwind_ratio": ratio,
+                        "pricing_mode": "PREEMPTIVE_LIMIT_OR_MARKET",
+                        "reason": f"🌅 [09:00~09:05 EARLY PROFIT TAKE] 오버나잇 헷지 {ratio*100:.0f}%({unwind_qty}계약) 선제 익절 락인!"
+                    }
+                ]
+            }
+        
+        if time_str > "09:05:00" and not self.early_profit_take_executed_today:
+            self.state = "MARKET_STABILIZATION_MONITORING"
+
+        return {"status": "HOLD", "signals": []}
+
+    def evaluate_reentry(
+        self,
+        time_str: str,
+        current_price: float,
+        target_qty: int,
+        existing_qty: int,
+        is_market_stable: bool = True
+    ) -> Dict[str, Any]:
+        """
+        [09:30 이후 조건부 헷지 재진입 (Re-entry) 로직]
+        09:05~09:30 관찰 후 09:30 이후 시장이 안정화되고 헷지 필요성이 있을 때 중복 없는 순수 부족분 재헤지.
+        """
+        if time_str < "09:30:00":
+            return {"status": "MARKET_STABILIZATION_MONITORING", "signals": []}
+
+        if self.reentry_executed_today:
+            return {"status": "REHEDGE_ACTIVE", "signals": []}
+
+        if is_market_stable and target_qty > existing_qty:
+            new_hedge_qty = target_qty - existing_qty
+            self.reentry_executed_today = True
+            self.state = "REHEDGE_ACTIVE"
+            
+            insurance_put_strike = round((current_price - self.strike_offset) / 2.5) * 2.5
+            insurance_call_strike = round((current_price + self.strike_offset) / 2.5) * 2.5
+
+            logger.info(
+                "🛡️ [09:30+ RE-ENTRY] 시장 안정화 확인 후 헷지 재구축 (+%d계약)",
+                new_hedge_qty
+            )
+            return {
+                "status": "REHEDGE_ENTRY",
+                "signals": [
+                    {
+                        "action": "REHEDGE_ENTRY",
+                        "strategy_id": "Track9",
+                        "order_purpose": "ENTRY",
+                        "entry_reason": "REHEDGE_ENTRY",
+                        "qty": new_hedge_qty,
+                        "put_strike": insurance_put_strike,
+                        "call_strike": insurance_call_strike,
+                        "premium": self.premium_cost,
+                        "pricing_mode": "MID_PRICE_OFFSET",
+                        "reason": f"🛡️ [09:30+ RE-ENTRY] 시장 안정화 확인 후 헷지 재구축 (+{new_hedge_qty}계약)"
+                    }
+                ]
+            }
+
+        return {"status": "HOLD", "signals": []}
+
 
     async def evaluate_event_buy_async(self, budget: float, estimated_cost: float) -> bool:
         """
@@ -190,3 +301,75 @@ class Track9(StrategyContract):
                 return {"status": "EVENT_CLOSED", "signals": signals}
 
         return {"status": "HOLD", "signals": []}
+
+    def evaluate_dynamic_profit_rebuild(
+        self,
+        current_price: float,
+        unrealized_pnl: float,
+        time_str: str = "09:00:00",
+        qty: int = 1,
+        margin_ratio: float = 0.0,
+        risk_guard_active: bool = False,
+        tick_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        [Dynamic Profit-Take & Rebuild] Track 9 Overnight / Volatility Spike Strangle 이익 실현 및 헷지 재구축
+        - 09:00~09:05 선제적 Early Profit Take 또는 장중 급변동 시 Net Expected PnL >= profit_target 만족 시 이익실현.
+        - Risk Guard 발동 시 신규 Rebuild 차단.
+        - 09:30 이후 또는 변동성 안정화 확인 시 최신 중심가격 기준 신규 Wide Strangle Hedge Rebuild.
+        """
+        if risk_guard_active or margin_ratio > 0.85:
+            logger.warning("🚨 [Track 9 Rebuild Blocked] Risk Guard 발동 또는 Margin Ratio (%.2f) 초과로 Rebuild 차단.", margin_ratio)
+            return {"status": "RISK_GUARD_BLOCKED", "signals": []}
+
+        triggered, net_pnl = self.rebuild_evaluator.evaluate_profit_take(
+            unrealized_pnl=unrealized_pnl,
+            qty=qty,
+            profit_target=self.profit_target,
+            tick_id=tick_id
+        )
+
+        if not triggered:
+            return {"status": "HOLD", "signals": [], "net_pnl": net_pnl}
+
+        signals = []
+        old_call = current_price + self.strike_offset
+        old_put = current_price - self.strike_offset
+
+        # 1. Early / Dynamic Profit Take 신호발행
+        signals.append({
+            "action": "DYNAMIC_PROFIT_TAKE",
+            "call_strike": old_call,
+            "put_strike": old_put,
+            "qty": qty,
+            "net_pnl": net_pnl,
+            "time_str": time_str,
+            "reason": f"Track 9 Net PnL (KRW {net_pnl:,.0f}) 목표 달성. Overnight Hedge Profit Take!"
+        })
+
+        # 2. 09:30 이후 또는 장중 급변동 안정화 시 신규 Wide Strangle Hedge Rebuild
+        call_strike_new, put_strike_new = self.rebuild_evaluator.calculate_rebuild_strikes(
+            current_price=current_price,
+            offset=self.strike_offset
+        )
+
+        self.reentry_executed_today = True
+        self.state = "REHEDGE_ACTIVE"
+
+        signals.append({
+            "action": "DYNAMIC_REBUILD_FENCE",
+            "call_strike": call_strike_new,
+            "put_strike": put_strike_new,
+            "qty": qty,
+            "reason": "Track 9 중심가(%.2f) 기준 신규 Wide Strangle Hedge 구축 (Call: %.1f, Put: %.1f)" % (
+                current_price, call_strike_new, put_strike_new
+            )
+        })
+
+        logger.info(
+            "🔄 [Track 9 PROFIT TAKE & REBUILD] Net PnL: KRW %s | 시각: %s | 신규 중심가: %.2f | Call: %.1f / Put: %.1f",
+            f"{net_pnl:,.0f}", time_str, current_price, call_strike_new, put_strike_new
+        )
+
+        return {"status": "PROFIT_TAKEN_AND_REBUILT", "signals": signals, "net_pnl": net_pnl}
+

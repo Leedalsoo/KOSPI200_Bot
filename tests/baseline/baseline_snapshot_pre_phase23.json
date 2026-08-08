@@ -1,0 +1,41 @@
+{
+  "version": "v7.0.0_track1_a7_operational_baseline",
+  "promoted_at": "2026-08-08T15:29:10Z",
+  "approved_by": "HUMAN_APPROVAL_CONFIRMED",
+  "baseline_invariants": {
+    "futures_multiplier": 50000,
+    "instrument": "Mini KOSPI 200 Futures",
+    "track3_z5": {
+      "max_group_limit": 2,
+      "z_score_threshold": -2.00,
+      "partial_profit_lock": 0.50,
+      "reentry": "R5"
+    },
+    "p6_portfolio": ["C1", "C2", "C4", "C6", "C7", "C8"],
+    "track7_insurance": {
+      "gap_lock_pct": 0.20,
+      "reentry_policy": "D-1/Expiry BAN"
+    },
+    "track8_gap_lock": 0.40,
+    "track9_hedge_lock": "IMMUTABLE (90% Early Take)",
+    "architecture": "FROZEN",
+    "virtual_broker": "PRESERVED",
+    "risk_controls": "PRESERVED"
+  },
+  "promoted_component": {
+    "name": "Track 1 Wide Strangle Candidate A7",
+    "wide_strangle_lock_pct": 1.00,
+    "reentry_logic": "R5 (Price + Volatility + Cooldown)",
+    "dte_gate": "DTE > 10 ALLOW / DTE <= 10 BAN",
+    "core_alpha": "Trend Following & Double Barrier 100% Preserved",
+    "validated_metrics": {
+      "net_pnl": 578000000.0,
+      "mdd_pct": -2.3,
+      "max_margin_pct": 16.3,
+      "win_rate_pct": 83.2,
+      "peak_to_realized_capture_pct": 91.5,
+      "gap_retention_rate_pct": 93.8,
+      "reentry_pnl": 4500000.0
+    }
+  }
+}

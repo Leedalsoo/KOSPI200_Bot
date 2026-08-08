@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 from typing import Dict, Any, Optional
-from strategy.common import TradingDateResetHelper, AtomicBudgetManager, ExecutionCostCalculator, WallClockTimer
+from strategy.common import TradingDateResetHelper, AtomicBudgetManager, ExecutionCostCalculator, WallClockTimer, DynamicProfitRebuildEvaluator
 from strategy.strategy_contract import StrategyContract
 
 
@@ -24,8 +24,14 @@ class Track8(StrategyContract):
         self.date_reset_helper = TradingDateResetHelper()
         self.budget_manager = AtomicBudgetManager(initial_budget=0.0)
         self.hysteresis_hold_counter: int = 0  # 핑퐁 방지용 시간 가중 히스테리시스 필터 카운터
+        
+        # Dynamic Profit Take & Rebuild Evaluator
+        self.rebuild_evaluator = DynamicProfitRebuildEvaluator()
+        self.profit_target = float(self.config.get("profit_target", 300000.0))
+
         self.reset_state()
         logger.info("Macro Regime Protection & Monthly Wide Strangle Strategy (Track8) Initialized.")
+
 
     def reset_state(self) -> None:
         self.strangle_state = {
@@ -358,3 +364,78 @@ class Track8(StrategyContract):
             }
             
         return {"status": "HOLDING", "signals": []}
+
+    def evaluate_dynamic_profit_rebuild(
+        self,
+        current_price: float,
+        unrealized_pnl: float,
+        qty: int = 1,
+        margin_ratio: float = 0.0,
+        risk_guard_active: bool = False,
+        tick_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        [Dynamic Profit-Take & Rebuild] Track 8 Macro Wide Strangle 이익 실현 및 헷지 공백 없는 신규 Strangle 구축
+        - Expected Net PnL >= profit_target 만족 시 기존 Wide Strangle Profit-Take 청산 후 재구축.
+        - Risk Guard 발동 또는 margin_ratio 과다 시 신규 Rebuild 차단.
+        - 헷지 공백 방지 순서: 1) 기존 포지션 DYNAMIC_PROFIT_TAKE 신호발행, 2) 신규 Wide Strangle 가두리 DYNAMIC_REBUILD_FENCE 산출.
+        """
+        if risk_guard_active or margin_ratio > 0.85:
+            logger.warning("🚨 [Track 8 Rebuild Blocked] Risk Guard 발동 또는 Margin Ratio (%.2f) 초과로 Rebuild 차단.", margin_ratio)
+            return {"status": "RISK_GUARD_BLOCKED", "signals": []}
+
+        triggered, net_pnl = self.rebuild_evaluator.evaluate_profit_take(
+            unrealized_pnl=unrealized_pnl,
+            qty=qty,
+            profit_target=self.profit_target,
+            tick_id=tick_id
+        )
+
+        if not triggered:
+            return {"status": "HOLD", "signals": [], "net_pnl": net_pnl}
+
+        signals = []
+        old_call = self.strangle_state.get("call_strike", current_price + 15.0)
+        old_put = self.strangle_state.get("put_strike", current_price - 15.0)
+
+        # 1. OLD HEDGE Profit Take & Exit
+        signals.append({
+            "action": "DYNAMIC_PROFIT_TAKE",
+            "call_strike": old_call,
+            "put_strike": old_put,
+            "qty": qty,
+            "net_pnl": net_pnl,
+            "reason": f"Track 8 Net PnL (KRW {net_pnl:,.0f}) 목표 달성. Macro Strangle Profit Take!"
+        })
+
+        # 2. NEW HEDGE Rebuild (중심가격 기준 신규 Strangle 산출)
+        call_strike_new, put_strike_new = self.rebuild_evaluator.calculate_rebuild_strikes(
+            current_price=current_price,
+            offset=15.0
+        )
+
+        self.strangle_state.update({
+            "is_active": True,
+            "call_strike": call_strike_new,
+            "put_strike": put_strike_new,
+            "high_watermark_intrinsic": 0.0,
+            "trailing_stop_active": False
+        })
+
+        signals.append({
+            "action": "DYNAMIC_REBUILD_FENCE",
+            "call_strike": call_strike_new,
+            "put_strike": put_strike_new,
+            "qty": qty,
+            "reason": "Track 8 중심가(%.2f) 기준 신규 Macro Wide Strangle 구축 (Call: %.1f, Put: %.1f)" % (
+                current_price, call_strike_new, put_strike_new
+            )
+        })
+
+        logger.info(
+            "🔄 [Track 8 PROFIT TAKE & REBUILD] Net PnL: KRW %s | 신규 중심가: %.2f | Call: %.1f / Put: %.1f",
+            f"{net_pnl:,.0f}", current_price, call_strike_new, put_strike_new
+        )
+
+        return {"status": "PROFIT_TAKEN_AND_REBUILT", "signals": signals, "net_pnl": net_pnl}
+

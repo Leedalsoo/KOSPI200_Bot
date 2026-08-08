@@ -234,3 +234,79 @@ class WallClockTimer:
     def is_expired(self, current_sim_time: Optional[float] = None) -> bool:
         """타임아웃 여부 반환"""
         return self.elapsed(current_sim_time) >= self.timeout_seconds
+
+
+class DynamicProfitRebuildEvaluator:
+    """
+    [Strategy Optimization] Dynamic Profit-Take & Rebuild 공통 평가기
+    
+    핵심 역할:
+    1. Gross Profit 및 예상 수수료/슬리피지(Exit + Re-entry)를 감안한 Expected Net PnL 계산
+    2. Profit Take 조건 판정 (Net PnL >= Threshold)
+    3. 중심가격/변동성 기반 가두리 Rebuild Strike 계산 (가두리 확장 및 이동)
+    4. 중복 호출 방지 (Idempotency)
+    """
+    def __init__(self) -> None:
+        self.last_profit_take_tick_id: Optional[str] = None
+
+    @staticmethod
+    def calculate_expected_net_pnl(
+        unrealized_pnl: float,
+        qty: int,
+        multiplier: float = 250000.0,
+        estimated_fee_rate: float = 0.0005,
+        estimated_slippage_ticks: int = 1,
+        tick_value: float = 12500.0
+    ) -> float:
+        """
+        Exit 및 Re-entry 마찰비용(Fee + Slippage)을 반영한 순예상 손익(Net Expected PnL) 산출
+        """
+        # Exit + Re-entry 2회 거래 마찰비용 산출
+        roundtrip_count = 2
+        total_slippage_cost = roundtrip_count * qty * estimated_slippage_ticks * tick_value
+        estimated_notional = qty * multiplier
+        total_fee_cost = roundtrip_count * estimated_notional * estimated_fee_rate
+        
+        total_friction_cost = total_slippage_cost + total_fee_cost
+        return unrealized_pnl - total_friction_cost
+
+    def evaluate_profit_take(
+        self,
+        unrealized_pnl: float,
+        qty: int,
+        profit_target: float,
+        tick_id: Optional[str] = None,
+        multiplier: float = 250000.0
+    ) -> Tuple[bool, float]:
+        """
+        Net PnL 기준 Profit Take 여부 판정 및 Idempotency 체크
+        
+        Returns:
+            (profit_take_triggered, expected_net_pnl)
+        """
+        if tick_id is not None and self.last_profit_take_tick_id == tick_id:
+            logger.debug("[DynamicProfitRebuildEvaluator] Idempotency Guard: 동일 Tick 중복 판정 방지 (%s)", tick_id)
+            return False, 0.0
+
+        net_pnl = self.calculate_expected_net_pnl(unrealized_pnl, qty, multiplier=multiplier)
+        if net_pnl >= profit_target and profit_target > 0:
+            if tick_id is not None:
+                self.last_profit_take_tick_id = tick_id
+            return True, net_pnl
+        return False, net_pnl
+
+    @staticmethod
+    def calculate_rebuild_strikes(
+        current_price: float,
+        offset: float = 7.5,
+        vol_expansion_factor: float = 1.0,
+        strike_step: float = 2.5
+    ) -> Tuple[float, float]:
+        """
+        현재 시장 중심가격 및 변동성 확장 요소를 반영한 새로운 가두리 Strike (Call/Put) 산출
+        """
+        effective_offset = offset * vol_expansion_factor
+        call_strike = round((current_price + effective_offset) / strike_step) * strike_step
+        put_strike = round((current_price - effective_offset) / strike_step) * strike_step
+        return call_strike, put_strike
+

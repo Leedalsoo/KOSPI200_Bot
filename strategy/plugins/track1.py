@@ -1,7 +1,7 @@
 from decimal import Decimal
 import logging
 from typing import Dict, Any, List, Optional
-from strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer
+from strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer, DynamicProfitRebuildEvaluator
 from strategy.strategy_contract import StrategyContract
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,11 @@ class Track1(StrategyContract):
         # 2. 가두리 및 꼬리표 순환 상태 관리
         self.active_fence: Optional[Dict] = None  # {'type': 'PUT'/'CALL', 'strike': float, 'tag_id': int}
         self.profit_buffer: float = 0.0           
+        
+        # Dynamic Profit Take & Rebuild Evaluator
+        self.rebuild_evaluator = DynamicProfitRebuildEvaluator()
+        self.profit_target: float = float(self.config.get("profit_target", 500000.0))
+
         
         # 3. 선물 헷지 및 휩소 방어 락
         self.futures_hedge_count: int = 0
@@ -383,5 +388,77 @@ class Track1(StrategyContract):
             self.active_hedge = None
 
         return signals
+
+    def evaluate_dynamic_profit_rebuild(
+        self,
+        current_underlying: float,
+        unrealized_pnl: float,
+        qty: int = 1,
+        margin_ratio: float = 0.0,
+        risk_guard_active: bool = False,
+        tick_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        [Dynamic Profit-Take & Rebuild] Track 1 넓은 가두리 이익실현 및 최신 중심가격 기준 가두리 이동 재구축
+        - Net PnL (Net Expected PnL) >= profit_target 달성 시 기존 가두리 Profit Take 청산 후 재구축 신호발행.
+        - Risk Guard (MarginDietGuard 등) 발동 시 신규 Rebuild 차단.
+        """
+        if risk_guard_active or margin_ratio > 0.85:
+            logger.warning("🚨 [Track 1 Rebuild Blocked] Risk Guard 발동 또는 Margin Ratio (%.2f) 초과로 Rebuild 차단.", margin_ratio)
+            return {"status": "RISK_GUARD_BLOCKED", "signals": []}
+
+        triggered, net_pnl = self.rebuild_evaluator.evaluate_profit_take(
+            unrealized_pnl=unrealized_pnl,
+            qty=qty,
+            profit_target=self.profit_target,
+            tick_id=tick_id
+        )
+
+        if not triggered:
+            return {"status": "HOLD", "signals": [], "net_pnl": net_pnl}
+
+        # 1. 기존 포지션 Profit Take
+        signals = []
+        old_fence_type = self.active_fence['type'] if self.active_fence else "PUT"
+        old_strike = self.active_fence['strike'] if self.active_fence else (current_underlying - 7.5)
+        old_tag = self.active_fence['tag_id'] if self.active_fence else 1
+
+        signals.append({
+            "action": "DYNAMIC_PROFIT_TAKE",
+            "type": old_fence_type,
+            "strike": old_strike,
+            "tag_id": old_tag,
+            "qty": qty,
+            "net_pnl": net_pnl,
+            "reason": f"Track 1 Net PnL (KRW {net_pnl:,.0f}) 목표 달성. 가두리 확장 Profit Take!"
+        })
+
+        # 2. 중심가격 이동 재평가 및 신규 가두리 형성 (Rebuild)
+        call_strike_new, put_strike_new = self.rebuild_evaluator.calculate_rebuild_strikes(
+            current_price=current_underlying,
+            offset=self.fence_distance
+        )
+
+        self.base_price = current_underlying
+        self.active_fence = {'type': 'PUT', 'strike': put_strike_new, 'tag_id': old_tag + 1}
+
+        signals.append({
+            "action": "DYNAMIC_REBUILD_FENCE",
+            "call_strike": call_strike_new,
+            "put_strike": put_strike_new,
+            "qty": qty,
+            "tag_id": old_tag + 1,
+            "reason": "Track 1 중심가격(%.2f) 기준 신규 Wide Strangle 가두리 재구축 (Call: %.1f, Put: %.1f)" % (
+                current_underlying, call_strike_new, put_strike_new
+            )
+        })
+
+        logger.info(
+            "🔄 [Track 1 PROFIT TAKE & REBUILD] Net PnL: KRW %s | 신규 중심가: %.2f | Call: %.1f / Put: %.1f",
+            f"{net_pnl:,.0f}", current_underlying, call_strike_new, put_strike_new
+        )
+
+        return {"status": "PROFIT_TAKEN_AND_REBUILT", "signals": signals, "net_pnl": net_pnl}
+
 
 

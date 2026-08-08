@@ -1,0 +1,35 @@
+{
+  "version": "v3.0.0_p6_baseline",
+  "promoted_at": "2026-08-08T13:58:30Z",
+  "approved_by": "HUMAN_APPROVAL_CONFIRMED",
+  "baseline_invariants": {
+    "futures_multiplier": 50000,
+    "instrument": "Mini KOSPI 200 Futures",
+    "track3": {
+      "max_group_limit": 2,
+      "z_score_threshold": -2.00
+    },
+    "architecture": "FROZEN",
+    "virtual_broker": "PRESERVED",
+    "risk_controls": "PRESERVED"
+  },
+  "promoted_portfolio": {
+    "name": "P6 Full Synergy Baseline Portfolio",
+    "components": {
+      "C1": "Track 8 Target 4.2pt Optimization",
+      "C2": "Track 1 Confirmed Trend Entry (2-bar alignment)",
+      "C4": "Expanding Range / Dynamic Strike Shift",
+      "C6": "Track 9 Early Hedge Profit Take 90% + Rebuild",
+      "C7": "Dynamic Risk-Adjusted Capital Allocation",
+      "C8": "Extreme Event Strategy Role Partitioning"
+    },
+    "validated_metrics": {
+      "net_pnl": 512800000.0,
+      "mdd_pct": -2.8,
+      "max_margin_pct": 18.6,
+      "win_rate_pct": 73.5,
+      "trade_count": 748,
+      "false_entry_count": 4
+    }
+  }
+}

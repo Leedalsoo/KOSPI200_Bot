@@ -1,0 +1,31 @@
+{
+  "version": "v4.0.0_track3_candidate_d_baseline",
+  "promoted_at": "2026-08-08T14:31:30Z",
+  "approved_by": "HUMAN_APPROVAL_CONFIRMED",
+  "baseline_invariants": {
+    "futures_multiplier": 50000,
+    "instrument": "Mini KOSPI 200 Futures",
+    "track3": {
+      "max_group_limit": 2,
+      "z_score_threshold": -2.00,
+      "partial_profit_lock_unwind_ratio": 0.50
+    },
+    "p6_portfolio": ["C1", "C2", "C4", "C6", "C7", "C8"],
+    "architecture": "FROZEN",
+    "virtual_broker": "PRESERVED",
+    "risk_controls": "PRESERVED"
+  },
+  "promoted_component": {
+    "name": "Track 3 Partial Profit Lock (50% Preemptive Unwind)",
+    "unwind_ratio": 0.50,
+    "remaining_stat_arb_ratio": 0.50,
+    "validated_metrics": {
+      "net_pnl": 529500000.0,
+      "mdd_pct": -2.5,
+      "max_margin_pct": 17.8,
+      "win_rate_pct": 76.8,
+      "peak_to_realized_capture_pct": 79.5,
+      "gap_retention_rate_pct": 83.2
+    }
+  }
+}
