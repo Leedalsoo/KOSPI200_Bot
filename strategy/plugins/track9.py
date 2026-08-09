@@ -130,7 +130,7 @@ class Track9(StrategyContract):
             return {"status": "EARLY_PROFIT_TAKEN", "signals": []}
 
         if "09:00:00" <= time_str <= "09:05:00" and current_ins_qty > 0:
-            ratio = float(self.config.get("TRACK9_EARLY_PROFIT_TAKE_RATIO", 0.80))
+            ratio = float(self.config.get("TRACK9_EARLY_PROFIT_TAKE_RATIO", 0.90))
             unwind_qty = max(1, int(current_ins_qty * ratio))
             self.early_profit_take_executed_today = True
             self.state = "EARLY_PROFIT_TAKEN"

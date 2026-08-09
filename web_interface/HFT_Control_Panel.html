@@ -136,14 +136,36 @@
       return `D-${d}일 ${hours}시간`;
     };
 
-
-
-
     // 누적수익률 그래프를 위한 커스텀 툴팁 컴포넌트
     const CustomTooltip = ({ active, payload }) => {
       if (active && payload && payload.length) {
         const data = payload[0].payload;
         const profit = data.y;
+        const delta = data.deltaEquity || 0;
+        const causeType = data.causeType || (data.tradeEvents?.length > 0 ? 'REALIZED_TRADE' : 'NORMAL_MTM');
+        const tradeEvents = data.tradeEvents || [];
+        const strategyPnL = data.strategyPnL || {};
+        const activeTracks = data.activeTracks || [];
+        const pnlEntries = Object.entries(strategyPnL).filter(([k, v]) => v !== 0 || activeTracks.includes(k));
+
+        const getCauseHeader = () => {
+          switch (causeType) {
+            case 'SETTLEMENT':
+              return { title: '🟣 SETTLEMENT (만기 정산)', color: '#A855F7' };
+            case 'MULTI_STRATEGY':
+              return { title: '🟠 MULTI-STRATEGY (복수 전략 실행)', color: '#F97316' };
+            case 'REALIZED_TRADE':
+              return { title: '🔴 REALIZED TRADE (실재 매매 실현손익)', color: '#EF4444' };
+            case 'POSITION_ADJUSTMENT':
+              return { title: '🟡 POSITION ADJUSTMENT (포지션 헷지/조정)', color: '#F59E0B' };
+            case 'MTM_POSITION':
+              return { title: '🟢 MTM / POSITION DRIVEN (평가손익 변동)', color: '#10B981' };
+            default:
+              return { title: '⚪ NORMAL MTM (신규 매매 이벤트 없음)', color: '#94A3B8' };
+          }
+        };
+
+        const causeHeader = getCauseHeader();
 
         return (
           <div style={{
@@ -154,29 +176,70 @@
             color: '#F8FAFC',
             fontSize: '12px',
             fontFamily: 'monospace',
-            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)'
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)',
+            minWidth: '260px',
+            maxWidth: '330px'
           }}>
-            <p style={{ margin: '0 0 6px 0', color: '#94A3B8', fontWeight: 600 }}>[Tick #{data.x}]</p>
-            <p style={{ margin: '0 0 8px 0', fontSize: '13px', fontWeight: 700, color: '#38BDF8' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', color: '#94A3B8', fontWeight: 600 }}>
+              <span>[Tick #{data.x}]</span>
+              {tradeEvents[0]?.time && <span>{tradeEvents[0].time}</span>}
+            </div>
+            <p style={{ margin: '0 0 2px 0', fontSize: '13px', fontWeight: 700, color: '#38BDF8' }}>
               총 자본금: {profit.toLocaleString('ko-KR')}원
             </p>
+            {delta !== 0 && (
+              <p style={{ margin: '0 0 8px 0', fontSize: '11px', fontWeight: 700, color: delta > 0 ? '#10B981' : '#EF4444' }}>
+                자본금 변화: {delta > 0 ? `📈 +₩${delta.toLocaleString()}` : `📉 -₩${Math.abs(delta).toLocaleString()}`}
+              </p>
+            )}
 
-            {data.activeStrategy ? (
-              <div style={{ borderTop: '1px solid #334155', paddingTop: '8px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                <p style={{ margin: 0, color: '#F59E0B', fontWeight: 700 }}>⚡ [매매 체결 상황]</p>
-                <p style={{ margin: 0 }}>전략명: <span style={{ color: '#818CF8', fontWeight: 600 }}>{data.activeStrategy}</span></p>
-                <p style={{ margin: 0 }}>
-                  구분: <span style={{ color: data.type === 'BUY' ? '#EF4444' : '#3B82F6', fontWeight: 600 }}>{data.type} ({data.assetType})</span>
-                </p>
-                <p style={{ margin: 0 }}>가격: {data.price} | 수량: {data.qty}</p>
-                <p style={{ margin: 0, color: '#94A3B8' }}>시간: {data.time} | 상태: <span style={{ color: data.status === 'FILLED' ? '#10B981' : '#EF4444' }}>{data.status}</span></p>
-                {data.fee > 0 && <p style={{ margin: 0, color: '#EF4444' }}>수수료: -₩{data.fee.toLocaleString()}</p>}
-              </div>
-            ) : (
-              <div style={{ borderTop: '1px solid #334155', paddingTop: '6px', marginTop: '4px', color: '#64748B' }}>
-                💡 [포지션 유지 / 평온 상태]
+            <div style={{ borderTop: '1px solid #334155', paddingTop: '8px', marginTop: '4px', marginBottom: '8px' }}>
+              <p style={{ margin: '0 0 6px 0', color: causeHeader.color, fontWeight: 700 }}>{causeHeader.title}</p>
+
+              {tradeEvents.length > 0 ? (
+                <div>
+                  {tradeEvents.map((evt, idx) => (
+                    <div key={idx} style={{ marginBottom: '8px', paddingLeft: '6px', borderLeft: `2px solid ${causeHeader.color}` }}>
+                      <p style={{ margin: '0 0 2px 0', fontWeight: 700, color: '#F59E0B' }}>🔹 {evt.strategy}</p>
+                      <p style={{ margin: '0 0 2px 0', paddingLeft: '10px', color: '#F8FAFC' }}>
+                        ACTION: <span style={{ color: evt.action === 'EXIT' ? '#EF4444' : '#10B981', fontWeight: 700 }}>{evt.action}</span>
+                      </p>
+                      <p style={{ margin: 0, paddingLeft: '10px', color: '#CBD5E1', lineHeight: '1.3' }}>
+                        패턴: {evt.pattern}
+                      </p>
+                    </div>
+                  ))}
+                  <p style={{ margin: '6px 0 0 0', fontSize: '10px', color: '#64748B', fontStyle: 'italic' }}>
+                    ※ 상세 체결가격/수량/시간은 체결내역 패널에서 확인
+                  </p>
+                </div>
+              ) : (
+                <div style={{ paddingLeft: '4px' }}>
+                  <p style={{ margin: '0 0 4px 0', color: '#94A3B8' }}>현재 Tick에서 신규 매매 없음</p>
+                  {causeType === 'MTM_POSITION' && activeTracks.length > 0 && (
+                    <p style={{ margin: 0, color: '#CBD5E1', fontSize: '11px' }}>
+                      기존 보유 포지션 평가손익 변동 (영향: <span style={{ color: '#F59E0B', fontWeight: 700 }}>{activeTracks.join(', ')}</span>)
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {pnlEntries.length > 0 && (
+              <div style={{ borderTop: '1px solid #334155', paddingTop: '6px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <p style={{ margin: '0 0 4px 0', color: '#818CF8', fontWeight: 700 }}>📊 [보조참고: 전략별 누적 PnL]</p>
+                {pnlEntries.map(([k, val]) => (
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between', color: val > 0 ? '#10B981' : (val < 0 ? '#EF4444' : '#94A3B8') }}>
+                    <span>{k}:</span>
+                    <span>{val > 0 ? `+₩${val.toLocaleString()}` : `₩${val.toLocaleString()}`} {activeTracks.includes(k) ? '(POS)' : '(FLAT)'}</span>
+                  </div>
+                ))}
               </div>
             )}
+
+            <div style={{ borderTop: '1px solid #334155', paddingTop: '6px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <p style={{ margin: 0, color: '#CBD5E1' }}>현재 보유: <span style={{ color: activeTracks.length > 0 ? '#F59E0B' : '#94A3B8', fontWeight: 700 }}>{activeTracks.length > 0 ? activeTracks.join(', ') : '포지션 없음'}</span></p>
+            </div>
           </div>
         );
       }
@@ -191,9 +254,9 @@
         return (
           <circle cx={cx} cy={cy} r={7.5} fill="#EC4899" stroke="#FFF" strokeWidth={2.5} style={{ filter: 'drop-shadow(0 0 8px #EC4899)', cursor: 'pointer' }} />
         );
-      } else if (payload && payload.activeStrategy) {
+      } else if (payload && (payload.trackName || payload.activeStrategy || payload.type)) {
         return (
-          <circle cx={cx} cy={cy} r={4.5} fill="#EC4899" stroke="#FFF" strokeWidth={1.5} style={{ filter: 'drop-shadow(0 0 3px #EC4899)', cursor: 'pointer' }} />
+          <circle cx={cx} cy={cy} r={5.5} fill="#EC4899" stroke="#FFF" strokeWidth={2} style={{ filter: 'drop-shadow(0 0 5px #EC4899)', cursor: 'pointer' }} />
         );
       }
       return null;
@@ -204,7 +267,7 @@
     // ==============================================================================
     // 2. 실시간 누적 수익률 차트 컴포넌트 (25영업일 domain 0~24 고정 등간격 X축 및 한 달물 전체 생애주기 조망)
     // ==============================================================================
-    const ProfitChart = memo(({ coords, focusedTickSeq }) => {
+    const ProfitChart = memo(({ coords, focusedTickSeq, activeStrategy }) => {
       // 1. coords 내의 모든 영업일(date) 유니크 목록 추적 (엄격한 알파벳/날짜 오름차순 100% 정렬!)
       const uniqueDates = useMemo(() => {
         const datesSet = new Set();
@@ -410,8 +473,14 @@
                   const val = payload.value;
                   const idx = Math.floor(val);
                   const isExpiry = expiryIndicesSet.has(idx);
+                  const holidays2025 = new Set([
+                    '2025-01-01', '2025-01-28', '2025-01-29', '2025-01-30', '2025-03-01', '2025-03-03',
+                    '2025-05-05', '2025-05-06', '2025-06-06', '2025-08-15', '2025-10-03', '2025-10-05',
+                    '2025-10-06', '2025-10-07', '2025-10-08', '2025-10-09', '2025-12-25'
+                  ]);
                   let dateLabel = '';
                   let dayOfWeek = '';
+                  let isHoliday = false;
                   if (idx >= 0 && idx < fixed25Dates.length) {
                     const dateStr = fixed25Dates[idx];
                     if (dateStr && dateStr.length >= 10) {
@@ -419,13 +488,19 @@
                       const days = ['일', '월', '화', '수', '목', '금', '토'];
                       const dt = new Date(dateStr);
                       if (!isNaN(dt.getTime())) {
-                        dayOfWeek = `(${days[dt.getDay()]})`;
+                        const dayNum = dt.getDay();
+                        dayOfWeek = `(${days[dayNum]})`;
+                        isHoliday = (dayNum === 0 || dayNum === 6 || holidays2025.has(dateStr));
                       }
                     } else {
                       dateLabel = dateStr;
                     }
                   }
                   if (!dateLabel) return null;
+
+                  const labelColor = isExpiry ? '#F59E0B' : (isHoliday ? '#EF4444' : '#94A3B8');
+                  const dowColor = isExpiry ? '#F59E0B' : (isHoliday ? '#F87171' : '#64748B');
+
                   return (
                     <g transform={`translate(${x},${y})`}>
                       <text
@@ -433,11 +508,11 @@
                         y={0}
                         dy={10}
                         textAnchor="middle"
-                        fill={isExpiry ? '#F59E0B' : '#94A3B8'}
+                        fill={labelColor}
                         fontSize={isExpiry ? 10 : 9}
-                        fontWeight={isExpiry ? 900 : 600}
+                        fontWeight={isExpiry || isHoliday ? 900 : 600}
                       >
-                        {isExpiry ? `🚨${dateLabel}` : dateLabel}
+                        {isExpiry ? `🚨${dateLabel}` : (isHoliday ? `🌴${dateLabel}` : dateLabel)}
                       </text>
                       <text
                         x={0}
@@ -466,7 +541,7 @@
                 }}
                 tick={{ fontSize: 10, fill: '#A0AEC0', textAnchor: 'start', dx: -90, dy: -12 }}
               />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<CustomTooltip activeStrategy={activeStrategy} />} />
               <Line type="monotone" dataKey="y" stroke="#818CF8" strokeWidth={2} dot={<CustomDot focusedTickSeq={focusedTickSeq} />} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
@@ -3105,7 +3180,7 @@
             {/* 🚀 누적 수익률 차트 (기존 StrategyPnLBarChart 위치로 이동, 가로 100% 전체 폭 확장 적용) */}
             <section style={{ ...styles.card, gridColumn: '1 / -1', height: '360px' }}>
               <h2 style={styles.cardTitle}>Realtime Cumulative Profit (Tick / Fee Deducted)</h2>
-              <ProfitChart coords={coords} focusedTickSeq={focusedTickSeq} />
+              <ProfitChart coords={coords} focusedTickSeq={focusedTickSeq} activeStrategy={activeStrategy} />
             </section>
 
 

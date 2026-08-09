@@ -141,8 +141,21 @@ class Track1(StrategyContract):
         return {"signals": signals}
 
     def on_market_open(self, current_price: float) -> List[Dict]:
-        """[1단계] 장 시작 이중 링(Dual-Ring) 유기체 가두리 선제 구축"""
+        """[1단계] 장 시작 이중 링(Dual-Ring) 유기체 가두리 선제 구축 및 시초가 갭 헷지"""
         signals = []
+
+        # 갭상승/갭하락 개장 시 시초가 선제 헷지 (기존 가두리가 이미 존재하는 경우)
+        if self.base_price > 0:
+            price_gap = current_price - self.base_price
+            if price_gap >= 3.5:  # +1.0% 이상 갭상승 시 선물 BUY 선제 헷지
+                self.active_hedge = "BUY"
+                self.futures_hedge_count += 1
+                signals.append({"action": "FUTURES_ORDER", "type": "BUY", "reason": "시초가 갭상승 선제 선물 BUY 헷지"})
+            elif price_gap <= -3.5:  # -1.0% 이상 갭하락 시 선물 SELL 선제 헷지
+                self.active_hedge = "SELL"
+                self.futures_hedge_count += 1
+                signals.append({"action": "FUTURES_ORDER", "type": "SELL", "reason": "시초가 갭하락 선제 선물 SELL 헷지"})
+
         self.base_price = current_price
         
         # 1차 내각 가두리 (Inner Ring 7.5pt)
@@ -334,36 +347,68 @@ class Track1(StrategyContract):
         
         # 3단계: 100% 격돌 (해당 100% 격돌 가두리 옵션 및 선물 헷지 청산)
         is_flatten = False
+        min_coverage = float(getattr(self, "config", {}).get("min_hedge_coverage_ratio", 0.80) if isinstance(getattr(self, "config", None), dict) else 0.80)
+        required_qty = int(self.active_fence.get("qty", 1)) if isinstance(self.active_fence, dict) else 1
+        hedge_qty = int(getattr(self, "active_hedge_qty", 1)) if hasattr(self, "active_hedge_qty") else (1 if self.active_hedge else 0)
+        coverage_ratio = hedge_qty / max(1, required_qty)
+
+        # 방향 체크 (CALL 가두리는 BUY 헷지, PUT 가두리는 SELL 헷지만 방어 인정)
+        is_direction_valid = False
         if self.active_fence['type'] == 'PUT' and current_price <= fence_strike:
             is_flatten = True
+            if self.active_hedge == 'SELL':
+                is_direction_valid = True
         elif self.active_fence['type'] == 'CALL' and current_price >= fence_strike:
             is_flatten = True
+            if self.active_hedge == 'BUY':
+                is_direction_valid = True
             
         if is_flatten:
-            logger.critical("💥 [100% 격돌] 방어선 붕괴. 해당 가두리 옵션 및 선물 헷지 청산")
             old_tag = self.active_fence['tag_id']
             old_type = self.active_fence['type']
             old_strike = self.active_fence['strike']
             
-            # 1. 100% 도달한 가두리 매도 옵션 청산
-            signals.append({
-                "action": "FENCE_CLEAR",
-                "type": old_type,
-                "strike": old_strike,
-                "tag_id": old_tag,
-                "qty": 1,
-                "reason": f"100% 방어선 격돌 가두리 #{old_tag} 청산"
-            })
-            
-            # 2. 헷징 선물 포지션 청산 (선물 반대 매매)
-            if self.active_hedge is not None:
-                unwind_side = "BUY" if self.active_hedge == "SELL" else "SELL"
+            # TRACK1_ROBUST_CHAMPION_V35: H3 Hybrid Adaptive Exit Gate
+            # 1. 방향 미일치 (Direction Invalid) 또는 방어율 미달 (Coverage < 80%) -> 무조건 FLATTEN_ALL 비상 피난
+            if not is_direction_valid or coverage_ratio < min_coverage:
+                logger.critical(f"💥 [100% 격돌/비상 청산] 방향일치: {is_direction_valid}, 방어율: {coverage_ratio*100:.1f}% < {min_coverage*100:.1f}% -> FLATTEN_ALL 전량 피난 청산 출품")
                 signals.append({
-                    "action": "FUTURES_UNWIND",
-                    "type": unwind_side,
-                    "price": current_price,
-                    "reason": "100% 방어선 격돌 선물 헷지 청산"
+                    "action": "FLATTEN_ALL",
+                    "coverage_ratio": coverage_ratio if is_direction_valid else 0.0,
+                    "reason": f"100% 방어선 격돌 (방향일치: {is_direction_valid}, 방어율: {coverage_ratio:.2%}) 전량 피난 청산"
                 })
+            else:
+                # 2. H3 Hybrid Adaptive: 정상 헷지 상태(방향 Valid + Coverage >= 80%)에서는 포지션 유지하며 회귀 알파 포획
+                # 비정상 Delta(>0.30) 또는 Expansion(>+0.30%)이 4-ticks 이상 지속되는 경우에만 EMERGENCY_RISK_REDUCTION 발동
+                logger.info(f"🛡️ [100% 격돌/TRACK1_ROBUST_CHAMPION_V35] H3 Hybrid Adaptive: 방향일치=True, 방어율={coverage_ratio*100:.1f}% >= {min_coverage*100:.1f}% -> 포지션 유지 및 알파 포획 모니터링")
+                signals.append({
+                    "action": "HYBRID_MAINTAIN_AND_MONITOR",
+                    "type": old_type,
+                    "strike": old_strike,
+                    "tag_id": old_tag,
+                    "coverage_ratio": coverage_ratio,
+                    "reason": f"TRACK1_ROBUST_CHAMPION_V35 H3 Maintain (Coverage: {coverage_ratio:.2%})"
+                })
+                
+                # 3. 100% 도달한 가두리 매도 옵션 청산 및 헷지 정리 시그널
+                signals.append({
+                    "action": "FENCE_CLEAR",
+                    "type": old_type,
+                    "strike": old_strike,
+                    "tag_id": old_tag,
+                    "qty": 1,
+                    "coverage_ratio": coverage_ratio,
+                    "reason": f"100% 방어선 격돌 가두리 #{old_tag} 청산 (방어율: {coverage_ratio:.2%})"
+                })
+                
+                if self.active_hedge is not None:
+                    unwind_side = "BUY" if self.active_hedge == "SELL" else "SELL"
+                    signals.append({
+                        "action": "FUTURES_UNWIND",
+                        "type": unwind_side,
+                        "price": current_price,
+                        "reason": "100% 방어선 격돌 선물 헷지 청산"
+                    })
             
             self.active_hedge = None
             self.active_fence = None

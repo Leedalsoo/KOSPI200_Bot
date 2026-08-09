@@ -67,7 +67,7 @@ def test_track9_early_morning_profit_take() -> None:
     assert res["status"] == "EARLY_PROFIT_TAKE"
     assert res["signals"][0]["action"] == "EARLY_PROFIT_TAKE"
     assert res["signals"][0]["qty"] == 1
-    assert res["signals"][0]["unwind_ratio"] == 0.80
+    assert res["signals"][0]["unwind_ratio"] == 0.90
 
     # 2. 09:10:00 (이미 1회 실행됨) ➡️ EARLY_PROFIT_TAKEN (중복 방지)
     res_late = agent.evaluate_early_morning_profit_take(time_str="09:10:00", current_ins_qty=2)

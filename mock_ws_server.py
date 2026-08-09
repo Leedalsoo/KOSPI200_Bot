@@ -1070,7 +1070,7 @@ async def simulation_loop() -> None:  # noqa: C901
                                 "details": f"{reason} / 수량: {track5_active_qty}계약"
                             })
 
-                # ── 🌅 [Track 9] 장 시작 09:00~09:05 오버나잇 헷지 70% 선제 익절 락인 ──
+                # ── 🌅 [Track 9] 장 시작 09:00~09:05 오버나잇 헷지 90% 선제 익절 락인 및 원자적 포지션 Clear ──
                 if autobot_active and track9 and ("09:00:00" <= time_str <= "09:05:00") and last_insurance_qty > 0:
                     early_res = track9.evaluate_early_morning_profit_take(time_str, last_insurance_qty)
                     if early_res.get("status") == "EARLY_PROFIT_TAKE":
@@ -1078,16 +1078,29 @@ async def simulation_loop() -> None:  # noqa: C901
                             u_qty = sig.get("qty", 1)
                             if u_qty > 0 and last_insurance_qty >= u_qty:
                                 last_insurance_qty -= u_qty
-                                realized_early_gain = u_qty * 150000.0  # 선제 70% 익절 락인 이월금
+                                realized_early_gain = u_qty * 150000.0  # 선제 90% 익절 락인 이월금
                                 current_capital += realized_early_gain
                                 total_equity = current_capital + accumulated_reserve
+
+                                # ── [ATOMIC CLEAR] portfolio_options 내 실물 오버나잇 헷지 포지션(쌍) 원자적 수량 차감 및 제거 ──
+                                remaining_to_clear = u_qty
+                                for p in list(portfolio_options):
+                                    if p.get("is_overnight_insurance", False) and remaining_to_clear > 0:
+                                        p_qty = int(p.get("qty", 1))
+                                        if p_qty <= remaining_to_clear:
+                                            p["qty"] = 0
+                                        else:
+                                            p["qty"] = p_qty - remaining_to_clear
+                                remaining_to_clear = 0
+                                portfolio_options = [p for p in portfolio_options if int(p.get("qty", 0)) > 0]
+
                                 logger.info(
-                                    "🌅 [TRACK 9 PROFIT LOCK] 09:00~09:05 오버나잇 헷지 %d계약(70%%) 선제 익절! +₩%s 락인",
+                                    "🌅 [TRACK 9 PROFIT LOCK & ATOMIC CLEAR] 09:00~09:05 오버나잇 헷지 %d계약 선제 익절 락인 & 실물 포지션 완전 청산! +₩%s",
                                     u_qty, f"{realized_early_gain:,.0f}"
                                 )
                                 event_logs.append({
                                     "seq": seq, "date": date_str, "time": time_str,
-                                    "event": "Track 9 09:00~09:05 선제 70% 익절 락인",
+                                    "event": "Track 9 09:00~09:05 선제 70% 익절 락인 & 포지션 청산",
                                     "details": f"수량: {u_qty}계약 / 확정 이익: +₩{realized_early_gain:,.0f}"
                                 })
 
@@ -1732,6 +1745,18 @@ async def simulation_loop() -> None:  # noqa: C901
                 overnight_insurance_bought_today = True
                 insurance_active_this_month = (target_insurance_qty > 0)
                 insurance_reentry_needed_today = False
+
+                # ── [UI SYNCHRONIZATION FIX] 15:15:00 O/N 헷지 가입 즉시 대시보드 텔레메트리 패킷 강제 송신 ──
+                if connected_clients:
+                    sync_packet = {
+                        "seq": seq, "time": time_str, "date": date_str,
+                        "type": "TELEMETRY_UPDATE", "event": "O/N_STATE_SYNC",
+                        "portfolioOptions": portfolio_options,
+                        "currentCapital": round(current_capital, 2),
+                        "totalEquity": round(total_equity, 2),
+                        "eventLogs": event_logs[-30:]
+                    }
+                    asyncio.gather(*[c.send(orjson.dumps(sync_packet).decode('utf-8')) for c in list(connected_clients)], return_exceptions=True)
 
             # 🛡️ [시장충격(Market Impact) 동적 슬리피지 가산]
             # 주문 수량이 클수록 호가창 잠식 비율이 높아져 실제 체결 가격이 불리해진다.
@@ -2721,20 +2746,25 @@ async def simulation_loop() -> None:  # noqa: C901
                         })
                         
                     elif action == "FLATTEN_ALL":
-                        hedge_side = track1.active_hedge
-                        if hedge_side == "BUY":
-                            current_position_qty -= 1
-                        elif hedge_side == "SELL":
-                            current_position_qty += 1
+                        cov_ratio = float(signal.get("coverage_ratio", 0.0))
+                        min_cov = 0.80
+                        if cov_ratio < min_cov:
+                            hedge_side = track1.active_hedge
+                            if hedge_side == "BUY":
+                                current_position_qty -= 1
+                            elif hedge_side == "SELL":
+                                current_position_qty += 1
+                                
+                            portfolio_options = [p for p in portfolio_options if not (p.get("activeStrategy") == "Track1" and (p.get("side") == "SELL" or p.get("type") == "FUTURES"))]
                             
-                        portfolio_options = [p for p in portfolio_options if not (p.get("activeStrategy") == "Track1" and (p.get("side") == "SELL" or p.get("type") == "FUTURES"))]
-                        
-                        logger.critical("💥 [TRACK 1 FLATTEN] 100%% 격돌! 선물 헷지 및 가두리 포지션 전량 피난 청산 완료.")
-                        event_logs.append({
-                            "seq": seq, "date": date_str, "time": time_str,
-                            "event": "Track 1 FLATTEN",
-                            "details": signal.get("reason")
-                        })
+                            logger.critical("💥 [TRACK 1 FLATTEN] 방어율 미달(%.1f%% < %.1f%%)! 선물 헷지 및 가두리 포지션 전량 피난 청산 완료.", cov_ratio * 100, min_cov * 100)
+                            event_logs.append({
+                                "seq": seq, "date": date_str, "time": time_str,
+                                "event": "Track 1 FLATTEN",
+                                "details": signal.get("reason")
+                            })
+                        else:
+                            logger.info("🛡️ [TRACK 1 FLATTEN SKIPPED] 방어율 충분(%.1f%% >= %.1f%%) - 전량 피난 청산 스킵", cov_ratio * 100, min_cov * 100)
 
             # ── 10.4 [NEW] Track 2: Asymmetric Trap & Volatility Funding ──
             t2_has_pos = any(p.get("activeStrategy") == "Track2" for p in portfolio_options)
@@ -3169,18 +3199,69 @@ async def simulation_loop() -> None:  # noqa: C901
                 "y": round(total_equity, 2),
                 "date": date_str,
                 "dte": f"D-{int(simulated_days_to_expiry)}",
-                "dayLabel": f"D-{int(simulated_days_to_expiry)} ({date_str[5:]})"
+                "dayLabel": f"D-{int(simulated_days_to_expiry)} ({date_str[5:]})",
+                "strategyPnL": strategy_pnl_tracker.copy(),
+                "activeTracks": list(set([p.get("activeStrategy", "Track1") for p in portfolio_options] + (["Track3"] if track3_net_qty != 0 else []) + (["Track5"] if track5_active_qty != 0 else [])))
             }
 
+            trade_events = []
             if order:
                 coord_data["status"] = order["status"]
-                coord_data["activeStrategy"] = order.get("activeStrategy", "")
+                coord_data["activeStrategy"] = order.get("trackName") or order.get("activeStrategy", "")
+                coord_data["trackName"] = order.get("trackName") or order.get("activeStrategy", "")
                 coord_data["type"] = order.get("type", "")
                 coord_data["assetType"] = order.get("assetType", "")
                 coord_data["price"] = order.get("price", 0.0)
                 coord_data["qty"] = order.get("qty", 0)
                 coord_data["fee"] = order.get("fee", 0.0)
                 coord_data["time"] = order.get("time", "")
+
+                strat_key = (order.get("trackName") or order.get("activeStrategy", "Track1")).split(' ')[0]
+                pattern_map = {
+                    "Track1": "델타 뉴트럴 동적 리밸런싱 & 헷지 매매",
+                    "Track2": "단기 변동성 스프레드 스캘핑 & 익절 청산",
+                    "Track3": "선물-옵션 Z-Score 스프레드 차익거래",
+                    "Track4": "3단계 동적 트레일링 스톱 익절 & 포지션 조정",
+                    "Track5": "장초반 시가 갭 회귀 평균 회귀 매매",
+                    "Track6": "변동성 폭발 IV 스파이크 극외가 보험 매매",
+                    "Track7": "위클리 옵션 극외가 양매수 & 만기 익절/청산",
+                    "Track8": "먼슬리 옵션 스트랭글 히스테리시스 밴드 매매",
+                    "Track9": "오버나이트 갭 헷지 & 장초반 90% 조기 익절 청산"
+                }
+                act_type = order.get("action") or ("SETTLEMENT" if "CUTOFF" in str(order.get("status","")) else ("EXIT" if "CLOSE" in str(order.get("status","")) or order.get("type") == "SELL" else "ENTRY"))
+                trade_events.append({
+                    "strategy": order.get("trackName") or order.get("activeStrategy", "Track1"),
+                    "action": act_type,
+                    "pattern": pattern_map.get(strat_key, "전략적 알고리즘 매매"),
+                    "side": order.get("type", ""),
+                    "time": order.get("time", "")
+                })
+
+            coord_data["tradeEvents"] = trade_events
+
+            last_eq = getattr(sys.modules[__name__], '_last_sim_equity', 0.0)
+            delta_equity = round(total_equity - last_eq, 2) if last_eq > 0 else 0.0
+            setattr(sys.modules[__name__], '_last_sim_equity', total_equity)
+
+            if any(e.get("action") == "SETTLEMENT" for e in trade_events):
+                cause_type = "SETTLEMENT"
+            elif len(trade_events) > 1:
+                cause_type = "MULTI_STRATEGY"
+            elif len(trade_events) == 1:
+                act = trade_events[0].get("action")
+                if act in ("EXIT", "CLOSE"):
+                    cause_type = "REALIZED_TRADE"
+                elif act in ("HEDGE", "ADJUST"):
+                    cause_type = "POSITION_ADJUSTMENT"
+                else:
+                    cause_type = "POSITION_ENTRY"
+            elif len(coord_data["activeTracks"]) > 0 and abs(delta_equity) >= 20000:
+                cause_type = "MTM_POSITION"
+            else:
+                cause_type = "NORMAL_MTM"
+
+            coord_data["deltaEquity"] = delta_equity
+            coord_data["causeType"] = cause_type
 
             # ── ⏱️ 매시간 손익률 & 월마감 손익률 연산 ─────────────────────
             curr_hour = calendar_sim.current_time.hour

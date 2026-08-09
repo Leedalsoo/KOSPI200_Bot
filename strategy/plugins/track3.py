@@ -276,9 +276,9 @@ class Track3(StrategyContract):
 
         time_str = market_data.get("time_str", "09:00:00")
 
-        # 1. 포지션이 없는 경우: 진입 조건 탐색
+        # 1. 포지션이 없는 경우: 진입 조건 탐색 (Candidate A: 15:00:00 이후 오버나잇 신규 진입 차단)
         if self.active_position is None:
-            if time_str >= "15:15:00":
+            if time_str >= "15:00:00":
                 return {
                     "strategy": "Strategy_3_StatArb",
                     "active": False,
