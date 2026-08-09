@@ -7,4 +7,5 @@ ruff>=0.1.0
 mypy>=1.7.0
 PyYAML
 types-PyYAML
+websockets>=12.0
 

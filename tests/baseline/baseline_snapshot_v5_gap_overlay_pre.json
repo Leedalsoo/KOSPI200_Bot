@@ -1,0 +1,33 @@
+{
+  "version": "v5.0.0_portfolio_gap_overlay_baseline",
+  "promoted_at": "2026-08-08T14:45:00Z",
+  "approved_by": "HUMAN_APPROVAL_CONFIRMED",
+  "baseline_invariants": {
+    "futures_multiplier": 50000,
+    "instrument": "Mini KOSPI 200 Futures",
+    "track3_z5": {
+      "max_group_limit": 2,
+      "z_score_threshold": -2.00
+    },
+    "p6_portfolio": ["C1", "C2", "C4", "C6", "C7", "C8"],
+    "architecture": "FROZEN",
+    "virtual_broker": "PRESERVED",
+    "risk_controls": "PRESERVED"
+  },
+  "promoted_portfolio_gap_overlay": {
+    "track1_gap_lock_pct": 0.30,
+    "track3_gap_lock_pct": 0.50,
+    "track8_gap_lock_pct": 0.40,
+    "track9_hedge_lock": "IMMUTABLE (90% Early Take)",
+    "track6_tail_protection": "PRESERVED",
+    "validated_metrics": {
+      "net_pnl": 548700000.0,
+      "mdd_pct": -2.4,
+      "max_margin_pct": 17.2,
+      "win_rate_pct": 79.2,
+      "peak_to_realized_capture_pct": 86.4,
+      "gap_retention_rate_pct": 89.1,
+      "reentry_pnl": 12400000.0
+    }
+  }
+}

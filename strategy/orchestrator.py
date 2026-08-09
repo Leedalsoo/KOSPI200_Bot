@@ -56,26 +56,26 @@ class StrategyOrchestrator:
         if self.current_regime == 0:
             # 가두리 국면: 횡보 트랩 전략에 자본 집중
             new_weights = {
-                "track2_trap": 1.0,
-                "track3_arbitrage": 0.0,
-                "track4_gamma": 0.0,
-                "track1_defense": 0.0
+                "Track2": 1.0,
+                "Track3": 0.0,
+                "Track4": 0.0,
+                "Track1": 0.0
             }
         elif self.current_regime == 1:
             # 돌파 국면: 아비트라지(돌파) 전략 80%, 방어 전략 20%
             new_weights = {
-                "track2_trap": 0.0,
-                "track3_arbitrage": 0.8,
-                "track4_gamma": 0.0,
-                "track1_defense": 0.2
+                "Track2": 0.0,
+                "Track3": 0.8,
+                "Track4": 0.0,
+                "Track1": 0.2
             }
         else:
             # 추세 국면: 감마/추세 추종 전략 80%, 방어 전략 20%
             new_weights = {
-                "track2_trap": 0.0,
-                "track3_arbitrage": 0.0,
-                "track4_gamma": 0.8,
-                "track1_defense": 0.2
+                "Track2": 0.0,
+                "Track3": 0.0,
+                "Track4": 0.8,
+                "Track1": 0.2
             }
 
         self.update_weights(new_weights)

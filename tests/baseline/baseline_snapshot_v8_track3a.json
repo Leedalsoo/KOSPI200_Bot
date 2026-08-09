@@ -1,0 +1,29 @@
+{
+  "version": "v8",
+  "description": "Baseline v8 - Track 3 Candidate A Overnight Entry Ban (15:00:00 Cutoff) Promoted",
+  "multiplier": 50000,
+  "p6_enabled": true,
+  "track3_params": {
+    "max_group_limit": 2,
+    "z_score_threshold": -2.0,
+    "overnight_entry_cutoff": "15:00:00",
+    "candidate_d_gap_lock": 0.50,
+    "t3_r5_reentry": true
+  },
+  "track7_params": {
+    "gap_lock": 0.20,
+    "expiry_ban": true
+  },
+  "track1_params": {
+    "gap_lock": 1.0,
+    "candidate_a7": true,
+    "dte_filter": 10
+  },
+  "track8_params": {
+    "gap_lock": 0.40
+  },
+  "track9_params": {
+    "immutable": true,
+    "early_take_ratio": 0.90
+  }
+}

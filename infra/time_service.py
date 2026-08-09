@@ -44,3 +44,12 @@ class TimeService:
             return False
             
         return True
+
+    def get_time_str(self) -> str:
+        """HH:MM:SS 포맷의 현재 시각 문자열 반환 (읽기 전용 샌드박스)"""
+        return self.get_current_time().strftime("%H:%M:%S")
+
+    def get_timestamp_ns(self) -> int:
+        """나노초 타임스탬프 반환 (Single Source of Truth)"""
+        return int(self.get_current_time().timestamp() * 1_000_000_000)
+

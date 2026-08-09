@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-08-09T12:56:36.013292",
+  "engine": "KOSPI200_BOT_CORE_V1_REAL_TICK_ENGINE",
+  "simulation_mode": "5YEAR_1000X_TICK_BY_TICK",
+  "speed_multiplier": "1000x",
+  "soak_days": 1250,
+  "total_ticks_processed": 625000,
+  "initial_capital": 25000000,
+  "final_capital": 367659677.57,
+  "total_pnl": 342659677.57,
+  "total_return_pct": 1370.64,
+  "total_trades": 3440,
+  "win_rate_pct": 69.51,
+  "mdd_pct": 1.2,
+  "elapsed_seconds": 2.216,
+  "ticks_per_second": 282098.8
+}

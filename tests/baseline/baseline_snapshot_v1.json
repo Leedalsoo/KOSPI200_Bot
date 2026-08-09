@@ -1,0 +1,21 @@
+{
+  "scenario": "COVID_PANIC_2020_INITIAL",
+  "seed": 42,
+  "account": {
+    "initial_capital": 25000000.0,
+    "current_capital": 25000000.0,
+    "total_equity": 25000000.0
+  },
+  "pnl": {
+    "realized_pnl": 0.0,
+    "unrealized_pnl": 0.0,
+    "strategy_pnl": 0.0,
+    "hedge_pnl": 0.0,
+    "net_pnl": 0.0
+  },
+  "guards": {
+    "is_market_opened_today": true,
+    "already_rolled_this_month": false
+  },
+  "positions_count": 5
+}

@@ -1,0 +1,46 @@
+{
+  "version": "v6.0.0_t3r5_t720_operational_baseline",
+  "promoted_at": "2026-08-08T15:11:45Z",
+  "approved_by": "HUMAN_APPROVAL_CONFIRMED",
+  "baseline_invariants": {
+    "futures_multiplier": 50000,
+    "instrument": "Mini KOSPI 200 Futures",
+    "track3_z5": {
+      "max_group_limit": 2,
+      "z_score_threshold": -2.00,
+      "partial_profit_lock": 0.50
+    },
+    "p6_portfolio": ["C1", "C2", "C4", "C6", "C7", "C8"],
+    "track1_gap_lock": 0.30,
+    "track8_gap_lock": 0.40,
+    "track9_hedge_lock": "IMMUTABLE (90% Early Take)",
+    "architecture": "FROZEN",
+    "virtual_broker": "PRESERVED",
+    "risk_controls": "PRESERVED"
+  },
+  "promoted_components": {
+    "t3_r5_reentry": {
+      "name": "Track 3 Z-Score + Spread Normalization + Cooldown Re-entry",
+      "cooldown_time": "ACTIVE",
+      "spread_normalization": "ACTIVE"
+    },
+    "t7_20_insurance": {
+      "name": "Track 7 Weekly Insurance 20% Gap Profit Lock",
+      "gap_lock_pct": 0.20,
+      "reentry_policy": {
+        "d3_d2": "CONDITIONAL",
+        "d1": "FORBIDDEN",
+        "expiry_day": "FORBIDDEN"
+      }
+    },
+    "validated_metrics": {
+      "net_pnl": 570200000.0,
+      "mdd_pct": -2.3,
+      "max_margin_pct": 16.8,
+      "win_rate_pct": 81.5,
+      "peak_to_realized_capture_pct": 88.5,
+      "gap_retention_rate_pct": 91.2,
+      "t7_insurance_preservation_pct": 98.2
+    }
+  }
+}

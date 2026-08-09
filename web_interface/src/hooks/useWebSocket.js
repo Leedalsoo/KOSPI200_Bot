@@ -34,6 +34,7 @@ export const useWebSocket = (url) => {
     }
     if (wsRef.current) {
       try {
+        wsRef.current.onclose = null;
         wsRef.current.close();
       } catch (e) {
         // ignore
@@ -116,7 +117,11 @@ export const useWebSocket = (url) => {
 
     // 🛡️ [메모리 누수 방어] 언마운트 또는 URL 변경 시 모든 소켓 및 타이머 즉시 자원 회수
     return () => {
-      if (ws) {
+      if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+      } else if (ws) {
+        ws.onclose = null;
         ws.close();
       }
       if (reconnectTimerRef.current) {

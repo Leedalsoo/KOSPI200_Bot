@@ -1,0 +1,29 @@
+# ==============================================================================
+# KOSPI200 HFT Bot Master Configuration File
+# ==============================================================================
+
+system:
+  environment: "SIMULATION" # SIMULATION, PAPER_TRADING, LIVE
+  version: "25.2"
+  log_level: "INFO"
+
+# 8대 전략 자본 배분 비율 (Capital Allocation Weights)
+# - 상시 할당 고정 비중 (총 62%)
+# - 조건부 동적 이벤트 비중 (Track 6: +2.0%, Track 7: +2.0%)
+strategy_allocation:
+  base_weights:
+    track1_defense: 30.0    # Track 1: Tail Defense (30%)
+    track2_trap: 10.0       # Track 2: Asymmetric Trap (10%)
+    track3_arbitrage: 5.0   # Track 3: Stat Arbitrage (5%)
+    track4_gamma: 10.0      # Track 4: Gamma Scalping (10%)
+    track5_gap: 2.0         # Track 5: Gap Protocol (상시 고정 2.0%)
+    track8_monthly: 5.0     # Track 8: Monthly Wide Strangle (5%)
+  dynamic_rates:
+    track6_daily: 2.0       # Track 6: Daily 0DTE (조건 발동 시 2.0%)
+    track7_weekly: 2.0      # Track 7: Weekly Insurance (조건 발동 시 2.0%)
+
+
+risk_limits:
+  max_drawdown_limit: 0.30  # 30% MDD Limit
+  max_futures_contracts: 10
+  fat_finger_price_bound: 5.0

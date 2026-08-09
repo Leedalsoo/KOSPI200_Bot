@@ -1,0 +1,58 @@
+active_scenario: HIGH_VOLATILITY
+scenarios:
+  CALM:
+    base_volatility: 1.0
+    biweekly_shock_range:
+    - 4.0
+    - 8.0
+    description: 낮은 변동성 (4~8pt 미세 횡보) - 소형 틱 차익거래 중심
+    gap_magnitude_percent:
+    - 0.1
+    - 0.5
+    name: 평온 횡보 장세
+    shock_interval_days: 12
+    trend_drift_range:
+    - -0.03
+    - 0.03
+  CRASH_FLASH:
+    base_volatility: 4.5
+    biweekly_shock_range:
+    - 25.0
+    - 40.0
+    description: 플래시 크래시 & 서킷브레이커 극단 시장 폭락
+    gap_magnitude_percent:
+    - 2.5
+    - 5.0
+    name: 극단 스트레스 장세
+    shock_interval_days: 1
+    trend_drift_range:
+    - -0.8
+    - -0.3
+  HIGH_VOLATILITY:
+    base_volatility: 2.85
+    biweekly_shock_range:
+    - 15.0
+    - 25.0
+    description: VKOSPI 폭등 및 급격한 시초가 오버나잇 갭 발생 장세
+    gap_magnitude_percent:
+    - 1.2
+    - 2.5
+    name: 고변동성 추세 장세
+    shock_interval_days: 3
+    trend_drift_range:
+    - -0.35
+    - 0.35
+  MODERATE_TREND:
+    base_volatility: 1.75
+    biweekly_shock_range:
+    - 8.0
+    - 15.0
+    description: 중간 변동성(10~18pt) 및 일정한 방향성(상승/하락) 추세 드라이브 장세
+    gap_magnitude_percent:
+    - 0.5
+    - 1.3
+    name: 중간 변동성 + 추세 장세
+    shock_interval_days: 5
+    trend_drift_range:
+    - 0.08
+    - 0.22

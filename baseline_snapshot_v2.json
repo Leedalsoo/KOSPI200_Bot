@@ -1,0 +1,16 @@
+{
+  "snapshot_version": "v2.0.0",
+  "promotion_timestamp": "2026-08-08 13:00:02",
+  "promoted_strategy": "Track3",
+  "old_parameters": {
+    "max_group_limit": 3,
+    "z_score_threshold": -1.8
+  },
+  "new_parameters": {
+    "max_group_limit": 2,
+    "z_score_threshold": -2.0
+  },
+  "promotion_reason": "Passed Out-of-Sample, Long-Horizon Multi-Seed & Track 1~9 Interaction Gates",
+  "human_approval_status": "PASS (APPROVE BASELINE PROMOTION)",
+  "status": "ACTIVE_FROZEN_BASELINE"
+}

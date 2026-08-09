@@ -1,16 +1,20 @@
 import React from 'react';
 import { render, act } from '@testing-library/react';
-import PayoffDiagram from '../../components/dashboard/PayoffDiagram';
-import { useStore } from '../../store/rootStore';
+import PayoffDiagram from '../../../components/dashboard/PayoffDiagram';
+import { useStore } from '../../../store/rootStore';
 
-// Recharts ResponsiveContainer 모킹
+// Recharts 모킹 (jsdom SVG 렌더링 한계 극복)
 jest.mock('recharts', () => {
-  const OriginalRecharts = jest.requireActual('recharts');
+  const React = require('react');
   return {
-    ...OriginalRecharts,
-    ResponsiveContainer: ({ children }) => (
-      <div style={{ width: 800, height: 300 }}>{children}</div>
-    ),
+    ResponsiveContainer: ({ children }) => <div style={{ width: 800, height: 300 }}>{children}</div>,
+    ScatterChart: ({ children }) => <div data-testid="scatter-chart">{children}</div>,
+    Scatter: () => <div data-testid="scatter" />,
+    XAxis: () => null,
+    YAxis: () => null,
+    Tooltip: () => null,
+    CartesianGrid: () => null,
+    ReferenceLine: () => <div className="recharts-reference-line" data-testid="reference-line" />,
   };
 });
 
