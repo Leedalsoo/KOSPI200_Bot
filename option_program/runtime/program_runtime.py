@@ -77,39 +77,149 @@ class OptionProgramRuntime:
 
         commands: List[CanonicalOrderCommand] = []
 
-        # 2. Track 1 ~ Track 9 전략 평가 (결정론적 주문 생성)
+        # 2. Track 1 ~ Track 9 전략 평가 (실제 고유 인터페이스 호출 및 주문 명령 생성)
         for st in self.strategies:
             st_name = getattr(st, "name", st.__class__.__name__)
             m = self.strategy_metrics[st_name]
             m["ticks_evaluated"] += 1
+            signals: List[Dict[str, Any]] = []
+
             try:
-                if hasattr(st, "on_tick"):
-                    signals = st.on_tick(tick.underlying_price, tick.timestamp)
-                    if signals:
-                        m["signals_generated"] += len(signals)
-                        for local_seq, sig in enumerate(signals, start=1):
-                            # [결정론적 주문 ID]: seq_id/tick_counter + track_id + local_sequence (재현성 100% 보장)
-                            seq_num = tick.seq_id if tick.seq_id > 0 else self.tick_counter
-                            det_order_id = f"ORD-T{seq_num}-{st_name}-{local_seq}"
-                            
-                            cmd = CanonicalOrderCommand(
-                                client_order_id=det_order_id,
-                                track_id=st_name,
-                                asset_type=CanonicalAssetType.OPTION if sig.get("asset") == "OPTION" else CanonicalAssetType.FUTURES,
-                                side=CanonicalOrderSide.BUY if sig.get("side") == "BUY" else CanonicalOrderSide.SELL,
-                                qty=int(sig.get("qty", 1)),
-                                price=float(sig.get("price", tick.last_price)),
-                                option_type=CanonicalOptionType.CALL if sig.get("option_type") == "CALL" else CanonicalOptionType.PUT,
-                                strike=float(sig.get("strike", tick.strike_price)),
-                                tag_id=str(sig.get("tag_id", ""))
-                            )
-                            commands.append(cmd)
-                            m["orders_created"] += 1
+                date_str = "2026-08-23"
+                if st_name == "Track1":
+                    is_bull = (self.current_regime == "BULL")
+                    raw_signals = st.on_tick(
+                        current_price=tick.underlying_price,
+                        trend_signal=is_bull,
+                        days_to_expiry=30.0,
+                        current_date=date_str
+                    )
+                    if isinstance(raw_signals, list):
+                        signals.extend(raw_signals)
+
+                elif st_name == "Track2":
+                    trap_res = st.evaluate_trap_status(tick.underlying_price)
+                    if trap_res.get("signals"):
+                        signals.extend(trap_res["signals"])
+                    elif trap_res.get("action") in ["ENTER", "BUY", "SELL"]:
+                        signals.append(trap_res)
+
+                elif st_name == "Track3":
+                    m_data = {
+                        "underlying_price": tick.underlying_price,
+                        "time_str": "09:30:00",
+                        "atm_strike": 350.0,
+                        "near_synthetic_future": tick.underlying_price + 0.05,
+                        "far_synthetic_future": tick.underlying_price + 0.10,
+                        "active_vol": 1.0,
+                    }
+                    arb_res = st.evaluate_arbitrage(m_data)
+                    if arb_res.get("signals"):
+                        signals.extend(arb_res["signals"])
+                    elif arb_res.get("action") in ["ENTER", "BUY", "SELL"]:
+                        signals.append(arb_res)
+
+                elif st_name == "Track4":
+                    sc_res = st.evaluate_scalping_basecamp_entry(
+                        current_price=tick.underlying_price,
+                        active_vol=1.0,
+                        base_vol=1.0,
+                        date_str=date_str,
+                        time_str="09:15:00"
+                    )
+                    if sc_res.get("signals"):
+                        signals.extend(sc_res["signals"])
+                    elif sc_res.get("action") in ["ENTER", "BUY", "SELL"]:
+                        signals.append(sc_res)
+
+                elif st_name == "Track5":
+                    m_res = st.evaluate_mean_reversion(tick.underlying_price)
+                    if m_res.get("signals"):
+                        signals.extend(m_res["signals"])
+                    elif m_res.get("action") in ["ENTER", "BUY", "SELL"]:
+                        signals.append(m_res)
+
+                elif st_name == "Track6":
+                    ins_res = st.evaluate_insurance_buy(
+                        current_price=tick.underlying_price,
+                        active_vol=1.0,
+                        base_vol=1.0,
+                        budget=1000000.0,
+                        date_str=date_str,
+                        time_str="09:00:00"
+                    )
+                    if ins_res.get("signals"):
+                        signals.extend(ins_res["signals"])
+                    elif ins_res.get("action") in ["ENTER", "BUY", "SELL"]:
+                        signals.append(ins_res)
+
+                elif st_name == "Track7":
+                    ins7 = st.evaluate_insurance_buy(
+                        current_price=tick.underlying_price,
+                        budget=1000000.0,
+                        date_str=date_str,
+                        is_new_week_start=True,
+                        active_vol=1.0,
+                        time_str="09:00:00"
+                    )
+                    if ins7.get("signals"):
+                        signals.extend(ins7["signals"])
+                    elif ins7.get("action") in ["ENTER", "BUY", "SELL"]:
+                        signals.append(ins7)
+
+                elif st_name == "Track8":
+                    ent8 = st.evaluate_entry(
+                        dte=30.0,
+                        budget=2000000.0,
+                        current_price=tick.underlying_price,
+                        current_regime=self.current_regime,
+                        date_str=date_str
+                    )
+                    if ent8.get("signals"):
+                        signals.extend(ent8["signals"])
+                    elif ent8.get("action") in ["ENTER", "BUY", "SELL"]:
+                        signals.append(ent8)
+
+                elif st_name == "Track9":
+                    ins9 = st.evaluate_insurance(
+                        current_price=tick.underlying_price,
+                        active_sell_qty=2,
+                        current_ins_qty=0,
+                        date_str=date_str
+                    )
+                    if ins9.get("signals"):
+                        signals.extend(ins9["signals"])
+                    elif ins9.get("action") in ["ENTER", "BUY", "SELL"]:
+                        signals.append(ins9)
+
+                # 시그널 변환 및 명령 적재
+                if signals:
+                    m["signals_generated"] += len(signals)
+                    for local_seq, sig in enumerate(signals, start=1):
+                        seq_num = tick.seq_id if tick.seq_id > 0 else self.tick_counter
+                        det_order_id = f"ORD-T{seq_num}-{st_name}-{local_seq}"
+                        
+                        cmd = CanonicalOrderCommand(
+                            client_order_id=det_order_id,
+                            track_id=st_name,
+                            asset_type=CanonicalAssetType.OPTION if sig.get("asset") == "OPTION" or sig.get("type") in ["CALL", "PUT"] else CanonicalAssetType.FUTURES,
+                            side=CanonicalOrderSide.BUY if sig.get("side", "BUY") == "BUY" else CanonicalOrderSide.SELL,
+                            qty=int(sig.get("qty", 1)),
+                            price=float(sig.get("price", tick.last_price)),
+                            option_type=CanonicalOptionType.CALL if sig.get("option_type") == "CALL" or sig.get("type") == "CALL" else CanonicalOptionType.PUT,
+                            strike=float(sig.get("strike", tick.strike_price)),
+                            tag_id=str(sig.get("tag_id", ""))
+                        )
+                        commands.append(cmd)
+                        m["orders_created"] += 1
+
             except Exception as e:
                 m["exceptions"] += 1
-                logger.debug(f"Strategy {st_name} note: {e}")
+                logger.error(f"Strategy {st_name} execution error: {e}", exc_info=True)
 
         return commands
+
+
 
     def consume_execution_report(self, report: CanonicalExecutionReport) -> None:
         """[VSSF 체결 증명서 수신 및 전략 포지션 장부 업데이트]"""

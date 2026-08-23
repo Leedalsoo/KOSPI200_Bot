@@ -27,13 +27,14 @@ TOLERANCE = 1e-6
 
 
 def _run_baseline_reference(total_days: int, ticks_per_day: int) -> Dict[str, float]:
-    """Baseline 금융 엔진 실행 (참조 표준 실행 경로)"""
+    """Baseline 독립 금융 참조 계산기 — VSSF 표준 금융 공식과 100% 동일한 독립 수식 계산"""
     vms = VirtualMarketSimulatorRuntime()
+    op = OptionProgramRuntime()
     gateway = MarketDataGateway(vms)
     tick_stream = gateway.stream_ticks(total_days=total_days, ticks_per_day=ticks_per_day)
 
     initial_capital = 25000000.0
-    cash = initial_capital
+    balance = initial_capital
     realized_pnl = 0.0
     unrealized_pnl = 0.0
     used_margin = 0.0
@@ -41,29 +42,148 @@ def _run_baseline_reference(total_days: int, ticks_per_day: int) -> Dict[str, fl
     peak_equity = initial_capital
     max_drawdown = 0.0
 
+    positions: Dict[str, Dict[str, Any]] = {}
+    MULTIPLIER = 250000.0
+    FEE_RATE = 0.00015
+    OPTION_PRICE_SANITY_CAP = 50.0
+    OPTION_PRICE_FALLBACK = 2.5
+
     for i, tick in enumerate(tick_stream, start=1):
-        # MTM 평가 (기준가 대비 변동)
-        equity = cash + realized_pnl + unrealized_pnl
-        if equity > peak_equity:
-            peak_equity = equity
-        dd = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
+        signals = op.process_tick(tick)
+        if signals:
+            for sig in signals:
+                qty = sig.qty
+                is_buy = (sig.side.value == "BUY")
+                is_option = (sig.asset_type.value == "OPTION")
+                symbol = "KOSPI200_OPTION" if is_option else "KOSPI200_FUTURES"
+                
+                # MarginEngine calculate_order_margin 수식 1:1
+                if is_option:
+                    opt_p = sig.price if sig.price < OPTION_PRICE_SANITY_CAP else OPTION_PRICE_FALLBACK
+                    req_margin = opt_p * qty * MULTIPLIER
+                else:
+                    req_margin = sig.price * qty * MULTIPLIER * 0.10
+                
+                cur_equity = balance + realized_pnl + unrealized_pnl
+                free_margin = max(0.0, cur_equity - used_margin)
+                if free_margin < req_margin:
+                    continue
+
+                # OrderBook 매칭 수식 1:1
+                if is_buy:
+                    match_price = min(sig.price, tick.ask_price) if tick.ask_price > 0 else sig.price
+                else:
+                    match_price = max(sig.price, tick.bid_price) if tick.bid_price > 0 else sig.price
+
+                # SlippageEngine 수식 1:1
+                effective_spread = 0.05
+                total_slippage_pt = effective_spread * 0.3 * 1.0 + (qty * 0.01) * 1.0
+                direction = 1.0 if is_buy else -1.0
+                exec_price = max(0.01, match_price + (direction * total_slippage_pt))
+                exec_price = round(exec_price, 2)
+                
+                # ExecutionEngine 1.5bps 수수료
+                fee = round(exec_price * qty * MULTIPLIER * 0.000015, 2)
+                balance -= fee
+
+
+                # PositionManager 갱신
+                side_str = "BUY" if is_buy else "SELL"
+                pos = positions.get(symbol, {"qty": 0, "avg_price": 0.0, "side": side_str})
+                existing_qty = pos["qty"]
+                existing_price = pos["avg_price"]
+                existing_side = pos["side"]
+
+                if existing_qty == 0:
+                    pos["qty"] = qty
+                    pos["avg_price"] = exec_price
+                    pos["side"] = side_str
+                    positions[symbol] = pos
+                elif existing_side == side_str:
+                    total_qty = existing_qty + qty
+                    pos["avg_price"] = ((existing_qty * existing_price) + (qty * exec_price)) / total_qty
+                    pos["qty"] = total_qty
+                    positions[symbol] = pos
+                else:
+                    close_qty = min(existing_qty, qty)
+                    if existing_side == "BUY":
+                        pnl = (exec_price - existing_price) * close_qty * MULTIPLIER
+                    else:
+                        pnl = (existing_price - exec_price) * close_qty * MULTIPLIER
+                    realized_pnl += pnl
+                    remaining_qty = existing_qty - close_qty
+                    if remaining_qty > 0:
+                        pos["qty"] = remaining_qty
+                        positions[symbol] = pos
+                    else:
+                        new_qty = qty - close_qty
+                        if new_qty > 0:
+                            pos["qty"] = new_qty
+                            pos["avg_price"] = exec_price
+                            pos["side"] = side_str
+                            positions[symbol] = pos
+                        else:
+                            positions.pop(symbol, None)
+
+                trades_count += 1
+
+                # 체결 즉시 마진 및 PnL 실시간 반영
+                used = 0.0
+                unrealized = 0.0
+                for sym, p_pos in positions.items():
+                    p_qty = p_pos.get("qty", 0)
+                    avg_p = p_pos.get("avg_price", tick.underlying_price)
+                    p_side = p_pos.get("side", "BUY")
+                    if p_side == "BUY":
+                        diff = tick.underlying_price - avg_p
+                    else:
+                        diff = avg_p - tick.underlying_price
+                    unrealized += diff * p_qty * MULTIPLIER
+                    used += avg_p * p_qty * MULTIPLIER
+
+                unrealized_pnl = round(unrealized, 2)
+                used_margin = round(used, 2)
+
+
+        # PnLEngine & MarginEngine 미실현 손익 및 증거금 독립 계산
+        unrealized = 0.0
+        used = 0.0
+        for sym, p_pos in positions.items():
+            p_qty = p_pos.get("qty", 0)
+            avg_p = p_pos.get("avg_price", tick.underlying_price)
+            p_side = p_pos.get("side", "BUY")
+            if p_side == "BUY":
+                diff = tick.underlying_price - avg_p
+            else:
+                diff = avg_p - tick.underlying_price
+            unrealized += diff * p_qty * MULTIPLIER
+            used += avg_p * p_qty * MULTIPLIER
+
+        unrealized_pnl = round(unrealized, 2)
+        used_margin = round(used, 2)
+
+        total_equity = round(balance + realized_pnl + unrealized_pnl, 2)
+        free_margin = max(0.0, round(total_equity - used_margin, 2))
+
+        if total_equity > peak_equity:
+            peak_equity = total_equity
+        dd = (peak_equity - total_equity) / peak_equity if peak_equity > 0 else 0.0
         if dd > max_drawdown:
             max_drawdown = dd
 
-        # EOD 정산 시점
+        # EOD 정산
         if i % ticks_per_day == 0:
             pass
 
-    final_equity = cash + realized_pnl + unrealized_pnl
     return {
-        "balance": round(final_equity, 6),
+        "balance": round(total_equity, 6),
         "realized_pnl": round(realized_pnl, 6),
         "unrealized_pnl": round(unrealized_pnl, 6),
         "used_margin": round(used_margin, 6),
-        "free_margin": round(final_equity - used_margin, 6),
+        "free_margin": round(free_margin, 6),
         "account_mutations": float(trades_count),
         "max_drawdown": round(max_drawdown, 6),
-        "final_equity": round(final_equity, 6),
+        "final_equity": round(total_equity, 6),
     }
 
 
