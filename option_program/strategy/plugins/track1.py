@@ -1,8 +1,8 @@
 from decimal import Decimal
 import logging
 from typing import Dict, Any, List, Optional
-from strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer, DynamicProfitRebuildEvaluator
-from strategy.strategy_contract import StrategyContract
+from option_program.strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer, DynamicProfitRebuildEvaluator
+from option_program.strategy.strategy_contract import StrategyContract
 
 logger = logging.getLogger(__name__)
 

@@ -27,8 +27,8 @@ class VirtualSecuritiesFirmRuntime:
         # M5 Modules — authoritative path owner
         self.settlement_engine = SettlementEngine(account=self.account)
         self.recovery_engine = StateRecoveryEngine(account=self.account)
-        # MarginEngine: firm_runtime Risk Admission Guard 단독 책임자
-        self.margin_engine = MarginEngine(initial_capital=initial_capital)
+        # MarginEngine: 단일 권위자 확정 (PaperTradingAccount 소유 인스턴스 단일 공유)
+        self.margin_engine = self.account.margin_engine
 
         self.metrics: Dict[str, int] = {
             "market_ticks": 0,

@@ -41,6 +41,16 @@ class OptionProgramRuntime:
         self.received_execution_reports: List[CanonicalExecutionReport] = []
         self.tick_counter: int = 0
         self.last_price: float = 350.0
+        
+        # 전략별 실측 메트릭 (호출 수, 시그널 수, 생성된 주문 수, 예외 발생 수)
+        self.strategy_metrics: Dict[str, Dict[str, int]] = {
+            getattr(st, "name", st.__class__.__name__): {
+                "ticks_evaluated": 0,
+                "signals_generated": 0,
+                "orders_created": 0,
+                "exceptions": 0
+            } for st in self.strategies
+        }
 
     def process_tick(self, tick: CanonicalMarketTick) -> List[CanonicalOrderCommand]:
         """[틱 수신 ➔ Sensor / Regime Detector / Track 1~9 평가 ➔ 순수 전략 주문 명령 생성]"""
@@ -51,14 +61,18 @@ class OptionProgramRuntime:
 
         # Evaluate Track 1 ~ Track 9 strategies purely
         for st in self.strategies:
+            st_name = getattr(st, "name", st.__class__.__name__)
+            m = self.strategy_metrics[st_name]
+            m["ticks_evaluated"] += 1
             try:
                 if hasattr(st, "on_tick"):
                     signals = st.on_tick(tick.underlying_price, tick.timestamp)
                     if signals:
+                        m["signals_generated"] += len(signals)
                         for sig in signals:
                             cmd = CanonicalOrderCommand(
                                 client_order_id=f"ORD-{uuid.uuid4().hex[:8].upper()}",
-                                track_id=getattr(st, "name", st.__class__.__name__),
+                                track_id=st_name,
                                 asset_type=CanonicalAssetType.OPTION if sig.get("asset") == "OPTION" else CanonicalAssetType.FUTURES,
                                 side=CanonicalOrderSide.BUY if sig.get("side") == "BUY" else CanonicalOrderSide.SELL,
                                 qty=int(sig.get("qty", 1)),
@@ -68,8 +82,10 @@ class OptionProgramRuntime:
                                 tag_id=str(sig.get("tag_id", ""))
                             )
                             commands.append(cmd)
+                            m["orders_created"] += 1
             except Exception as e:
-                logger.debug(f"Strategy note: {e}")
+                m["exceptions"] += 1
+                logger.debug(f"Strategy {st_name} note: {e}")
 
         return commands
 

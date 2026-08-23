@@ -55,6 +55,7 @@ class PaperTradingAccount:
         self.canonical_summary.free_margin = round(self.free_margin, 2)
         self.canonical_summary.realized_pnl = round(self.realized_pnl, 2)
         self.canonical_summary.unrealized_pnl = round(self.unrealized_pnl, 2)
+        self.canonical_summary.positions = {k: dict(v) for k, v in self.position_mgr.positions.items()}
         return self.canonical_summary
 
     def update_equity(self, current_price: float = 300.0, position_qty: int = 0, portfolio_options: Optional[List[Any]] = None) -> float:

@@ -69,7 +69,7 @@ class CanonicalAccountSnapshot:
 
 @dataclass
 class CanonicalAccountSummary:
-    """[VSSF 계좌 요약 DTO]"""
+    """[VSSF 계좌 요약 DTO — UI/외부 계층과 상태 격리용]"""
     account_id: str
     total_balance: float
     realized_pnl: float
@@ -77,6 +77,7 @@ class CanonicalAccountSummary:
     used_margin: float
     free_margin: float
     timestamp: str = "2026-08-23 09:00:00"
+    positions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
     def balance(self) -> float:

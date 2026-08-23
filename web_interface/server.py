@@ -33,9 +33,7 @@ class TargetArchitectureUIServer:
                 "free_margin": snap.free_margin,
             },
             "metrics": m,
-            # positions도 CanonicalAccountSummary DTO를 통해 접근
-            # (현재 CanonicalAccountSummary에 positions 미포함 → get_account_snapshot() 확장 시 여기서 소비)
-            "positions": {},
+            "positions": snap.positions,
         }
 
     def process_step(self, tick_count: int = 1) -> Dict[str, Any]:

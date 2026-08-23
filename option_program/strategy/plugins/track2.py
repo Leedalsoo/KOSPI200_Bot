@@ -9,8 +9,8 @@ from core.base_agent import BaseAgent
 from core.contracts import MarketTick, OrderRequest
 from infra.time_service import TimeService
 import logging
-from strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer
-from strategy.strategy_contract import StrategyContract
+from option_program.strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer
+from option_program.strategy.strategy_contract import StrategyContract
 
 logger = logging.getLogger(__name__)
 

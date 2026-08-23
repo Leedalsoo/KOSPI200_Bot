@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import logging
 from typing import Dict, Any, Optional
-from strategy.common import TradingDateResetHelper, AtomicBudgetManager, ExecutionCostCalculator, WallClockTimer
-from strategy.strategy_contract import StrategyContract
+from option_program.strategy.common import TradingDateResetHelper, AtomicBudgetManager, ExecutionCostCalculator, WallClockTimer
+from option_program.strategy.strategy_contract import StrategyContract
 
 logger = logging.getLogger(__name__)
 
