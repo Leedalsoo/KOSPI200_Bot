@@ -17,17 +17,14 @@ import random
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import Tuple, Optional
 import logging
+from virtual_securities_firm.exchange.order_book import (
+    OPTION_TICK_TABLE,
+    get_option_tick_size,
+    snap_to_tick,
+    OrderBook
+)
 
 logger = logging.getLogger(__name__)
-
-# ── KOSPI200 옵션 호가단위 테이블 ──────────────────────────────────────────
-# 출처: KRX 파생상품 매매 규정
-# 옵션 가격 < 3.00pt → 0.01pt 단위
-# 옵션 가격 >= 3.00pt → 0.05pt 단위
-OPTION_TICK_TABLE: list[tuple[Decimal, Decimal]] = [
-    (Decimal("3.00"),     Decimal("0.01")),
-    (Decimal("9999.99"), Decimal("0.05")),
-]
 
 # KOSPI200 선물 호가단위: 0.05pt
 FUTURES_TICK = Decimal("0.05")

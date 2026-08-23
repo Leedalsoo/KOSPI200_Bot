@@ -1,8 +1,35 @@
-"""Virtual Securities Firm - Order Book Module."""
-from typing import Dict, Any, List, Optional
-from datetime import datetime
+"""Virtual Securities Firm - Authoritative KRX Order Book Module."""
+import random
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+from typing import Tuple, Optional, Dict, Any, List
+import logging
+
+logger = logging.getLogger(__name__)
+
+OPTION_TICK_TABLE: List[Tuple[Decimal, Decimal]] = [
+    (Decimal("3.00"),     Decimal("0.01")),
+    (Decimal("9999.99"), Decimal("0.05")),
+]
+
+def get_option_tick_size(price: float) -> Decimal:
+    d_price = Decimal(str(round(price, 4)))
+    for threshold, tick_size in OPTION_TICK_TABLE:
+        if d_price < threshold:
+            return tick_size
+    return Decimal("0.05")
+
+def snap_to_tick(price: float, side: str = "BUY") -> float:
+    d_price = Decimal(str(round(price, 4)))
+    tick = get_option_tick_size(price)
+    if side.upper() in ("BUY", "BID"):
+        snapped = (d_price / tick).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick
+    else:
+        snapped = (d_price / tick).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * tick
+    return float(snapped)
+
 
 class OrderBook:
+    """[VSSF 소유] Authoritative OrderBook Engine"""
     def __init__(self, symbol: str):
         self.symbol = symbol
         self.bids: List[Dict[str, Any]] = []
