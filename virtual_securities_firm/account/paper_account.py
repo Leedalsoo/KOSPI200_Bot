@@ -107,11 +107,14 @@ class PaperTradingAccount:
                 else:
                     self.positions.pop(symbol, None)
 
-            # 증거금 해제
-            self.used_margin = max(0.0, self.used_margin - (existing_price * close_qty * multiplier))
+        # Recalculate authoritative used margin based on active open positions
+        active_margin = 0.0
+        for pos_item in self.positions.values():
+            active_margin += pos_item["avg_price"] * pos_item["qty"] * multiplier
+        self.used_margin = round(active_margin, 2)
 
-        if symbol in self.positions:
-            self.positions[symbol] = pos
+        # Deduct transaction fee from cash balance
+        self.balance -= fee
 
         # Update balance and canonical summary
         self.canonical_summary.realized_pnl = round(self.realized_pnl, 2)

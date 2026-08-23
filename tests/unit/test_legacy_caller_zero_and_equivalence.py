@@ -124,7 +124,7 @@ def test_5_financial_equivalence_baseline() -> None:
     
     # Financial Equivalence: Strict 8-metric comparison (0.00% Diff)
     from verify_financial_equivalence import verify_financial_equivalence
-    passed, diffs = verify_financial_equivalence()
+    passed, diffs = verify_financial_equivalence(ticks_count=1000)
     assert passed is True
     for key, diff in diffs.items():
         assert diff < 1e-4
