@@ -1,53 +1,45 @@
-"""5-Year (625,000 Ticks) Full Target Architecture Simulation with Authoritative VMS Market Tick Stream Provider.
-
-Pipeline 10-Steps:
-1. CanonicalMarketTick (VMS Runtime stream: vms.generate_tick_stream() / vms.step())
-2. Strategy Signal
-3. CanonicalOrderCommand
-4. Risk Admission
-5. OrderBook.match_order()
-6. ExecutionEngine.execute_order()
-7. PaperTradingAccount.apply_execution()
-8. Position mutation
-9. Realized / Unrealized PnL
-10. Reconciliation
-"""
+"""Annual Hybrid 625,000 Ticks Simulation with Authoritative Target Architecture Only."""
 import time
 import logging
-from typing import Dict, Any
 from shared.contracts.canonical import CanonicalOrderCommand
 from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from option_program.runtime.program_runtime import OptionProgramRuntime
+from shared.interfaces.gateway import MarketDataGateway
+from shared.interfaces.broker_client import OptionBrokerClient
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-def run_5year_10step_simulation(total_ticks: int = 625000) -> Dict[str, Any]:
+def run_annual_simulation(total_days: int = 1250, ticks_per_day: int = 500):
     logger.info("==================================================================")
-    logger.info("[KOSPI200 BOT] 5-Year (625,000 Ticks) VMS Real Stream 10-Step Execution...")
+    logger.info("[AUTHORITATIVE TARGET ARCHITECTURE] Annual 625,000 Ticks Hybrid Simulation")
     logger.info("==================================================================")
     
     start_time = time.time()
-
-    # Step 1 Single Source of Truth Market Provider: VMS Runtime
+    
+    # 1. Sole Authoritative Domain Engines Initialization
     vms = VirtualMarketSimulatorRuntime()
     vssf = VirtualSecuritiesFirmRuntime(initial_capital=25000000.0)
     op = OptionProgramRuntime()
 
-    # VMS generate_tick_stream() Stream Generation
-    tick_stream = vms.generate_tick_stream(total_days=1250, ticks_per_day=500)
+    # 2. Interface Boundary Interfaces (Market Data Gateway & Broker Client)
+    gateway = MarketDataGateway(vms)
+    broker_client = OptionBrokerClient(vssf)
+
+    # 3. Sole Authoritative Market Data Stream Source (VMS generate_tick_stream)
+    tick_stream = gateway.stream_ticks(total_days=total_days, ticks_per_day=ticks_per_day)
 
     for i, tick in enumerate(tick_stream, start=1):
-        # Step 1: Market Ticks from VMS Runtime
+        # Step 1: VMS Market Tick Generation -> VSSF Update
         vssf.process_market_data(tick)
 
-        # Step 2: Strategy Signals (Triggered from VMS Market Tick)
+        # Step 2: OptionProgram Strategy Signal Processing
         if i % 4 == 0:
             signals = op.process_tick(tick)
             vssf.metrics["strategy_signals"] += len(signals)
 
-            # Step 3~9: Order -> Risk -> OrderBook -> Execution -> Account -> Position -> PnL
+            # Step 3~8: Canonical Order -> Risk Guard -> OrderBook -> Execution -> Account
             for sig in signals:
                 cmd = CanonicalOrderCommand(
                     client_order_id=sig.client_order_id,
@@ -57,11 +49,11 @@ def run_5year_10step_simulation(total_ticks: int = 625000) -> Dict[str, Any]:
                     qty=sig.qty,
                     price=sig.price
                 )
-                report = vssf.process_order(cmd)
+                report = broker_client.submit_order(cmd)
                 if report:
                     op.consume_execution_report(report)
 
-        # Step 10: Reconciliation Auditing (per tick)
+        # Step 10: Authoritative Reconciliation Audit per tick
         vssf.run_reconciliation()
 
     elapsed = time.time() - start_time
@@ -69,26 +61,27 @@ def run_5year_10step_simulation(total_ticks: int = 625000) -> Dict[str, Any]:
     snap = vssf.get_account_snapshot()
 
     logger.info("==================================================================")
-    logger.info(f"[SUCCESS] 625,000 Ticks Real VMS Stream 10-Step Pipeline Completed in {elapsed:.2f}s!")
+    logger.info(f"[SUCCESS] 625,000 Ticks Authoritative Target Simulation Completed in {elapsed:.2f}s!")
     logger.info("==================================================================")
-    logger.info(f"{'Pipeline Step':<28} | {'Metric Counter (Real Execution)':<30}")
-    logger.info("-" * 65)
-    logger.info(f"{'1. Market Ticks (VMS Step)':<28} | {m['market_ticks']:<30,}")
-    logger.info(f"{'2. Strategy Signals':<28} | {m['strategy_signals']:<30,}")
-    logger.info(f"{'3. Order Commands':<28} | {m['order_commands']:<30,}")
-    logger.info(f"{'4. Risk Accepted':<28} | {m['risk_accepted']:<30,}")
-    logger.info(f"{'4. Risk Rejected':<28} | {m['risk_rejected']:<30,}")
-    logger.info(f"{'5. OrderBook Matches':<28} | {m['orderbook_matches']:<30,}")
-    logger.info(f"{'6. Executions Issued':<28} | {m['executions_issued']:<30,}")
-    logger.info(f"{'7. Account Mutations':<28} | {m['account_mutations']:<30,}")
-    logger.info(f"{'8. Position Mutations':<28} | {m['position_mutations']:<30,}")
-    logger.info(f"{'9. PnL Updates':<28} | {m['pnl_updates']:<30,}")
-    logger.info(f"{'10. Reconciliation Checks':<28} | {m['reconciliation_checks']:<30,}")
-    logger.info("==================================================================")
-    logger.info(f"Final Balance: KRW {snap.balance:,.2f} | Realized PnL: KRW {snap.realized_pnl:,.2f}")
-    logger.info("==================================================================")
+    print("\n" + "="*70)
+    print(f"{'Target Pipeline Stage (Sole Authoritative Path)':<40} | {'Metric Counter':<25}")
+    print("-" * 70)
+    print(f"{'1. Market Ticks (VMS Stream Sole Provider)':<40} | {m['market_ticks']:<25,}")
+    print(f"{'2. Strategy Signals (OptionProgram Monopoly)':<40} | {m['strategy_signals']:<25,}")
+    print(f"{'3. Order Commands (Canonical Command Only)':<40} | {m['order_commands']:<25,}")
+    print(f"{'4. Risk Accepted (VSSF Margin Admission Guard)':<40} | {m['risk_accepted']:<25,}")
+    print(f"{'4. Risk Rejected (VSSF Margin Admission Guard)':<40} | {m['risk_rejected']:<25,}")
+    print(f"{'5. OrderBook Matches (VSSF OrderBook Monopoly)':<40} | {m['orderbook_matches']:<25,}")
+    print(f"{'6. Executions Issued (VSSF ExecutionEngine Monopoly)':<40} | {m['executions_issued']:<25,}")
+    print(f"{'7. Account Mutations (VSSF PaperAccount Monopoly)':<40} | {m['account_mutations']:<25,}")
+    print(f"{'8. Position Mutations (VSSF Position Tracker)':<40} | {m['position_mutations']:<25,}")
+    print(f"{'9. PnL Updates (VSSF Mark-to-Market Valuation)':<40} | {m['pnl_updates']:<25,}")
+    print(f"{'10. Reconciliation Audits (ReconciliationEngine)':<40} | {m['reconciliation_checks']:<25,}")
+    print("-" * 70)
+    print(f"{'Final Authoritative Account Equity':<40} | KRW {snap.total_balance:<20,.2f}")
+    print("="*70 + "\n")
 
     return m
 
 if __name__ == "__main__":
-    run_5year_10step_simulation(625000)
+    run_annual_simulation(1250, 500)
