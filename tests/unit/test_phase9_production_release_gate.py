@@ -52,3 +52,24 @@ def test_phase9_production_release_gate_invariants():
     )
     assert reconcil.get("is_healthy", False) is True
     assert reconcil.get("balance_ok", False) is True
+
+    # 5. Gate 03: Payload Log Masking Real Test
+    from option_program.interface.controllers import _mask_payload
+    masked = _mask_payload({"api_key": "SECRET", "normal": "123"})
+    assert masked["api_key"] == "***"
+    assert masked["normal"] == "123"
+
+    # 6. Gate 06: In-Memory Air-Gap (Zero Network Call Test)
+    import socket
+    import unittest.mock as mock
+    net_calls = 0
+    def dummy_connect(*args, **kwargs):
+        nonlocal net_calls
+        net_calls += 1
+    with mock.patch.object(socket.socket, "connect", side_effect=dummy_connect):
+        paper.send_order(CanonicalOrderCommand(
+            client_order_id="AIR-TEST", track_id="Track1", asset_type=CanonicalAssetType.OPTION,
+            side=CanonicalOrderSide.BUY, qty=1, price=2.50, option_type=CanonicalOptionType.CALL,
+            strike=350.0, tag_id="air"
+        ))
+    assert net_calls == 0

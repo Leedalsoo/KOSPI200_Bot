@@ -80,12 +80,39 @@ def run_phase9_production_release_gate() -> bool:
     results.append(("Gate 02: Real Broker Activation Safety", g2_pass, "Real Broker is DISARMED & rejects orders while disconnected"))
 
     # -------------------------------------------------------------
-    # Gate 03: Environment / Secret Isolation (Real Check)
+    # Gate 03: Environment / Secret Isolation (Real Functional Scan & Masking Audit)
     # -------------------------------------------------------------
-    # Check that critical env vars are not exposed in plaintext hardcoding
-    has_env_key = os.environ.get("KIWOOM_SECRET_KEY") is None or len(os.environ.get("KIWOOM_SECRET_KEY", "")) > 0
-    g3_pass = has_env_key
-    results.append(("Gate 03: Environment / Secret Isolation", g3_pass, "API Secrets isolated from repository codebase"))
+    import re
+    from option_program.interface.controllers import _mask_payload
+    # 1) Real AST/Regex Codebase Scan for Hardcoded Secrets
+    secret_patterns = [
+        re.compile(r"['\"][0-9]{8,10}:[a-zA-Z0-9_-]{35}['\"]"),  # Telegram bot tokens
+        re.compile(r"['\"]AIza[0-9A-Za-z-_]{35}['\"]"),          # Google API keys
+        re.compile(r"['\"]sk-[a-zA-Z0-9]{20,}['\"]"),            # Standard secret keys
+    ]
+    code_secret_matches = 0
+    scanned_files = 0
+    for root_dir in ["option_program", "virtual_securities_firm", "shared", "infra"]:
+        for root, _, files in os.walk(root_dir):
+            for file in files:
+                if file.endswith(".py"):
+                    scanned_files += 1
+                    with open(os.path.join(root, file), "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                        for pat in secret_patterns:
+                            if pat.search(content):
+                                code_secret_matches += 1
+    # 2) Functional Log Masking Verification
+    raw_payload = {"api_key": "ACTUAL_SECRET_KEY", "secret": "TOP_SECRET", "token": "BOT_TOKEN", "normal_field": "public_data"}
+    masked_payload = _mask_payload(raw_payload)
+    masking_valid = (
+        masked_payload["api_key"] == "***" and
+        masked_payload["secret"] == "***" and
+        masked_payload["token"] == "***" and
+        masked_payload["normal_field"] == "public_data"
+    )
+    g3_pass = (code_secret_matches == 0) and masking_valid and (scanned_files > 10)
+    results.append(("Gate 03: Environment / Secret Isolation", g3_pass, f"Scanned {scanned_files} source files: 0 plain-text secrets found, payload masking 100% verified"))
 
     # -------------------------------------------------------------
     # Gate 04: Kill Switch / Emergency Stop (Real Check)
@@ -116,11 +143,34 @@ def run_phase9_production_release_gate() -> bool:
     results.append(("Gate 05: Risk Limit Final Gate", g5_pass, "Excessive margin order safely rejected by VSSF Margin Engine"))
 
     # -------------------------------------------------------------
-    # Gate 06: Order Leakage Prevention (Real Check)
+    # Gate 06: Order Leakage Prevention (Real Network Spy & Air-Gap Audit)
     # -------------------------------------------------------------
-    # Verify paper and shadow brokers do not contain network sockets or external URLs
-    g6_pass = not hasattr(paper_broker, "socket") and not hasattr(shadow_broker, "socket")
-    results.append(("Gate 06: Order Leakage Prevention", g6_pass, "100% In-Memory Air-Gap active (no network socket attached)"))
+    import socket
+    import unittest.mock as mock
+    # Spy on socket.socket.connect to physically verify zero outbound network calls
+    network_call_count = 0
+    orig_connect = socket.socket.connect
+    def mocked_connect(*args, **kwargs):
+        nonlocal network_call_count
+        network_call_count += 1
+        return orig_connect(*args, **kwargs)
+
+    vssf_airgap = VirtualSecuritiesFirmRuntime(initial_capital=50_000_000.0)
+    paper_airgap = BrokerFactory.create_broker(mode=BrokerMode.PAPER, vssf_runtime=vssf_airgap)
+    shadow_airgap = BrokerFactory.create_broker(mode=BrokerMode.SHADOW, vssf_runtime=vssf_airgap)
+
+    with mock.patch.object(socket.socket, "connect", side_effect=mocked_connect):
+        for i in range(5):
+            test_order_cmd = CanonicalOrderCommand(
+                client_order_id=f"AIRGAP-{i}", track_id="Track1", asset_type=CanonicalAssetType.OPTION,
+                side=CanonicalOrderSide.BUY, qty=1, price=2.50, option_type=CanonicalOptionType.CALL,
+                strike=350.0, tag_id="airgap"
+            )
+            paper_airgap.send_order(test_order_cmd)
+            shadow_airgap.send_order(test_order_cmd)
+
+    g6_pass = (network_call_count == 0) and not hasattr(paper_airgap, "socket")
+    results.append(("Gate 06: Order Leakage Prevention", g6_pass, "0 socket connections triggered across 10 paper/shadow order dispatches (100% In-Memory Air-Gap)"))
 
     # -------------------------------------------------------------
     # Gate 07: Market Data Failure Safety (Real Check)
@@ -210,16 +260,53 @@ def run_phase9_production_release_gate() -> bool:
     results.append(("Gate 14: Telemetry / Monitoring Readiness", g14_pass, f"orjson ultra-fast serialization verified ({len(payload)} bytes)"))
 
     # -------------------------------------------------------------
-    # Gate 15: Alerting Readiness (Real Check)
+    # Gate 15: Alerting & Remote Kill Switch Readiness (Real Async Functional Audit)
     # -------------------------------------------------------------
+    import asyncio
+    import uuid
     from option_program.orders.oms_fsm import OmsFsm
     from option_program.interface.controllers import ManualCommandController
     from option_program.interface.telegram_bot import TelegramBotAgent
-    fsm = OmsFsm()
-    ctrl = ManualCommandController(fsm=fsm)
-    bot = TelegramBotAgent(controller=ctrl, allowed_chat_id=12345678, bot_token="MOCK_TOKEN")
-    g15_pass = (bot.allowed_chat_id == 12345678) and hasattr(bot, "start") and hasattr(bot, "stop")
-    results.append(("Gate 15: Alerting Readiness", g15_pass, "TelegramBotAgent emergency control & alerting controller verified"))
+    from shared.core.contracts import OrderStatus
+
+    async def verify_telegram_alerting_pipeline() -> bool:
+        fsm = OmsFsm()
+        ctrl = ManualCommandController(fsm=fsm)
+        bot = TelegramBotAgent(controller=ctrl, allowed_chat_id=12345, bot_token="MOCK_TOKEN")
+        
+        # 1) Unauthorized user command rejection
+        unauth_update = {
+            "update_id": 1,
+            "message": {"chat": {"id": 99999}, "text": "/stop"}
+        }
+        await bot._handle_update(unauth_update)
+        unauth_blocked = (ctrl._is_halted is False)
+
+        # 2) Direct Panic Halt orders cancellation
+        test_order_uuid = uuid.uuid4()
+        await fsm.transition(test_order_uuid, OrderStatus.SENT)
+        await ctrl.trigger_panic_halt([test_order_uuid])
+        auth_halt_passed = (ctrl._is_halted is True)
+        fsm_cancelled = (fsm.get_status(test_order_uuid) == OrderStatus.CANCELLED)
+
+        # 3) Authorized /stop command idempotency
+        auth_update = {
+            "update_id": 2,
+            "message": {"chat": {"id": 12345}, "text": " /STOP "}
+        }
+        await bot._handle_update(auth_update)
+
+        # 4) Status command execution
+        status_update = {
+            "update_id": 3,
+            "message": {"chat": {"id": 12345}, "text": "/status"}
+        }
+        await bot._handle_update(status_update)
+        
+        return unauth_blocked and auth_halt_passed and fsm_cancelled
+
+    g15_pass = asyncio.run(verify_telegram_alerting_pipeline())
+    results.append(("Gate 15: Alerting & Remote Kill Switch Readiness", g15_pass, "Async TelegramBotAgent E2E command filter & Panic Halt transition verified"))
 
     # -------------------------------------------------------------
     # Gate 16: Startup / Shutdown Safety (Real Check)
