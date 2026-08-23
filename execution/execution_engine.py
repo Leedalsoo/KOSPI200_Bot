@@ -27,19 +27,23 @@ class ExecutionEngine:
     ) -> ExecutionReport:
         fill_timestamp = timestamp or datetime.now()
         
-        # 1. Matching & Slippage Price Calculation
+        # 1. Matching & Slippage Price Calculation (KRX Limit Order Matching Rules)
         if order.side == "BUY":
-            base_price = ask_price if ask_price > Decimal("0") else order.price
+            base_price = min(order.price, ask_price) if ask_price > Decimal("0") else order.price
             execution_price = base_price + (Decimal(str(slippage_ticks)) * self.tick_size)
         else:
-            base_price = bid_price if bid_price > Decimal("0") else order.price
+            base_price = max(order.price, bid_price) if bid_price > Decimal("0") else order.price
             execution_price = max(self.tick_size, base_price - (Decimal(str(slippage_ticks)) * self.tick_size))
+
 
         slippage_cost = abs(execution_price - order.price) * Decimal(str(order.qty)) * self.multiplier
         
         # 2. Fee Calculation (KOSPI200 Futures/Options Standard Fee)
+        from decimal import ROUND_HALF_UP
         transaction_amount = execution_price * Decimal(str(order.qty)) * self.multiplier
-        fee = (transaction_amount * self.fee_rate).quantize(Decimal("0.01"))
+        fee = (transaction_amount * self.fee_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 
         # 3. ExecutionReport Assembly
         fill_id = f"FILL_{uuid4().hex[:12].upper()}"

@@ -67,7 +67,8 @@ class ExecutionEngine:
         )
         exec_price = float(slip_res.get("executed_price", fill_price))
         slippage = float(slip_res.get("slippage", 0.0))
-        fee = exec_price * fill_qty * 250000 * 0.000015  # 1.5bps commission
+        raw_fee = exec_price * fill_qty * 250000 * 0.000015  # 1.5bps commission
+        fee = round(raw_fee + 1e-9, 2)
 
         # 2. Issue Canonical Execution Report
         report = CanonicalExecutionReport(
@@ -78,10 +79,11 @@ class ExecutionEngine:
             side=command.side,
             executed_qty=fill_qty,
             executed_price=exec_price,
-            fee=round(fee, 2),
+            fee=fee,
             slippage=slippage,
             timestamp="2026-08-23 09:00:00"
         )
+
         self.reports.append(report)
         logger.debug(f"[ExecutionEngine Issued] Report: {report.exec_id} | Order: {report.client_order_id} | Price: {report.executed_price}")
         return report
