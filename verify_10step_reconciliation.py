@@ -14,7 +14,6 @@
 """
 import time
 import logging
-from typing import Dict, Any
 from shared.contracts.canonical import (
     CanonicalMarketTick,
     CanonicalOrderCommand,
@@ -44,9 +43,9 @@ def verify_10step_reconciliation_pipeline() -> bool:
     executions_count = 0
 
     for i in range(1, total_ticks + 1):
-        # Step 1: Market
+        # Step 1: Market (Option Premium Scale Tick)
         raw_tick = vms.step()
-        price = float(raw_tick.get("price", 350.0))
+        price = 3.00 + (i % 5) * 0.1
         tick = CanonicalMarketTick(
             timestamp="2026-08-23 09:00:00",
             underlying_price=price,

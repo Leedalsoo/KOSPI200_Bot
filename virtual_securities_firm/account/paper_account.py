@@ -42,11 +42,12 @@ class PaperTradingAccount:
         unrealized = 0.0
         multiplier = 250000.0  # KOSPI200 파생 승수
 
-        for symbol, pos in self.positions.items():
+        for symbol, pos in list(self.positions.items()):
             qty = pos.get("qty", 0)
             avg_price = pos.get("avg_price", underlying_price)
             side = pos.get("side", "BUY")
 
+            # Option Mark-to-Market Valuation based on Option Premium Price
             if side == "BUY":
                 diff = underlying_price - avg_price
             else:
@@ -63,10 +64,9 @@ class PaperTradingAccount:
         self.canonical_summary.free_margin = max(0.0, total_equity - self.used_margin)
         return total_equity
 
-    def apply_execution(self, track_id: str, side: str, qty: int, price: float, fee: float, symbol: str = "KOSPI200_OPT") -> None:
+    def apply_execution(self, track_id: str, side: str, qty: int, price: float, fee: float, symbol: str = "KOSPI200_OPTION") -> None:
         """[VSSF 체결 이행 ➔ 포지션/증거금/실현 PnL (Realized PnL) Account Mutation]"""
         multiplier = 250000.0
-        cost = price * qty * multiplier + fee
 
         pos = self.positions.get(symbol, {"qty": 0, "avg_price": 0.0, "side": side})
         existing_qty = pos["qty"]
@@ -78,13 +78,13 @@ class PaperTradingAccount:
             pos["qty"] = qty
             pos["avg_price"] = price
             pos["side"] = side
-            self.used_margin += cost
+            self.positions[symbol] = pos
         elif existing_side == side:
             # 동일 방향 포지션 추가
             total_qty = existing_qty + qty
             pos["avg_price"] = ((existing_qty * existing_price) + (qty * price)) / total_qty
             pos["qty"] = total_qty
-            self.used_margin += cost
+            self.positions[symbol] = pos
         else:
             # 반대 방향 청산 / 청산 실현 손익 (Realized PnL) 계산
             close_qty = min(existing_qty, qty)
@@ -98,12 +98,14 @@ class PaperTradingAccount:
 
             if remaining_qty > 0:
                 pos["qty"] = remaining_qty
+                self.positions[symbol] = pos
             else:
                 new_qty = qty - close_qty
                 if new_qty > 0:
                     pos["qty"] = new_qty
                     pos["avg_price"] = price
                     pos["side"] = side
+                    self.positions[symbol] = pos
                 else:
                     self.positions.pop(symbol, None)
 
@@ -131,3 +133,6 @@ class PaperTradingAccount:
             "fee": fee,
             "realized_pnl": round(self.realized_pnl, 2)
         })
+
+    def get_positions(self) -> Dict[str, Dict[str, Any]]:
+        return self.positions

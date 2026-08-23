@@ -12,10 +12,10 @@ class AuthoritativeReconciliationEngine:
     Market -> Signal -> Order -> Risk -> OrderBook -> Execution -> Account -> Position -> PnL -> Reconciliation
     
     검증 및 대조 항목:
-    1. Account Balance Audit: Initial Capital + Realized PnL - Fees == Total Balance
+    1. Account Balance Audit: Initial Capital + Realized PnL + Unrealized PnL - Fees == Total Balance (Equity)
     2. Position Integrity Audit: OrderBook Matched Executions Qty Sum == Account Current Total Position Qty
     3. PnL Audit: Realized PnL + Unrealized PnL == Total PnL
-    4. Margin Risk Integrity Audit: Used Margin + Free Margin == Total Balance (Total Equity)
+    4. Margin Risk Integrity Audit: Used Margin + Free Margin == Total Balance (Equity)
     """
     def __init__(self, initial_capital: float = 25000000.0):
         self.initial_capital = initial_capital
@@ -32,8 +32,8 @@ class AuthoritativeReconciliationEngine:
         calc_fees = sum(rep.fee for rep in execution_history)
         total_exec_qty = sum(rep.executed_qty for rep in execution_history)
 
-        # 2. Account Balance Verification (Initial Capital + Realized PnL - Fees)
-        expected_balance = self.initial_capital + account_snapshot.realized_pnl - calc_fees
+        # 2. Account Balance Verification (Initial Capital + Realized PnL + Unrealized PnL - Fees)
+        expected_balance = self.initial_capital + account_snapshot.realized_pnl + account_snapshot.unrealized_pnl - calc_fees
         balance_diff = abs(account_snapshot.balance - expected_balance)
         balance_ok = balance_diff < 1e-2
 
