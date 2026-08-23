@@ -33,11 +33,7 @@ def test_1_legacy_repository_caller_zero() -> None:
     violations = []
     py_files = list(PROJECT_ROOT.glob("**/*.py"))
     
-    # Exclude compatibility adapter files themselves
-    ignored_rel_paths = {
-        "strategy/simulation/virtual_feed_engine.py",
-        "exchange/orderbook_sim.py"
-    }
+    ignored_rel_paths = set()
 
     for p in py_files:
         rel_str = str(p.relative_to(PROJECT_ROOT)).replace("\\", "/")
@@ -54,14 +50,11 @@ def test_1_legacy_repository_caller_zero() -> None:
 
 
 def test_2_legacy_file_structural_deduplication() -> None:
-    """[Audit 2] 레거시 파일 내 독자 이중 실체 코드 부재 및 Target Architecture 위임 검증."""
+    """[Audit 2] 레거시 파일 완전 물리적 삭제(Legacy Purged) 및 Target Architecture 독점 검증."""
     vfe_path = PROJECT_ROOT / "strategy" / "simulation" / "virtual_feed_engine.py"
-    content = vfe_path.read_text(encoding="utf-8")
-    
-    # virtual_feed_engine.py must delegate directly to VMS/VSSF
-    assert "from virtual_market_simulator.market.synthetic_market_generator import" in content
-    assert "from virtual_securities_firm.execution.execution_engine import" in content
-    assert "from virtual_securities_firm.account.paper_account import" in content
+    obs_path = PROJECT_ROOT / "exchange" / "orderbook_sim.py"
+    assert not vfe_path.exists(), "Legacy file virtual_feed_engine.py must be deleted."
+    assert not obs_path.exists(), "Legacy file orderbook_sim.py must be deleted."
 
 
 def test_3_target_owner_state_mutation() -> None:
