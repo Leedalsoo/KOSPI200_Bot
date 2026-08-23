@@ -30,24 +30,29 @@ class PaperTradingAccount:
             timestamp="2026-08-23 09:00:00"
         )
 
+    def get_canonical_summary(self) -> CanonicalAccountSummary:
+        self.canonical_summary.total_balance = round(self.balance + self.realized_pnl + self.unrealized_pnl, 2)
+        self.canonical_summary.used_margin = round(self.used_margin, 2)
+        self.canonical_summary.free_margin = round(self.free_margin, 2)
+        self.canonical_summary.realized_pnl = round(self.realized_pnl, 2)
+        self.canonical_summary.unrealized_pnl = round(self.unrealized_pnl, 2)
+        return self.canonical_summary
+
     def update_equity(self, current_price: float = 300.0, position_qty: int = 0, portfolio_options: Optional[List[Any]] = None) -> float:
-        """이전 테스트 호환용 update_equity 메서드"""
         val = current_price * position_qty * 50000.0
         self.total_equity = self.capital + val
         self.canonical_summary.total_balance = self.total_equity
         return self.canonical_summary.total_balance
 
     def update_tick_price(self, underlying_price: float) -> float:
-        """[VSSF 마켓 시세 반영: 미실현 PnL (Unrealized PnL) 및 자산 재평가 Mutation]"""
         unrealized = 0.0
-        multiplier = 250000.0  # KOSPI200 파생 승수
+        multiplier = 250000.0
 
         for symbol, pos in list(self.positions.items()):
             qty = pos.get("qty", 0)
             avg_price = pos.get("avg_price", underlying_price)
             side = pos.get("side", "BUY")
 
-            # Option Mark-to-Market Valuation based on Option Premium Price
             if side == "BUY":
                 diff = underlying_price - avg_price
             else:
@@ -58,40 +63,59 @@ class PaperTradingAccount:
         self.unrealized_pnl = round(unrealized, 2)
         total_equity = self.balance + self.realized_pnl + self.unrealized_pnl
 
-        # Update Canonical Summary
         self.canonical_summary.total_balance = total_equity
         self.canonical_summary.unrealized_pnl = self.unrealized_pnl
         self.canonical_summary.free_margin = max(0.0, total_equity - self.used_margin)
         return total_equity
 
-    def apply_execution(self, track_id: str, side: str, qty: int, price: float, fee: float, symbol: str = "KOSPI200_OPTION") -> None:
-        """[VSSF 체결 이행 ➔ 포지션/증거금/실현 PnL (Realized PnL) Account Mutation]"""
+    def apply_execution(
+        self, 
+        report_or_track_id: Any = "Track1", 
+        side: Optional[str] = None, 
+        qty: Optional[int] = None, 
+        price: Optional[float] = None, 
+        fee: Optional[float] = None, 
+        symbol: str = "KOSPI200_OPTION",
+        track_id: Optional[str] = None,
+        **kwargs
+    ) -> None:
         multiplier = 250000.0
 
-        pos = self.positions.get(symbol, {"qty": 0, "avg_price": 0.0, "side": side})
+        if hasattr(report_or_track_id, "side"):
+            rep = report_or_track_id
+            effective_track_id = getattr(rep, "track_id", "Track1")
+            side_str = rep.side.value if hasattr(rep.side, "value") else str(rep.side)
+            exec_qty = rep.executed_qty
+            exec_price = rep.executed_price
+            exec_fee = rep.fee
+        else:
+            effective_track_id = str(track_id if track_id is not None else report_or_track_id)
+            side_str = str(side)
+            exec_qty = int(qty) if qty is not None else 1
+            exec_price = float(price) if price is not None else 350.0
+            exec_fee = float(fee) if fee is not None else 0.0
+
+        pos = self.positions.get(symbol, {"qty": 0, "avg_price": 0.0, "side": side_str})
         existing_qty = pos["qty"]
         existing_price = pos["avg_price"]
         existing_side = pos["side"]
 
         if existing_qty == 0:
-            # 신규 포지션 오픈
-            pos["qty"] = qty
-            pos["avg_price"] = price
-            pos["side"] = side
+            pos["qty"] = exec_qty
+            pos["avg_price"] = exec_price
+            pos["side"] = side_str
             self.positions[symbol] = pos
-        elif existing_side == side:
-            # 동일 방향 포지션 추가
-            total_qty = existing_qty + qty
-            pos["avg_price"] = ((existing_qty * existing_price) + (qty * price)) / total_qty
+        elif existing_side == side_str:
+            total_qty = existing_qty + exec_qty
+            pos["avg_price"] = ((existing_qty * existing_price) + (exec_qty * exec_price)) / total_qty
             pos["qty"] = total_qty
             self.positions[symbol] = pos
         else:
-            # 반대 방향 청산 / 청산 실현 손익 (Realized PnL) 계산
-            close_qty = min(existing_qty, qty)
+            close_qty = min(existing_qty, exec_qty)
             if existing_side == "BUY":
-                trade_pnl = (price - existing_price) * close_qty * multiplier - fee
+                trade_pnl = (exec_price - existing_price) * close_qty * multiplier - exec_fee
             else:
-                trade_pnl = (existing_price - price) * close_qty * multiplier - fee
+                trade_pnl = (existing_price - exec_price) * close_qty * multiplier - exec_fee
 
             self.realized_pnl += trade_pnl
             remaining_qty = existing_qty - close_qty
@@ -100,25 +124,22 @@ class PaperTradingAccount:
                 pos["qty"] = remaining_qty
                 self.positions[symbol] = pos
             else:
-                new_qty = qty - close_qty
+                new_qty = exec_qty - close_qty
                 if new_qty > 0:
                     pos["qty"] = new_qty
-                    pos["avg_price"] = price
-                    pos["side"] = side
+                    pos["avg_price"] = exec_price
+                    pos["side"] = side_str
                     self.positions[symbol] = pos
                 else:
                     self.positions.pop(symbol, None)
 
-        # Recalculate authoritative used margin based on active open positions
         active_margin = 0.0
         for pos_item in self.positions.values():
             active_margin += pos_item["avg_price"] * pos_item["qty"] * multiplier
         self.used_margin = round(active_margin, 2)
 
-        # Deduct transaction fee from cash balance
-        self.balance -= fee
+        self.balance -= exec_fee
 
-        # Update balance and canonical summary
         self.canonical_summary.realized_pnl = round(self.realized_pnl, 2)
         total_equity = self.balance + self.realized_pnl + self.unrealized_pnl
         self.canonical_summary.total_balance = round(total_equity, 2)
@@ -126,11 +147,11 @@ class PaperTradingAccount:
         self.canonical_summary.free_margin = max(0.0, total_equity - self.used_margin)
 
         self.orders_history.append({
-            "track_id": track_id,
-            "side": side,
-            "qty": qty,
-            "price": price,
-            "fee": fee,
+            "track_id": effective_track_id,
+            "side": side_str,
+            "qty": exec_qty,
+            "price": exec_price,
+            "fee": exec_fee,
             "realized_pnl": round(self.realized_pnl, 2)
         })
 

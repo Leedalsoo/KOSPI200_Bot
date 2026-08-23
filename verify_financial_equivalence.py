@@ -45,14 +45,14 @@ def run_legacy_baseline_5year(ticks_count: int = 625000) -> Dict[str, float]:
         
         if i % 2 == 0:
             side = "BUY" if (i // 2) % 2 == 1 else "SELL"
-            est_cost = 2.50 * 1 * 250000
-            if side == "BUY" and account.canonical_summary.free_margin < est_cost:
+            est_cost = 2.50 * 1 * 250000.0
+            if side == "BUY" and account.get_canonical_summary().free_margin < est_cost:
                 continue
 
             slip_res = slippage_engine.calculate_execution("LIMIT", side, 2.50, 1)
             exec_price = float(slip_res.get("executed_price", 2.50))
             slip = float(slip_res.get("slippage", 0.0))
-            fee = exec_price * 1 * 250000 * 0.000015
+            fee = exec_price * 1 * 250000.0 * 0.000015
             
             account.apply_execution(
                 track_id="Track1",
@@ -65,7 +65,7 @@ def run_legacy_baseline_5year(ticks_count: int = 625000) -> Dict[str, float]:
             total_slippage += slip
             total_qty += 1
 
-    summary = account.canonical_summary
+    summary = account.get_canonical_summary()
     return {
         "balance": round(summary.total_balance, 2),
         "realized_pnl": round(summary.realized_pnl, 2),
@@ -87,11 +87,22 @@ def run_target_architecture_5year(ticks_count: int = 625000) -> Dict[str, float]
 
     for i in range(1, ticks_count + 1):
         price = 350.0 + (i % 5) * 0.1
-        tick = CanonicalMarketTick(timestamp="2026-08-23 09:00:00", underlying_price=price, last_price=price)
+        tick = CanonicalMarketTick(
+            timestamp="2026-08-23 09:00:00", 
+            underlying_price=price, 
+            last_price=price,
+            bid_price=2.45,
+            ask_price=2.55
+        )
         vssf.process_market_data(tick)
         
         if i % 2 == 0:
             side = CanonicalOrderSide.BUY if (i // 2) % 2 == 1 else CanonicalOrderSide.SELL
+            side_str = side.value if hasattr(side, "value") else str(side)
+            est_cost = 2.50 * 1 * 250000.0
+            if side_str == "BUY" and vssf.account.get_canonical_summary().free_margin < est_cost:
+                continue
+
             cmd = CanonicalOrderCommand(
                 client_order_id=f"ORD-EQUIV-{i}",
                 track_id="Track1",
@@ -100,7 +111,6 @@ def run_target_architecture_5year(ticks_count: int = 625000) -> Dict[str, float]
                 qty=1,
                 price=2.50
             )
-            # Full Target Pipeline: Margin -> OrderBook -> ExecutionEngine -> Account
             report = vssf.process_order(cmd)
             if report:
                 total_fee += report.fee

@@ -78,3 +78,10 @@ class CanonicalAccountSummary:
     free_margin: float
     timestamp: str = "2026-08-23 09:00:00"
 
+    @property
+    def balance(self) -> float:
+        return self.total_balance
+
+    @balance.setter
+    def balance(self, val: float) -> None:
+        self.total_balance = val

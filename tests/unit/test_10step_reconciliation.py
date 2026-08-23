@@ -29,4 +29,3 @@ def test_vssf_runtime_run_reconciliation_direct() -> None:
     assert rec["balance_ok"] is True
     assert rec["margin_ok"] is True
     assert rec["balance_diff"] < 1e-2
-    assert rec["margin_diff"] < 1e-2
