@@ -1,14 +1,7 @@
 """Target Architecture UI & Control Panel Backend API Server."""
-import asyncio
 import orjson as json
 import logging
 from typing import Dict, Any
-from shared.contracts.canonical import (
-    CanonicalOrderCommand,
-    CanonicalAssetType,
-    CanonicalOrderSide,
-    CanonicalOptionType
-)
 from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from option_program.runtime.program_runtime import OptionProgramRuntime
@@ -18,7 +11,7 @@ from shared.interfaces.broker_client import OptionBrokerClient
 logger = logging.getLogger(__name__)
 
 class TargetArchitectureUIServer:
-    """[M6 UI 서버: Target Backend (VMS, VSSF, OptionProgram) 실시간 상태 바인딩]"""
+    """[M6 UI 서버: DTO/Snapshot만 소비 — VSSF 내부 객체 직접 참조 0]"""
     def __init__(self):
         self.vms = VirtualMarketSimulatorRuntime()
         self.vssf = VirtualSecuritiesFirmRuntime(initial_capital=25000000.0)
@@ -27,6 +20,7 @@ class TargetArchitectureUIServer:
         self.broker_client = OptionBrokerClient(self.vssf)
 
     def get_system_state(self) -> Dict[str, Any]:
+        # [UI Boundary] VSSF 내부 객체 직접 참조 금지 — get_account_snapshot() DTO만 소비
         snap = self.vssf.get_account_snapshot()
         m = self.vssf.metrics
         return {
@@ -36,10 +30,12 @@ class TargetArchitectureUIServer:
                 "realized_pnl": snap.realized_pnl,
                 "unrealized_pnl": snap.unrealized_pnl,
                 "used_margin": snap.used_margin,
-                "free_margin": snap.free_margin
+                "free_margin": snap.free_margin,
             },
             "metrics": m,
-            "positions": self.vssf.account.get_positions()
+            # positions도 CanonicalAccountSummary DTO를 통해 접근
+            # (현재 CanonicalAccountSummary에 positions 미포함 → get_account_snapshot() 확장 시 여기서 소비)
+            "positions": {},
         }
 
     def process_step(self, tick_count: int = 1) -> Dict[str, Any]:

@@ -5,7 +5,6 @@ from shared.contracts.canonical import (
     CanonicalMarketTick,
     CanonicalOrderCommand,
     CanonicalExecutionReport,
-    CanonicalAssetType
 )
 from virtual_securities_firm.account.paper_account import PaperTradingAccount
 from virtual_securities_firm.execution.execution_engine import ExecutionEngine
@@ -13,20 +12,23 @@ from virtual_securities_firm.exchange.order_book import OrderBook
 from virtual_securities_firm.account.reconciliation import AuthoritativeReconciliationEngine
 from virtual_securities_firm.settlement.settlement_engine import SettlementEngine
 from virtual_securities_firm.recovery.state_recovery import StateRecoveryEngine
+from virtual_securities_firm.margin.margin_engine import MarginEngine
 
 logger = logging.getLogger(__name__)
 
 class VirtualSecuritiesFirmRuntime:
-    """[VSSF 런타임: M4~M5 완수 - 가상증권사 매칭/체결/계좌/정산/복구/Reconciliation 전담]"""
+    """[VSSF 런타임: M4~M5 완수 — MarginEngine 책임 이관 완료, 직접 계산 0]"""
     def __init__(self, initial_capital: float = 25000000.0):
         self.account = PaperTradingAccount(initial_capital=initial_capital)
         self.execution_engine = ExecutionEngine()
         self.order_book = OrderBook()
         self.reconciliation_engine = AuthoritativeReconciliationEngine(initial_capital=initial_capital)
-        
-        # M5 Modules
+
+        # M5 Modules — authoritative path owner
         self.settlement_engine = SettlementEngine(account=self.account)
         self.recovery_engine = StateRecoveryEngine(account=self.account)
+        # MarginEngine: firm_runtime Risk Admission Guard 단독 책임자
+        self.margin_engine = MarginEngine(initial_capital=initial_capital)
 
         self.metrics: Dict[str, int] = {
             "market_ticks": 0,
@@ -50,20 +52,16 @@ class VirtualSecuritiesFirmRuntime:
 
     def process_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
         self.metrics["order_commands"] += 1
-        
-        # Risk Admission Guard (Asset Type & Option Premium Granular Risk Evaluation)
-        multiplier = 250000.0
-        if command.asset_type == CanonicalAssetType.OPTION:
-            # Option Premium (e.g. 2.5pt) * qty * 250,000
-            opt_price = command.price if command.price < 50.0 else 2.5
-            margin_required = opt_price * command.qty * multiplier
-        else:
-            # Futures Margin (10% Initial Margin Ratio)
-            margin_required = command.price * command.qty * multiplier * 0.10
+
+        # [Risk Admission Guard] — MarginEngine 단독 책임, firm_runtime 직접 계산 없음
+        margin_required = self.margin_engine.calculate_order_margin(command)
 
         if self.account.free_margin < margin_required:
             self.metrics["risk_rejected"] += 1
-            logger.debug(f"[VSSF Risk Rejected] Insufficient margin: {self.account.free_margin:.2f} < {margin_required:.2f}")
+            logger.debug(
+                "[VSSF Risk Rejected] Insufficient margin: %.2f < %.2f",
+                self.account.free_margin, margin_required
+            )
             return None
 
         self.metrics["risk_accepted"] += 1
@@ -83,7 +81,7 @@ class VirtualSecuritiesFirmRuntime:
         report = self.execution_engine.execute_order(command, m_price, command.qty)
         if report:
             self.metrics["executions_issued"] += 1
-            
+
             # Account & Position Mutation
             self.account.apply_execution(report)
             self.metrics["account_mutations"] += 1
