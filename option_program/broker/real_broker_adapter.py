@@ -35,6 +35,7 @@ class RealBrokerConfig:
     account_no: str = field(default_factory=lambda: os.getenv("REAL_BROKER_ACCOUNT_NO", "00000000-01"))
     base_url: str = field(default_factory=lambda: os.getenv("REAL_BROKER_BASE_URL", "https://openapi.koreainvestment.com:9443"))
     is_simulation: bool = field(default_factory=lambda: os.getenv("REAL_BROKER_SIMULATION", "1") == "1")
+    safety_arm_key: str = field(default_factory=lambda: os.getenv("ARM_REAL_TRADING_ORDERS", ""))
 
 class RealBrokerHttpClient:
     """실전 증권사 REST 통신 클라이언트 (OAuth2 & HTTP Transport)"""
@@ -158,6 +159,11 @@ class RealBrokerAdapter(IBrokerAdapter):
         """CanonicalOrderCommand ➔ 증권사 파생상품 주문 API 호출 ➔ CanonicalExecutionReport 변환"""
         if not self._connected:
             logger.warning(f"[{self.config.broker_name}] Cannot send order while disconnected.")
+            return None
+
+        # 🛡️ [2중 안전 핀] 실거래 환경에서 명시적 안전 무장 플래그가 없으면 실주문 차단
+        if not self.config.is_simulation and self.config.safety_arm_key != "I_CONFIRM_LIVE_TRADING":
+            logger.critical(f"[{self.config.broker_name}] [SAFETY INTERLOCK BLOCKED] Live order blocked! ARM_REAL_TRADING_ORDERS is not set to 'I_CONFIRM_LIVE_TRADING'")
             return None
 
         # 1. 증권사 종목코드 및 주문 파라미터 매핑
