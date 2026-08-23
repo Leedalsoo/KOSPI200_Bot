@@ -9,15 +9,22 @@ TARGET_DIRS = [
     "virtual_securities_firm",
     "virtual_market_simulator",
     "shared",
+    "infra",
 ]
 
 LEGACY_PACKAGES = {
     "account",
+    "position",
+    "pnl",
     "risk",
     "exchange",
     "execution",
-    "pnl",
-    "position",
+    "strategy",
+    "fsm",
+    "sensor",
+    "interface",
+    "hft",
+    "core",
     "recovery",
 }
 

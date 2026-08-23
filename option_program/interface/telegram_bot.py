@@ -15,7 +15,7 @@ from uuid import UUID
 
 import orjson
 
-from interface.controllers import ManualCommandController
+from option_program.interface.controllers import ManualCommandController
 
 logger = logging.getLogger(__name__)
 

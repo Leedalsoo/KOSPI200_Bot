@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Dict, Any, List
 from datetime import datetime
 
-from core.contracts import AccountSnapshot, PnLSnapshot
+from shared.core.contracts import AccountSnapshot, PnLSnapshot
 
 @dataclass(slots=True, frozen=True)
 class TelemetryDTO:

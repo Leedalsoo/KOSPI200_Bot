@@ -7,7 +7,7 @@ from uuid import UUID
 import orjson
 
 from shared.core.contracts import OrderStatus
-from fsm.oms_fsm import OmsFsm
+from option_program.orders.oms_fsm import OmsFsm
 
 logger = logging.getLogger(__name__)
 
