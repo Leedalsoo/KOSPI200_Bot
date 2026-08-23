@@ -26,16 +26,16 @@ from collections import deque
 from typing import Any, List, Dict, Optional, Tuple
 from datetime import datetime, timedelta, date
 
-from strategy.plugins.track1 import Track1
-from strategy.plugins.track2 import Track2
-from strategy.plugins.track3 import Track3
-from strategy.plugins.track4 import Track4
-from strategy.plugins.track5 import Track5
-from strategy.plugins.track6 import Track6
-from strategy.plugins.track7 import Track7
-from strategy.plugins.track8 import Track8
-from strategy.plugins.track9 import Track9
-from strategy.sensors.market_sensors import FuturesSensor, WeeklyOptionsSensor, DailyOptionsSensor
+from option_program.strategy.plugins.track1 import Track1
+from option_program.strategy.plugins.track2 import Track2
+from option_program.strategy.plugins.track3 import Track3
+from option_program.strategy.plugins.track4 import Track4
+from option_program.strategy.plugins.track5 import Track5
+from option_program.strategy.plugins.track6 import Track6
+from option_program.strategy.plugins.track7 import Track7
+from option_program.strategy.plugins.track8 import Track8
+from option_program.strategy.plugins.track9 import Track9
+from option_program.strategy.sensors.market_sensors import FuturesSensor, WeeklyOptionsSensor, DailyOptionsSensor
 from virtual_market_simulator.market.synthetic_market_generator import HistoricalReplayEngine
 from virtual_securities_firm.execution.execution_engine import SlippageEngine
 from virtual_securities_firm.account.paper_account import PaperTradingAccount
