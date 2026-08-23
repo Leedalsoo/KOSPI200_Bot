@@ -1,97 +1,115 @@
-"""
-run_annual_hybrid_simulation.py
+"""[Target Architecture Exclusive] 5-Year (1,250 Days / 625,000 Ticks) Hybrid Strategy Simulation.
 
-[Target Architecture Authoritative Main Execution Path]
-Target Owner 서브시스템 전용 5년(625,000 Ticks) 실시간 하이브리드 백테스팅 주동 파이프라인
+Target Architecture Flow:
+1. VMS (Virtual Market Simulator Runtime): Market Data & OrderBook Tick Generation
+2. OptionProgram (Option Program Runtime): Regime Analysis & Track 1~9 Signal Evaluation
+3. VSSF (Virtual Securities Firm Runtime): Margin Risk Admission -> OrderBook Matching -> ExecutionEngine (Slippage & Fee) -> Account Mutation
+4. Account Snapshot Query from VSSF Authoritative Owner
 """
-
-import sys
 import time
-import orjson
 import logging
-from typing import Dict, Any
-
+from typing import Dict, Any, List
 from shared.contracts.canonical import (
     CanonicalMarketTick,
     CanonicalOrderCommand,
     CanonicalExecutionReport,
-    CanonicalAccountSnapshot
+    CanonicalOrderSide,
+    CanonicalAssetType
 )
 from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from option_program.runtime.program_runtime import OptionProgramRuntime
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-def run_main_simulation(total_days: int = 1250, ticks_per_day: int = 500) -> Dict[str, Any]:
-    print("=" * 80)
-    print("[KOSPI200 BOT] Target Architecture 주동 5년 배속 실시간 가상 시뮬레이터 가동")
-    print("=" * 80)
-    print("  * 기반 아키텍처: Target Owner (VMS -> VSSF -> OptionProgram -> VSSF Matching)")
-    print(f"  * 시뮬레이션 규모: {total_days} 영업일 / 약 {total_days * ticks_per_day:,} Ticks")
-    print("=" * 80)
-
-    # 1. Target Architecture Runtimes Initialization
+def run_target_architecture_annual_simulation(days: int = 1250) -> Dict[str, Any]:
+    """[Pure Target Architecture 5-Year Simulation Engine]"""
+    logger.info("================================================================================")
+    logger.info(f"[Target Architecture Exclusive] Initializing 5-Year ({days} Days / {days*500:,} Ticks) Simulation")
+    logger.info("================================================================================")
+    
+    start_time = time.time()
+    
+    # 1. Initialize Core Component Runtimes
     vms_runtime = VirtualMarketSimulatorRuntime()
     vssf_runtime = VirtualSecuritiesFirmRuntime(initial_capital=25000000.0)
-    option_program_runtime = OptionProgramRuntime()
+    option_program = OptionProgramRuntime()
 
-    start_time = time.time()
-    total_ticks = 0
+    ticks_per_day = 500
+    total_ticks = days * ticks_per_day
+    
     total_executions = 0
+    total_fees = 0.0
+    total_slippage = 0.0
 
-    tick_generator = vms_runtime.generate_tick_stream(total_days=total_days, ticks_per_day=ticks_per_day)
+    for current_tick_idx in range(1, total_ticks + 1):
+        # Step A: VMS Market Tick Generation
+        raw_tick = vms_runtime.step()
+        price = float(raw_tick.get("price", 350.0))
+        
+        canonical_tick = CanonicalMarketTick(
+            timestamp=f"2026-08-23 {9 + (current_tick_idx // 3600):02d}:{(current_tick_idx // 60) % 60:02d}:{current_tick_idx % 60:02d}",
+            underlying_price=price,
+            last_price=price,
+            bid_price=round(price - 0.05, 2),
+            ask_price=round(price + 0.05, 2)
+        )
+        
+        # Step B: Broadcast Market Tick to VSSF Gateway
+        vssf_runtime.process_market_data(canonical_tick)
 
-    for tick in tick_generator:
-        total_ticks += 1
+        # Step C: OptionProgram Process Market Tick & Signal Generation
+        signals = option_program.process_tick(canonical_tick)
 
-        # Step 1: VMS Tick -> VSSF Market Gateway (Price Update & Valuation)
-        vssf_runtime.process_market_data(tick)
-
-        # Step 2: OptionProgram process_tick (Sensors -> Strategy Evaluation -> Order Commands)
-        commands = option_program_runtime.process_tick(tick)
-
-        # Step 3: Orders -> VSSF process_order (Risk Check -> OrderBook Matching -> Account Mutation -> ExecutionReport)
-        for cmd in commands:
-            report = vssf_runtime.process_order(cmd)
+        # Step D: Process Generated Order Signals through Authoritative VSSF Execution Chain
+        for sig in signals:
+            order_cmd = CanonicalOrderCommand(
+                client_order_id=sig.client_order_id,
+                track_id=sig.track_id,
+                asset_type=sig.asset_type,
+                side=sig.side,
+                qty=sig.qty,
+                price=sig.price
+            )
+            # VSSF Authoritative Execution: Margin -> OrderBook -> ExecutionEngine -> Account
+            report = vssf_runtime.process_order(order_cmd)
             if report:
                 total_executions += 1
-                # Step 4: ExecutionReport -> OptionProgram Consumer
-                option_program_runtime.consume_execution_report(report)
+                total_fees += report.fee
+                total_slippage += report.slippage
+                option_program.consume_execution_report(report)
 
-        if total_ticks % (ticks_per_day * 125) == 0:
-            pct = (total_ticks / (total_days * ticks_per_day)) * 100
-            snapshot = vssf_runtime.get_account_snapshot()
-            print(f"   [{pct:5.1f}%] {total_ticks:,} Ticks | Balance: KRW {snapshot.balance:,.0f} | Executions: {total_executions}")
+        # Periodic Progress Logger
+        if current_tick_idx % (total_ticks // 10) == 0:
+            pct = (current_tick_idx / total_ticks) * 100
+            snap = vssf_runtime.get_account_snapshot()
+            logger.info(f"   [{pct:5.1f}%] {current_tick_idx:,} Ticks | Balance: KRW {snap.balance:,.0f} | Executions: {total_executions:,}")
 
     elapsed = time.time() - start_time
-    final_snapshot = vssf_runtime.get_account_snapshot()
-    tps = total_ticks / elapsed if elapsed > 0 else 0
+    final_snap = vssf_runtime.get_account_snapshot()
 
-    result_summary = {
-        "status": "SUCCESS",
-        "architecture": "Target_Authoritative_Owner",
+    logger.info("================================================================================")
+    logger.info(f"[SUCCESS] Target Architecture 5-Year Simulation Completed in {elapsed:.2f}s!")
+    logger.info(f"  * Total Equity: KRW {final_snap.balance:,.2f}")
+    logger.info(f"  * Realized PnL: KRW {final_snap.realized_pnl:,.2f}")
+    logger.info(f"  * Used Margin : KRW {final_snap.used_margin:,.2f}")
+    logger.info(f"  * Executions  : {total_executions:,} Fills")
+    logger.info("================================================================================")
+
+    return {
+        "days": days,
         "total_ticks": total_ticks,
-        "total_executions": total_executions,
         "elapsed_seconds": round(elapsed, 2),
-        "ticks_per_second": round(tps, 1),
-        "final_balance": final_snapshot.balance,
-        "realized_pnl": final_snapshot.realized_pnl,
-        "unrealized_pnl": final_snapshot.unrealized_pnl,
-        "used_margin": final_snapshot.used_margin,
-        "free_margin": final_snapshot.free_margin
+        "total_executions": total_executions,
+        "balance": final_snap.balance,
+        "realized_pnl": final_snap.realized_pnl,
+        "unrealized_pnl": final_snap.unrealized_pnl,
+        "used_margin": final_snap.used_margin,
+        "free_margin": final_snap.free_margin,
+        "total_fees": round(total_fees, 2),
+        "total_slippage": round(total_slippage, 4)
     }
 
-    print("=" * 80)
-    print(f"[성공] Target Architecture 주동 {total_days}일({total_ticks:,} Ticks) 시뮬레이션 완수! (소요 시간: {elapsed:.2f}s)")
-    print(f"  * 최종 자산: KRW {final_snapshot.balance:,.0f} | 총 체결 건수: {total_executions}")
-    print("=" * 80)
-
-    with open("annual_simulation_result.json", "wb") as f:
-        f.write(orjson.dumps(result_summary))
-
-    return result_summary
-
 if __name__ == "__main__":
-    run_main_simulation()
+    run_target_architecture_annual_simulation()

@@ -1,10 +1,10 @@
-"""Financial Equivalence Strict Verification Script.
+"""[Strict Financial Equivalence Verification - 5-Year Full Simulation Engine]
 
-Compares financial calculation metrics between:
-1. Legacy direct calculation model
-2. Target Architecture Authoritative Owner model (VMS -> VSSF -> OptionProgram -> VSSF Matching)
+Compares 8 Core Financial Metrics between:
+1. Legacy baseline simulation model
+2. Target Architecture Exclusive Model (VMS -> VSSF -> OptionProgram -> OrderBook -> ExecutionEngine -> VSSF Account)
 
-Verifies 8 Core Financial Metrics:
+Verifies 8 Core Financial Metrics across Ticks:
 - Total Balance / Equity
 - Realized PnL
 - Unrealized PnL
@@ -16,7 +16,7 @@ Verifies 8 Core Financial Metrics:
 """
 import time
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from shared.contracts.canonical import (
     CanonicalMarketTick,
     CanonicalOrderCommand,
@@ -30,7 +30,7 @@ from virtual_securities_firm.execution.execution_engine import SlippageEngine
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-def run_legacy_baseline(ticks_count: int = 50) -> Dict[str, float]:
+def run_legacy_baseline_5year(ticks_count: int = 625000) -> Dict[str, float]:
     """[Legacy Baseline Calculation Model]"""
     account = PaperTradingAccount(initial_capital=25000000.0)
     slippage_engine = SlippageEngine()
@@ -45,7 +45,6 @@ def run_legacy_baseline(ticks_count: int = 50) -> Dict[str, float]:
         
         if i % 2 == 0:
             side = "BUY" if (i // 2) % 2 == 1 else "SELL"
-            # Broker margin check
             est_cost = 2.50 * 1 * 250000
             if side == "BUY" and account.canonical_summary.free_margin < est_cost:
                 continue
@@ -78,8 +77,8 @@ def run_legacy_baseline(ticks_count: int = 50) -> Dict[str, float]:
         "total_slippage": round(total_slippage, 4)
     }
 
-def run_target_architecture_model(ticks_count: int = 50) -> Dict[str, float]:
-    """[Target Architecture Authoritative Owner Model]"""
+def run_target_architecture_5year(ticks_count: int = 625000) -> Dict[str, float]:
+    """[Target Architecture Authoritative Model - Full Simulation]"""
     vssf = VirtualSecuritiesFirmRuntime(initial_capital=25000000.0)
     
     total_fee = 0.0
@@ -101,6 +100,7 @@ def run_target_architecture_model(ticks_count: int = 50) -> Dict[str, float]:
                 qty=1,
                 price=2.50
             )
+            # Full Target Pipeline: Margin -> OrderBook -> ExecutionEngine -> Account
             report = vssf.process_order(cmd)
             if report:
                 total_fee += report.fee
@@ -119,16 +119,15 @@ def run_target_architecture_model(ticks_count: int = 50) -> Dict[str, float]:
         "total_slippage": round(total_slippage, 4)
     }
 
-def verify_financial_equivalence():
+def verify_financial_equivalence(ticks_count: int = 625000) -> Tuple[bool, Dict[str, float]]:
     logger.info("==================================================================")
-    logger.info("[KOSPI200 BOT] Financial Equivalence Strict Verification Initializing...")
+    logger.info(f"[KOSPI200 BOT] {ticks_count:,} Ticks Financial Equivalence Strict Verification Initializing...")
     logger.info("==================================================================")
     
-    ticks_count = 100
     start_time = time.time()
     
-    legacy_res = run_legacy_baseline(ticks_count)
-    target_res = run_target_architecture_model(ticks_count)
+    legacy_res = run_legacy_baseline_5year(ticks_count)
+    target_res = run_target_architecture_5year(ticks_count)
     elapsed = time.time() - start_time
 
     diffs = {}
@@ -158,4 +157,4 @@ def verify_financial_equivalence():
     return passed, diffs
 
 if __name__ == "__main__":
-    verify_financial_equivalence()
+    verify_financial_equivalence(ticks_count=625000)
