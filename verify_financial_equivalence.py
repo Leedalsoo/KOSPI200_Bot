@@ -165,5 +165,17 @@ def verify_financial_equivalence(ticks_count: int = 1000, **kwargs) -> Tuple[boo
 
 
 if __name__ == "__main__":
-    verify_financial_equivalence(1000)
+    import sys
+    count = 1000
+    if len(sys.argv) > 1:
+        try:
+            if sys.argv[1].isdigit():
+                count = int(sys.argv[1])
+            elif "--ticks" in sys.argv:
+                idx = sys.argv.index("--ticks")
+                if idx + 1 < len(sys.argv) and sys.argv[idx + 1].isdigit():
+                    count = int(sys.argv[idx + 1])
+        except Exception:
+            count = 1000
+    verify_financial_equivalence(count)
 
