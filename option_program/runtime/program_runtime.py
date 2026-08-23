@@ -103,6 +103,11 @@ class OptionProgramRuntime:
                         signals.extend(raw_signals)
 
                 elif st_name == "Track2":
+                    if not st.trap_state.get("is_active"):
+                        atm_2 = round(tick.underlying_price / 2.5) * 2.5
+                        t2_init = st.build_asymmetric_trap(current_atm=atm_2, active_vol=1.0, base_vol=1.0)
+                        if t2_init.get("signals"):
+                            signals.extend(t2_init["signals"])
                     trap_res = st.evaluate_trap_status(tick.underlying_price)
                     if trap_res.get("signals"):
                         signals.extend(trap_res["signals"])
@@ -110,13 +115,14 @@ class OptionProgramRuntime:
                         signals.append(trap_res)
 
                 elif st_name == "Track3":
+                    dislocation = 0.35 if self.current_regime in ["BEAR", "HIGH_VOL"] else 0.05
                     m_data = {
                         "underlying_price": tick.underlying_price,
                         "time_str": "09:30:00",
-                        "atm_strike": 350.0,
-                        "near_synthetic_future": tick.underlying_price + 0.05,
-                        "far_synthetic_future": tick.underlying_price + 0.10,
-                        "active_vol": 1.0,
+                        "atm_strike": round(tick.underlying_price / 2.5) * 2.5,
+                        "near_synthetic_future": tick.underlying_price + dislocation,
+                        "far_synthetic_future": tick.underlying_price,
+                        "active_vol": 1.5 if self.current_regime == "HIGH_VOL" else 1.0,
                     }
                     arb_res = st.evaluate_arbitrage(m_data)
                     if arb_res.get("signals"):
@@ -125,12 +131,13 @@ class OptionProgramRuntime:
                         signals.append(arb_res)
 
                 elif st_name == "Track4":
+                    sc_vol = 1.35 if self.current_regime in ["HIGH_VOL", "BEAR"] else 1.0
                     sc_res = st.evaluate_scalping_basecamp_entry(
                         current_price=tick.underlying_price,
-                        active_vol=1.0,
+                        active_vol=sc_vol,
                         base_vol=1.0,
                         date_str=date_str,
-                        time_str="09:15:00"
+                        time_str="09:05:00"
                     )
                     if sc_res.get("signals"):
                         signals.extend(sc_res["signals"])
@@ -138,10 +145,11 @@ class OptionProgramRuntime:
                         signals.append(sc_res)
 
                 elif st_name == "Track5":
+                    gap_amt = 2.5 if self.current_regime in ["HIGH_VOL", "BEAR"] else 1.0
                     gap_res = st.evaluate_gap_divergence(
-                        open_price=tick.underlying_price + 1.5,
+                        open_price=tick.underlying_price + gap_amt,
                         prev_close_price=tick.underlying_price,
-                        active_vol=1.2,
+                        active_vol=1.5 if self.current_regime == "HIGH_VOL" else 1.0,
                         current_regime=self.current_regime,
                         date_str=date_str
                     )
@@ -156,9 +164,10 @@ class OptionProgramRuntime:
                         signals.append(m_res)
 
                 elif st_name == "Track6":
+                    vol_ratio = 1.45 if self.current_regime == "HIGH_VOL" else 1.0
                     ins_res = st.evaluate_insurance_buy(
                         current_price=tick.underlying_price,
-                        active_vol=1.0,
+                        active_vol=vol_ratio,
                         base_vol=1.0,
                         budget=1000000.0,
                         date_str=date_str,
