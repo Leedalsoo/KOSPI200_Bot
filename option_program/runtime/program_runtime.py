@@ -10,7 +10,7 @@ class OptionProgramRuntime:
         self.vms = vms_runtime
         self.active = True
 
-    def process_tick(self) -> Optional[CanonicalExecutionReport]:
-        tick = self.vms.next_tick()
-        price = tick.get("underlying_price", 360.0)
+    def process_tick(self, tick: Optional[Dict[str, Any]] = None) -> Optional[CanonicalExecutionReport]:
+        tick_data = tick if tick is not None else self.vms.next_tick()
+        price = tick_data.get("underlying_price", tick_data.get("price", 360.0))
         return None
