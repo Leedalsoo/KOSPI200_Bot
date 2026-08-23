@@ -1,7 +1,7 @@
-"""5-Year (625,000 Ticks) Full Pure Target Architecture Simulation & 10-Step Pipeline Metrics Counter.
+"""5-Year (625,000 Ticks) Full Target Architecture Simulation with Authoritative VMS Market Tick Stream Provider.
 
 Pipeline 10-Steps:
-1. CanonicalMarketTick
+1. CanonicalMarketTick (VMS Runtime stream: vms.generate_tick_stream() / vms.step())
 2. Strategy Signal
 3. CanonicalOrderCommand
 4. Risk Admission
@@ -15,12 +15,7 @@ Pipeline 10-Steps:
 import time
 import logging
 from typing import Dict, Any
-from shared.contracts.canonical import (
-    CanonicalMarketTick,
-    CanonicalOrderCommand,
-    CanonicalOrderSide,
-    CanonicalAssetType
-)
+from shared.contracts.canonical import CanonicalOrderCommand
 from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from option_program.runtime.program_runtime import OptionProgramRuntime
@@ -30,35 +25,24 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 def run_5year_10step_simulation(total_ticks: int = 625000) -> Dict[str, Any]:
     logger.info("==================================================================")
-    logger.info("[KOSPI200 BOT] 5-Year (625,000 Ticks) 10-Step Pipeline Full Execution...")
+    logger.info("[KOSPI200 BOT] 5-Year (625,000 Ticks) VMS Real Stream 10-Step Execution...")
     logger.info("==================================================================")
     
     start_time = time.time()
 
+    # Step 1 Single Source of Truth Market Provider: VMS Runtime
     vms = VirtualMarketSimulatorRuntime()
     vssf = VirtualSecuritiesFirmRuntime(initial_capital=25000000.0)
     op = OptionProgramRuntime()
 
-    # Pre-created ticks pool for high throughput
-    prices = [round(3.00 + (i % 5) * 0.1, 2) for i in range(5)]
-    ticks_pool = [
-        CanonicalMarketTick(
-            timestamp="2026-08-23 09:00:00",
-            underlying_price=p,
-            last_price=p,
-            bid_price=round(p - 0.05, 2),
-            ask_price=round(p + 0.05, 2)
-        )
-        for p in prices
-    ]
+    # VMS generate_tick_stream() Stream Generation
+    tick_stream = vms.generate_tick_stream(total_days=1250, ticks_per_day=500)
 
-    for i in range(1, total_ticks + 1):
-        tick = ticks_pool[i % 5]
-        
-        # Step 1: Market Ticks
+    for i, tick in enumerate(tick_stream, start=1):
+        # Step 1: Market Ticks from VMS Runtime
         vssf.process_market_data(tick)
 
-        # Step 2: Strategy Signals (Trigger every 4 ticks for realistic trading volume)
+        # Step 2: Strategy Signals (Triggered from VMS Market Tick)
         if i % 4 == 0:
             signals = op.process_tick(tick)
             vssf.metrics["strategy_signals"] += len(signals)
@@ -85,11 +69,11 @@ def run_5year_10step_simulation(total_ticks: int = 625000) -> Dict[str, Any]:
     snap = vssf.get_account_snapshot()
 
     logger.info("==================================================================")
-    logger.info(f"[SUCCESS] 625,000 Ticks 10-Step Pipeline Completed in {elapsed:.2f}s!")
+    logger.info(f"[SUCCESS] 625,000 Ticks Real VMS Stream 10-Step Pipeline Completed in {elapsed:.2f}s!")
     logger.info("==================================================================")
     logger.info(f"{'Pipeline Step':<28} | {'Metric Counter (Real Execution)':<30}")
     logger.info("-" * 65)
-    logger.info(f"{'1. Market Ticks':<28} | {m['market_ticks']:<30,}")
+    logger.info(f"{'1. Market Ticks (VMS Step)':<28} | {m['market_ticks']:<30,}")
     logger.info(f"{'2. Strategy Signals':<28} | {m['strategy_signals']:<30,}")
     logger.info(f"{'3. Order Commands':<28} | {m['order_commands']:<30,}")
     logger.info(f"{'4. Risk Accepted':<28} | {m['risk_accepted']:<30,}")
