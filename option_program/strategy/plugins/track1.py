@@ -55,7 +55,7 @@ class Track1(StrategyContract):
     async def _execute_liquidity_discovery(self, risk_manager: Any, targets: Dict[str, Any]) -> List[Any]:
         from uuid import uuid4
         import time
-        from core.contracts import OrderRequest
+        from shared.core.contracts import OrderRequest
         wing_code = targets.get("wing", "OPT_WING")
         body_code = targets.get("body", "OPT_BODY")
         now_ns = time.time_ns()
@@ -83,7 +83,7 @@ class Track1(StrategyContract):
     def _trigger_kill_switch(self, greeks: Dict[str, Decimal]) -> List[Any]:
         from uuid import uuid4
         import time
-        from core.contracts import OrderRequest
+        from shared.core.contracts import OrderRequest
         now_ns = time.time_ns()
         return [
             OrderRequest(

@@ -6,8 +6,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from collections import deque
 from uuid import uuid4
 
-from core.base_agent import BaseAgent
-from core.contracts import MarketTick, OrderRequest
+from shared.core.base_agent import BaseAgent
+from shared.core.contracts import MarketTick, OrderRequest
 from option_program.strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer
 from option_program.strategy.strategy_contract import StrategyContract
 

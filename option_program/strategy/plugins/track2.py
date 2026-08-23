@@ -5,8 +5,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from core.base_agent import BaseAgent
-from core.contracts import MarketTick, OrderRequest
+from shared.core.base_agent import BaseAgent
+from shared.core.contracts import MarketTick, OrderRequest
 from infra.time_service import TimeService
 import logging
 from option_program.strategy.common import TradingDateResetHelper, ExecutionCostCalculator, WallClockTimer

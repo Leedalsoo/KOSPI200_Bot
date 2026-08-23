@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from typing import Dict, Any, List, Optional
-from core.contracts import OrderRequest, ExecutionReport, PositionRecord
+from shared.core.contracts import OrderRequest, ExecutionReport, PositionRecord
 
 class StrategyContract:
     """[Phase 9 & 10 Strategy Contract Base Class]

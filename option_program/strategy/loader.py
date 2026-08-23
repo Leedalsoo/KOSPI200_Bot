@@ -5,7 +5,7 @@ import inspect
 import importlib
 import logging
 from typing import Dict, Type
-from core.base_agent import BaseAgent
+from shared.core.base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
 

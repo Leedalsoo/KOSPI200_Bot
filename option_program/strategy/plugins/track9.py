@@ -58,7 +58,7 @@ class Track9(StrategyContract):
                 diff_qty = target_insurance_qty - current_ins_qty
                 insurance_put_strike = round((current_price - self.strike_offset) / 2.5) * 2.5
                 insurance_call_strike = round((current_price + self.strike_offset) / 2.5) * 2.5
-                
+
                 logger.info(
                     "[Track 1 / Overnight] OTM 보험 부족분 추가 가입 (+%d계약). Target: %d",
                     diff_qty, target_insurance_qty

@@ -66,7 +66,7 @@ class Track3(StrategyContract):
     async def _execute_asymmetric_legging(self, otm_spec: Dict[str, Any], atm_spec: Dict[str, Any]) -> Any:
         from decimal import Decimal
         import time
-        from core.contracts import OrderRequest
+        from shared.core.contracts import OrderRequest
         now_ns = time.time_ns()
         client_id = uuid4()
         otm_order = OrderRequest(
@@ -88,7 +88,7 @@ class Track3(StrategyContract):
         atm_spec = self.pending_legs.pop(report.client_order_id)
         from decimal import Decimal
         import time
-        from core.contracts import OrderRequest
+        from shared.core.contracts import OrderRequest
         now_ns = time.time_ns()
         atm_order = OrderRequest(
             decision_id=uuid4(),
