@@ -55,12 +55,13 @@ def verify_financial_correctness_audit() -> bool:
     
     fee1_diff = abs(buy_report.fee - expected_fee1)
     margin1_diff = abs(snap1.used_margin - expected_used_margin1)
-    balance1_diff = abs(snap1.balance - expected_balance1)
+    balance1_diff = abs(vssf.account.balance - expected_balance1)
 
     logger.info("[Scenario 1: BUY 2 Options]")
     logger.info(f"  * Fee Test         : Executed Fee={buy_report.fee:.2f} | Theory={expected_fee1:.2f} | Diff={fee1_diff:.4f} -> {'PASS' if fee1_diff < 1e-2 else 'FAIL'}")
     logger.info(f"  * Used Margin Test : Used Margin={snap1.used_margin:.2f} | Theory={expected_used_margin1:.2f} | Diff={margin1_diff:.4f} -> {'PASS' if margin1_diff < 1e-2 else 'FAIL'}")
-    logger.info(f"  * Balance Test     : Balance={snap1.balance:.2f} | Theory={expected_balance1:.2f} | Diff={balance1_diff:.4f} -> {'PASS' if balance1_diff < 1e-2 else 'FAIL'}")
+    logger.info(f"  * Balance Test     : Balance={vssf.account.balance:.2f} | Theory={expected_balance1:.2f} | Diff={balance1_diff:.4f} -> {'PASS' if balance1_diff < 1e-2 else 'FAIL'}")
+
 
     # ------------------------------------------------------------------
     # Scenario 2: Mark-to-Market Price Movement (Option Premium moves to 3.50 pt)

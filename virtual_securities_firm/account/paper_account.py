@@ -66,8 +66,10 @@ class PaperTradingAccount:
 
     def update_tick_price(self, underlying_price: float) -> float:
         """PnLEngine & MarginEngine에 PnL 및 Margin 계산 위임"""
+        self._last_price = underlying_price
         self.unrealized_pnl = self.pnl_engine.calculate_unrealized(self.position_mgr.positions, underlying_price)
         total_equity = self.balance + self.realized_pnl + self.unrealized_pnl
+
 
         self.used_margin = self.margin_engine.calculate_used_margin(self.position_mgr.positions)
         self.free_margin = self.margin_engine.calculate_free_margin(total_equity, self.used_margin)
@@ -119,8 +121,12 @@ class PaperTradingAccount:
 
         self.balance -= exec_fee
         self.used_margin = self.margin_engine.calculate_used_margin(self.position_mgr.positions)
+        # 잔여 포지션 기준 미실현 손익 즉시 동기화
+        last_p = getattr(self, "_last_price", 350.0)
+        self.unrealized_pnl = self.pnl_engine.calculate_unrealized(self.position_mgr.positions, last_p)
         total_equity = self.balance + self.realized_pnl + self.unrealized_pnl
         self.free_margin = self.margin_engine.calculate_free_margin(total_equity, self.used_margin)
+
 
         # Ledger Engine 기록
         self.ledger_engine.transactions.append({
