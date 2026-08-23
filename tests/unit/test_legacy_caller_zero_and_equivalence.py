@@ -95,12 +95,12 @@ def test_4_runtime_call_chain_execution() -> None:
         asset_type=CanonicalAssetType.OPTION,
         side=CanonicalOrderSide.BUY,
         qty=1,
-        price=350.50
+        price=2.50
     )
     report = vssf.process_order(cmd)
     assert report is not None
     assert report.client_order_id == "ORD-AUDIT-001"
-    assert report.executed_price == 350.50
+    assert report.executed_price == 2.50
 
 
 def test_5_financial_equivalence_baseline() -> None:

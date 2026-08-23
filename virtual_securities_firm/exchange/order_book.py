@@ -49,3 +49,7 @@ class OrderBook:
 
     def get_best_ask(self) -> Optional[float]:
         return self.asks[0]["price"] if self.asks else None
+
+    def update_bid_ask(self, bid_price: float, ask_price: float) -> None:
+        self.bids = [{"price": bid_price, "qty": 10}]
+        self.asks = [{"price": ask_price, "qty": 10}]

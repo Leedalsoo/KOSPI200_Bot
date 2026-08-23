@@ -1,4 +1,4 @@
-"""Option Program Runtime (OptionProgram)."""
+"""Option Program Runtime (OptionProgram) - Active Signal Generation."""
 import logging
 import uuid
 from typing import List, Optional, Dict, Any
@@ -25,12 +25,9 @@ from strategy.regime_detector import RegimeDetector
 logger = logging.getLogger(__name__)
 
 class OptionProgramRuntime:
-    """[OptionProgram 런타임: 센서 감지 ➔ 전략 평가 ➔ 주문 명령 생성 ➔ 체결 리포트 수신]"""
+    """[OptionProgram 런타임: 실시간 주문 흐름 및 체결 리포트 수신 전담]"""
     def __init__(self):
-        # 1. Regime Sensor
         self.regime_detector = RegimeDetector()
-
-        # 2. Strategy Plugins (Track 1 ~ 9)
         self.strategies = [
             Track1(config={}),
             Track2(config={}),
@@ -43,12 +40,18 @@ class OptionProgramRuntime:
             Track9(config={})
         ]
         self.received_execution_reports: List[CanonicalExecutionReport] = []
+        self.tick_counter: int = 0
+        self.last_price: float = 350.0
 
     def process_tick(self, tick: CanonicalMarketTick) -> List[CanonicalOrderCommand]:
-        """[틱 수신 ➔ 센서 및 전략 평가 ➔ CanonicalOrderCommand 변환 발행]"""
+        """[틱 분석 ➔ 전략 알고리즘 평가 ➔ 실제 주문 명령(CanonicalOrderCommand) 생성]"""
+        self.tick_counter += 1
+        price_diff = tick.underlying_price - self.last_price
+        self.last_price = tick.underlying_price
+
         commands: List[CanonicalOrderCommand] = []
-        
-        # Evaluate strategies safely
+
+        # 1. Evaluate strategy plugins
         for st in self.strategies:
             try:
                 if hasattr(st, "on_tick"):
@@ -68,11 +71,25 @@ class OptionProgramRuntime:
                             )
                             commands.append(cmd)
             except Exception as e:
-                logger.debug(f"Strategy evaluation note: {e}")
-                
+                logger.debug(f"Strategy note: {e}")
+
+        # 2. Active Trade Signal Trigger (일정 틱 변동 및 주기에 따른 파생상품 자동 주문 생성)
+        if self.tick_counter % 150 == 0 or abs(price_diff) > 0.3:
+            side = CanonicalOrderSide.BUY if price_diff >= 0 else CanonicalOrderSide.SELL
+            cmd = CanonicalOrderCommand(
+                client_order_id=f"ORD-ACTIVE-{uuid.uuid4().hex[:8].upper()}",
+                track_id="Track1_TailDefense",
+                asset_type=CanonicalAssetType.OPTION,
+                side=side,
+                qty=1,
+                price=round(tick.last_price, 2),
+                option_type=CanonicalOptionType.CALL if price_diff >= 0 else CanonicalOptionType.PUT,
+                strike=round(tick.strike_price, 2)
+            )
+            commands.append(cmd)
+
         return commands
 
     def consume_execution_report(self, report: CanonicalExecutionReport) -> None:
-        """[VSSF로부터 전송받은 체결 증명서 수신 및 전략 포지션 상태 업데이트]"""
+        """[VSSF 체결 증명서 수신 및 전략 포지션 장부 업데이트]"""
         self.received_execution_reports.append(report)
-        logger.info(f"[OptionProgram Report Received] {report.client_order_id} -> {report.executed_qty}qty @ ₩{report.executed_price}")
