@@ -37,6 +37,9 @@ from strategy.plugins.track8 import Track8
 from strategy.plugins.track9 import Track9
 from strategy.sensors.market_sensors import FuturesSensor, WeeklyOptionsSensor, DailyOptionsSensor
 from strategy.simulation.virtual_feed_engine import HistoricalReplayEngine, SlippageEngine, PaperTradingAccount
+from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
+from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
+from option_program.runtime.program_runtime import OptionProgramRuntime
 import orjson
 import numpy as np
 from sensor.trade_replay_analyzer import TradeReplayAnalyzer
@@ -336,6 +339,9 @@ daily_sensor: Optional[DailyOptionsSensor] = None
 replay_engine: Optional[HistoricalReplayEngine] = None
 slippage_engine: Optional[SlippageEngine] = None
 paper_account: Optional[PaperTradingAccount] = None
+vms_runtime: Optional[VirtualMarketSimulatorRuntime] = None
+vsf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None
+option_program_runtime: Optional[OptionProgramRuntime] = None
 track5_active_qty: int = 0
 insurance_budget_pool: float = 1000000.0
 calculated_fee: float = 0.0
@@ -660,6 +666,9 @@ def _reset_session_state(preserve_capital: bool = False) -> None:
     replay_engine = HistoricalReplayEngine()
     slippage_engine = SlippageEngine()
     paper_account = PaperTradingAccount(initial_capital=25000000.0)
+    vms_runtime = VirtualMarketSimulatorRuntime(time_scale=1.0)
+    vsf_runtime = VirtualSecuritiesFirmRuntime(symbol="KOSPI200_OPT")
+    option_program_runtime = OptionProgramRuntime(vsf_runtime, vms_runtime)
     
     insurance_budget_pool = 1000000.0
     
