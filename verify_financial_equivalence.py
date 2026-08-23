@@ -24,8 +24,8 @@ from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRu
 
 def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
     """[True Legacy Baseline System] 
-    하드코딩된 계산식이 아닌 실제 Legacy 원천 모듈(AccountEngine, PositionManager, ExecutionEngine)의 
-    공식 책임 메서드를 100% 호출하여 회계 상태와 거래를 계산하는 권위적 Baseline 실행기.
+    검증 스크립트 내부의 자체 계산식이 0건이며, 실제 Legacy 원천 모듈(AccountEngine, PositionManager, ExecutionEngine)의 
+    공식 책임 메서드만을 100% 호출하여 회계 상태와 거래를 계산하는 권위적 Baseline 실행기.
     """
     initial_capital_dec = Decimal("25000000.00")
     legacy_account = AccountEngine(initial_capital=initial_capital_dec)
@@ -40,7 +40,6 @@ def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
     executed_trades = 0
     peak_equity = initial_capital_dec
     max_drawdown = Decimal("0.00")
-    MULTIPLIER = Decimal("250000.0")
 
     for i, tick in enumerate(tick_stream, start=1):
         signals = op.process_tick(tick)
@@ -52,7 +51,7 @@ def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
                 is_buy = (sig.side.value == "BUY")
                 strategy_id = getattr(sig, "track_id", "Track1")
 
-                # 1. PositionManager 공식 책임 메서드를 통한 주문 증거금 산출
+                # 1. PositionManager 공식 책임 메서드를 통한 주문 증거금 산출 (0건 검증기 수식)
                 req_margin = PositionManager.calculate_order_margin(Decimal(str(sig.price)), qty_int)
 
                 cur_snap = legacy_account.get_snapshot()
@@ -83,27 +82,15 @@ def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
                     timestamp=datetime.now()
                 )
 
-                # 3. Legacy PositionManager 및 AccountEngine 상태 전이 (실현 손익 계산)
-                existing_pos = None
-                for p in legacy_pos_mgr.positions.values():
-                    if p.status in ("OPEN", "PARTIALLY_CLOSED"):
-                        existing_pos = p
-                        break
+                # 3. PositionManager 공식 책임을 통한 청산 실현 손익 산출 (0건 검증기 수식)
+                realized_pnl_trade = legacy_pos_mgr.calculate_close_realized_pnl(exec_report)
 
-                realized_pnl_trade = Decimal("0.00")
-                if existing_pos is not None and (not is_buy if existing_pos.side == "BUY" else is_buy):
-                    close_qty = min(existing_pos.remaining_qty, qty_int)
-                    if existing_pos.side == "BUY":
-                        realized_pnl_trade = (exec_report.execution_price - Decimal(str(existing_pos.entry_price))) * Decimal(str(close_qty)) * MULTIPLIER
-                    else:
-                        realized_pnl_trade = (Decimal(str(existing_pos.entry_price)) - exec_report.execution_price) * Decimal(str(close_qty)) * MULTIPLIER
-                    realized_pnl_trade = Decimal(str(round(float(realized_pnl_trade), 2)))
-
+                # 4. Legacy PositionManager 및 AccountEngine 상태 전이
                 legacy_pos_mgr.apply_execution(exec_report)
                 legacy_account.apply_realized_trade(pnl=realized_pnl_trade, fee=exec_report.fee, slippage=Decimal("0.00"))
                 executed_trades += 1
 
-                # 4. 체결 즉시 PositionManager를 통한 실시간 사용 증거금 및 MTM 미실현 손익 반영
+                # 5. 체결 즉시 PositionManager를 통한 실시간 사용 증거금 및 MTM 미실현 손익 반영
                 legacy_account.update_margin_and_unrealized(
                     used_margin=legacy_pos_mgr.calculate_used_margin(),
                     unrealized_pnl=legacy_pos_mgr.calculate_unrealized_pnl(current_underlying_dec)
@@ -124,7 +111,7 @@ def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
                 max_drawdown = dd
 
     snap = legacy_account.get_snapshot()
-    # 5. Legacy Account 회계 무결성 방정식 검증
+    # 6. Legacy Account 회계 무결성 방정식 검증
     is_valid, msg = legacy_account.verify_integrity()
     assert is_valid, f"Legacy Account Integrity check failed: {msg}"
 
@@ -247,8 +234,6 @@ def verify_realized_pnl_lifecycle_equivalence() -> bool:
     print("[TRULY INDEPENDENT END-TO-END AUDIT] (Independent Matching, Pricing, PnL & Margin)")
     print("=" * 95)
 
-    MULTIPLIER = Decimal("250000.0")
-
     # 1. Legacy 시스템 독립 인스턴스 (AccountEngine, PositionManager, ExecutionEngine)
     legacy_acc = AccountEngine(initial_capital=Decimal("25000000.00"))
     legacy_pos = PositionManager()
@@ -354,9 +339,8 @@ def verify_realized_pnl_lifecycle_equivalence() -> bool:
         timestamp=datetime.now()
     )
 
-    pos_item = list(legacy_pos.positions.values())[0]
-    pnl_realized_leg = (exec_rep_sell.execution_price - Decimal(str(pos_item.entry_price))) * Decimal("1") * MULTIPLIER
-    pnl_realized_leg = Decimal(str(round(float(pnl_realized_leg), 2)))
+    # PositionManager 공식 책임 메서드를 통한 실현 손익 산출 (0건 검증기 수식)
+    pnl_realized_leg = legacy_pos.calculate_close_realized_pnl(exec_rep_sell)
 
     legacy_pos.apply_execution(exec_rep_sell)
     legacy_acc.apply_realized_trade(pnl=pnl_realized_leg, fee=exec_rep_sell.fee, slippage=Decimal("0.00"))

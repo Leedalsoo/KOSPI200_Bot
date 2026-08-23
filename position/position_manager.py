@@ -143,3 +143,19 @@ class PositionManager:
         safe_price = min(price, Decimal("50.0")) if price < Decimal("50.0") else Decimal("2.5")
         return (safe_price * Decimal(str(qty)) * multiplier).quantize(Decimal("0.01"))
 
+    def calculate_close_realized_pnl(self, report: ExecutionReport, multiplier: Decimal = Decimal("250000.0")) -> Decimal:
+        """[PositionManager 책임] 청산 주문 체결 시 포지션 잔여수량/진입가 기준 실현 손익(Realized PnL) 산출 순수 함수"""
+        if report.filled_qty <= 0:
+            return Decimal("0.00")
+            
+        for p in self.positions.values():
+            if p.strategy_id == report.strategy_id and p.status in ("OPEN", "PARTIALLY_CLOSED"):
+                close_qty = min(p.remaining_qty, report.filled_qty)
+                if p.side == "BUY":
+                    pnl = (report.execution_price - Decimal(str(p.entry_price))) * Decimal(str(close_qty)) * multiplier
+                else:
+                    pnl = (Decimal(str(p.entry_price)) - report.execution_price) * Decimal(str(close_qty)) * multiplier
+                return Decimal(str(round(float(pnl), 2)))
+        return Decimal("0.00")
+
+
