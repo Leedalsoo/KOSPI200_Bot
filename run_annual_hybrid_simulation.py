@@ -1,12 +1,6 @@
 """Annual Hybrid 625,000 Ticks Simulation with Authoritative Target Architecture Only."""
 import time
 import logging
-from shared.contracts.canonical import (
-    CanonicalOrderCommand,
-    CanonicalAssetType,
-    CanonicalOrderSide,
-    CanonicalOptionType
-)
 from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from option_program.runtime.program_runtime import OptionProgramRuntime
@@ -42,24 +36,6 @@ def run_annual_simulation(total_days: int = 1250, ticks_per_day: int = 500):
         # Step 2: OptionProgram Strategy Signal Processing (Pure Strategy Evaluation)
         signals = op.process_tick(tick)
         
-        # Inject Active Production Trading Signals at strategy checkpoints
-        if i % 300 == 0:
-            side = CanonicalOrderSide.BUY if (i // 300) % 2 == 1 else CanonicalOrderSide.SELL
-            cmd = CanonicalOrderCommand(
-                client_order_id=f"ORD-STRAT-{i}",
-                track_id="Track1",
-                asset_type=CanonicalAssetType.OPTION,
-                side=side,
-                qty=1,
-                price=2.5,
-                option_type=CanonicalOptionType.CALL,
-                strike=tick.strike_price
-            )
-            report = broker_client.submit_order(cmd)
-            vssf.metrics["strategy_signals"] += 1
-            if report:
-                op.consume_execution_report(report)
-
         if signals:
             vssf.metrics["strategy_signals"] += len(signals)
             for sig in signals:
