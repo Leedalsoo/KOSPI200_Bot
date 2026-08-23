@@ -116,3 +116,30 @@ class PositionManager:
     def get_gross_qty(self) -> int:
         """전체 Gross 수량(총 보유 계약 수 절대값 합) 계산"""
         return sum(p.remaining_qty for p in self.positions.values() if p.status in ("OPEN", "PARTIALLY_CLOSED"))
+
+    def calculate_used_margin(self, multiplier: Decimal = Decimal("250000.0")) -> Decimal:
+        """[PositionManager 책임] 현재 오픈 포지션의 총 사용 증거금 산출 순수 함수"""
+        total_margin = Decimal("0.00")
+        for p in self.positions.values():
+            if p.status in ("OPEN", "PARTIALLY_CLOSED"):
+                total_margin += Decimal(str(p.entry_price)) * Decimal(str(p.remaining_qty)) * multiplier
+        return total_margin.quantize(Decimal("0.01"))
+
+    def calculate_unrealized_pnl(self, current_price: Decimal, multiplier: Decimal = Decimal("250000.0")) -> Decimal:
+        """[PositionManager 책임] 현재 오픈 포지션의 총 MTM 미실현 평가손익 산출 순수 함수"""
+        total_unrealized = Decimal("0.00")
+        for p in self.positions.values():
+            if p.status in ("OPEN", "PARTIALLY_CLOSED"):
+                if p.side == "BUY":
+                    pnl_diff = current_price - Decimal(str(p.entry_price))
+                else:
+                    pnl_diff = Decimal(str(p.entry_price)) - current_price
+                total_unrealized += pnl_diff * Decimal(str(p.remaining_qty)) * multiplier
+        return total_unrealized.quantize(Decimal("0.01"))
+
+    @staticmethod
+    def calculate_order_margin(price: Decimal, qty: int, multiplier: Decimal = Decimal("250000.0")) -> Decimal:
+        """[PositionManager/Margin 책임] 신규 주문 시 요구되는 주문 증거금 산출 순수 함수"""
+        safe_price = min(price, Decimal("50.0")) if price < Decimal("50.0") else Decimal("2.5")
+        return (safe_price * Decimal(str(qty)) * multiplier).quantize(Decimal("0.01"))
+

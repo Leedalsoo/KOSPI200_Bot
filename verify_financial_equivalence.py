@@ -24,8 +24,8 @@ from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRu
 
 def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
     """[True Legacy Baseline System] 
-    하드코딩된 계산식이 아닌 실제 Legacy 모듈(AccountEngine, PositionManager, ExecutionEngine)의 
-    원천 인스턴스를 직접 구동하여 회계 상태와 거래를 계산하는 권위적 Baseline 실행기.
+    하드코딩된 계산식이 아닌 실제 Legacy 원천 모듈(AccountEngine, PositionManager, ExecutionEngine)의 
+    공식 책임 메서드를 100% 호출하여 회계 상태와 거래를 계산하는 권위적 Baseline 실행기.
     """
     initial_capital_dec = Decimal("25000000.00")
     legacy_account = AccountEngine(initial_capital=initial_capital_dec)
@@ -40,10 +40,7 @@ def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
     executed_trades = 0
     peak_equity = initial_capital_dec
     max_drawdown = Decimal("0.00")
-
     MULTIPLIER = Decimal("250000.0")
-    OPTION_PRICE_SANITY_CAP = 50.0
-    OPTION_PRICE_FALLBACK = 2.5
 
     for i, tick in enumerate(tick_stream, start=1):
         signals = op.process_tick(tick)
@@ -52,17 +49,11 @@ def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
         if signals:
             for sig in signals:
                 qty_int = int(sig.qty)
-                qty_dec = Decimal(str(qty_int))
                 is_buy = (sig.side.value == "BUY")
-                is_option = (sig.asset_type.value == "OPTION")
                 strategy_id = getattr(sig, "track_id", "Track1")
 
-                # 1. 주문 증거금 계산 (KOSPI 200 옵션 승수 250,000)
-                if is_option:
-                    opt_p = Decimal(str(sig.price if sig.price < OPTION_PRICE_SANITY_CAP else OPTION_PRICE_FALLBACK))
-                    req_margin = opt_p * qty_dec * MULTIPLIER
-                else:
-                    req_margin = Decimal(str(sig.price)) * qty_dec * MULTIPLIER * Decimal("0.10")
+                # 1. PositionManager 공식 책임 메서드를 통한 주문 증거금 산출
+                req_margin = PositionManager.calculate_order_margin(Decimal(str(sig.price)), qty_int)
 
                 cur_snap = legacy_account.get_snapshot()
                 free_margin = Decimal(str(max(0.0, float(cur_snap.total_equity - cur_snap.used_margin))))
@@ -92,11 +83,6 @@ def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
                     timestamp=datetime.now()
                 )
 
-
-
-
-
-
                 # 3. Legacy PositionManager 및 AccountEngine 상태 전이 (실현 손익 계산)
                 existing_pos = None
                 for p in legacy_pos_mgr.positions.values():
@@ -117,38 +103,16 @@ def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
                 legacy_account.apply_realized_trade(pnl=realized_pnl_trade, fee=exec_report.fee, slippage=Decimal("0.00"))
                 executed_trades += 1
 
-                # 4. 체결 즉시 실시간 사용 증거금 및 MTM 반영
-                tot_margin_imm = Decimal("0.00")
-                tot_unrealized_imm = Decimal("0.00")
-                for p in legacy_pos_mgr.positions.values():
-                    if p.status in ("OPEN", "PARTIALLY_CLOSED"):
-                        tot_margin_imm += Decimal(str(p.entry_price)) * Decimal(str(p.remaining_qty)) * MULTIPLIER
-                        if p.side == "BUY":
-                            pnl_diff = current_underlying_dec - Decimal(str(p.entry_price))
-                        else:
-                            pnl_diff = Decimal(str(p.entry_price)) - current_underlying_dec
-                        tot_unrealized_imm += pnl_diff * Decimal(str(p.remaining_qty)) * MULTIPLIER
-
+                # 4. 체결 즉시 PositionManager를 통한 실시간 사용 증거금 및 MTM 미실현 손익 반영
                 legacy_account.update_margin_and_unrealized(
-                    used_margin=Decimal(str(round(float(tot_margin_imm), 2))),
-                    unrealized_pnl=Decimal(str(round(float(tot_unrealized_imm), 2)))
+                    used_margin=legacy_pos_mgr.calculate_used_margin(),
+                    unrealized_pnl=legacy_pos_mgr.calculate_unrealized_pnl(current_underlying_dec)
                 )
 
-        # 틱 단위 MTM 미실현 손익 및 증거금 갱신
-        tot_margin = Decimal("0.00")
-        tot_unrealized = Decimal("0.00")
-        for p in legacy_pos_mgr.positions.values():
-            if p.status in ("OPEN", "PARTIALLY_CLOSED"):
-                tot_margin += Decimal(str(p.entry_price)) * Decimal(str(p.remaining_qty)) * MULTIPLIER
-                if p.side == "BUY":
-                    pnl_diff = current_underlying_dec - Decimal(str(p.entry_price))
-                else:
-                    pnl_diff = Decimal(str(p.entry_price)) - current_underlying_dec
-                tot_unrealized += pnl_diff * Decimal(str(p.remaining_qty)) * MULTIPLIER
-
+        # 틱 단위 MTM 미실현 손익 및 증거금 갱신 (PositionManager 책임 위임)
         legacy_account.update_margin_and_unrealized(
-            used_margin=Decimal(str(round(float(tot_margin), 2))),
-            unrealized_pnl=Decimal(str(round(float(tot_unrealized), 2)))
+            used_margin=legacy_pos_mgr.calculate_used_margin(),
+            unrealized_pnl=legacy_pos_mgr.calculate_unrealized_pnl(current_underlying_dec)
         )
 
         snap = legacy_account.get_snapshot()
@@ -160,7 +124,7 @@ def run_legacy_baseline(ticks_count: int = 1000) -> Dict[str, float]:
                 max_drawdown = dd
 
     snap = legacy_account.get_snapshot()
-    # 7. Legacy Account 회계 무결성 방정식 검증
+    # 5. Legacy Account 회계 무결성 방정식 검증
     is_valid, msg = legacy_account.verify_integrity()
     assert is_valid, f"Legacy Account Integrity check failed: {msg}"
 
@@ -229,7 +193,7 @@ def verify_financial_equivalence(ticks_count: int = 1000) -> Tuple[bool, Dict[st
     print(f"[AUTHORITATIVE FINANCIAL EQUIVALENCE AUDIT] True Legacy Baseline vs Target Experiment_1 ({ticks_count} Ticks)")
     print("=" * 95)
 
-    print("[Phase 1] Executing True Legacy Baseline (AccountEngine & PositionManager Instances) ...")
+    print("[Phase 1] Executing True Legacy Baseline (AccountEngine, PositionManager, ExecutionEngine) ...")
     legacy_res = run_legacy_baseline(ticks_count)
 
     print("[Phase 2] Executing Target Experiment_1 Architecture (VMS -> OptionProgram -> VSSF) ...")
@@ -277,7 +241,7 @@ def verify_realized_pnl_lifecycle_equivalence() -> bool:
     """[Truly Independent End-to-End Legacy vs Target Equivalence Audit]
     Legacy와 Target이 체결 가격(Execution Price), 수수료(Fee), 실현 손익(Realized PnL), 
     증거금(Margin), 자산(Equity)을 서로에게 주입하지 않고, 동일한 시장 입력으로부터
-    실제 LegacyExecutionEngine과 Target VirtualSecuritiesFirmRuntime을 구동하여 1:1 완벽 일치함을 입증.
+    실제 Legacy 모듈(ExecutionEngine, PositionManager, AccountEngine)과 Target VirtualSecuritiesFirmRuntime을 구동하여 1:1 완벽 일치함을 입증.
     """
     print("=" * 95)
     print("[TRULY INDEPENDENT END-TO-END AUDIT] (Independent Matching, Pricing, PnL & Margin)")
@@ -303,7 +267,6 @@ def verify_realized_pnl_lifecycle_equivalence() -> bool:
         ask_price=2.50,
         timestamp="2026-08-23 09:00:00"
     )
-    # Target 시장 처리
     vssf.process_market_data(tick1)
 
     # (A) Target 독립 체결
@@ -338,8 +301,8 @@ def verify_realized_pnl_lifecycle_equivalence() -> bool:
     legacy_pos.apply_execution(exec_rep_buy)
     legacy_acc.apply_realized_trade(pnl=Decimal("0.00"), fee=exec_rep_buy.fee, slippage=Decimal("0.00"))
     legacy_acc.update_margin_and_unrealized(
-        used_margin=Decimal(str(round(float(exec_rep_buy.execution_price) * 1 * 250000.0, 2))),
-        unrealized_pnl=Decimal("0.00")
+        used_margin=legacy_pos.calculate_used_margin(),
+        unrealized_pnl=legacy_pos.calculate_unrealized_pnl(Decimal(str(tick1.underlying_price)))
     )
 
     # -------------------------------------------------------------------------
@@ -353,12 +316,10 @@ def verify_realized_pnl_lifecycle_equivalence() -> bool:
     )
     vssf.process_market_data(tick2)
 
-    # Legacy MTM 미실현 손익 갱신 (독립 계산)
-    pos_item = list(legacy_pos.positions.values())[0]
-    pnl_unrealized_leg = (Decimal(str(tick2.underlying_price)) - Decimal(str(pos_item.entry_price))) * Decimal("1") * MULTIPLIER
+    # Legacy MTM 미실현 손익 갱신 (PositionManager 책임 호출)
     legacy_acc.update_margin_and_unrealized(
-        used_margin=Decimal(str(round(float(pos_item.entry_price) * 1 * 250000.0, 2))),
-        unrealized_pnl=Decimal(str(round(float(pnl_unrealized_leg), 2)))
+        used_margin=legacy_pos.calculate_used_margin(),
+        unrealized_pnl=legacy_pos.calculate_unrealized_pnl(Decimal(str(tick2.underlying_price)))
     )
 
     # -------------------------------------------------------------------------
@@ -393,13 +354,16 @@ def verify_realized_pnl_lifecycle_equivalence() -> bool:
         timestamp=datetime.now()
     )
 
-    # Legacy 실현 손익 독자 계산
+    pos_item = list(legacy_pos.positions.values())[0]
     pnl_realized_leg = (exec_rep_sell.execution_price - Decimal(str(pos_item.entry_price))) * Decimal("1") * MULTIPLIER
     pnl_realized_leg = Decimal(str(round(float(pnl_realized_leg), 2)))
 
     legacy_pos.apply_execution(exec_rep_sell)
     legacy_acc.apply_realized_trade(pnl=pnl_realized_leg, fee=exec_rep_sell.fee, slippage=Decimal("0.00"))
-    legacy_acc.update_margin_and_unrealized(used_margin=Decimal("0.00"), unrealized_pnl=Decimal("0.00"))
+    legacy_acc.update_margin_and_unrealized(
+        used_margin=legacy_pos.calculate_used_margin(),
+        unrealized_pnl=legacy_pos.calculate_unrealized_pnl(Decimal(str(tick2.underlying_price)))
+    )
 
     # -------------------------------------------------------------------------
     # [Step 4] 독립 결과 1:1 정밀 대조
