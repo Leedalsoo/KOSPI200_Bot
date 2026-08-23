@@ -1,9 +1,9 @@
-"""Virtual Securities Firm - Authoritative Execution Engine & Slippage Engine."""
+"""Virtual Securities Firm - Authoritative Execution Engine & Slippage Integration."""
 import logging
+import uuid
 import random
-from typing import Dict, Any, Optional
-from shared.contracts.canonical import CanonicalExecutionReport, CanonicalOrderCommand
-from virtual_securities_firm.execution.execution_report_factory import ExecutionReportFactory
+from typing import Dict, Any, Optional, List
+from shared.contracts.canonical import CanonicalExecutionReport, CanonicalOrderCommand, CanonicalAssetType
 from virtual_market_simulator.market.synthetic_market_generator import VirtualBrokerControlInterface
 
 logger = logging.getLogger(__name__)
@@ -28,45 +28,60 @@ class SlippageEngine:
         base_slippage = effective_spread * 0.3 * slip_mult
         vol_impact = (active_vol - 1.0) * 0.08 * slip_mult if active_vol > 1.0 else 0.0
         qty_impact = (qty * 0.01) * slip_mult
-        
-        total_slippage = round(base_slippage + vol_impact + qty_impact + random.uniform(0.01, 0.05), 2)
-        total_slippage = min(1.0, max(0.01, total_slippage))
+        total_slippage_pt = base_slippage + vol_impact + qty_impact
 
-        delay_ms = int(cfg.latency_ms + (active_vol * 80) + (qty * 5) + random.randint(10, 50))
-        delay_ms = min(3000, delay_ms)
+        direction = 1.0 if side.upper() in ("BUY", "BID") else -1.0
+        executed_price = max(0.01, requested_price + (direction * total_slippage_pt))
 
-        final_execution_price = requested_price
-        if side.upper() in ("BUY", "BID"):
-            final_execution_price += total_slippage
-        elif side.upper() in ("SELL", "ASK"):
-            final_execution_price -= total_slippage
-            
-        final_execution_price = round(final_execution_price, 2)
-        
+        base_delay = 1.5
+        jitter = random.uniform(0.1, 0.5)
+        exec_delay_ms = base_delay + jitter
+
         return {
-            "execution_price": final_execution_price,
-            "slippage_pts": total_slippage,
-            "delay_ms": delay_ms
+            "requested_price": requested_price,
+            "executed_price": round(executed_price, 2),
+            "slippage": round(total_slippage_pt, 4),
+            "delay_ms": round(exec_delay_ms, 2)
         }
 
 
 class ExecutionEngine:
-    """[VSSF 소유] Authoritative Execution Engine"""
-    def __init__(self):
-        self.slippage_engine = SlippageEngine()
-        self.reports = []
+    """[VSSF 소유] Authoritative Execution Engine
+    
+    호가 매칭 수신 ➔ SlippageEngine 연산 ➔ 수수료 및 슬리피지 확정 ➔ CanonicalExecutionReport 발급
+    """
+    def __init__(self, control_interface: Optional[VirtualBrokerControlInterface] = None):
+        self.slippage_engine = SlippageEngine(control_interface=control_interface)
+        self.reports: List[CanonicalExecutionReport] = []
 
-    def execute_order(self, order: CanonicalOrderCommand, fill_price: Optional[float] = None) -> CanonicalExecutionReport:
-        price = fill_price if fill_price is not None else order.price
-        report = ExecutionReportFactory.create_report(
-            order_id=order.order_id,
-            symbol=order.symbol,
-            side=order.side,
-            price=price,
-            quantity=order.quantity,
-            fee=0.0,
-            slippage=0.0,
-            metadata=order.metadata
+    def execute_order(self, command: CanonicalOrderCommand, fill_price: float, fill_qty: int) -> CanonicalExecutionReport:
+        """[Authoritative Order Execution Procedure]"""
+        side_str = command.side.value if hasattr(command.side, "value") else str(command.side)
+        
+        # 1. Slippage Engine Invocation
+        slip_res = self.slippage_engine.calculate_execution(
+            order_type="LIMIT",
+            side=side_str,
+            requested_price=fill_price,
+            qty=fill_qty
+        )
+        exec_price = float(slip_res.get("executed_price", fill_price))
+        slippage = float(slip_res.get("slippage", 0.0))
+        fee = exec_price * fill_qty * 250000 * 0.000015  # 1.5bps commission
+
+        # 2. Issue Canonical Execution Report
+        report = CanonicalExecutionReport(
+            exec_id=f"EXEC-{uuid.uuid4().hex[:8].upper()}",
+            client_order_id=getattr(command, "client_order_id", "ORD-001"),
+            track_id=getattr(command, "track_id", "Track1"),
+            asset_type=getattr(command, "asset_type", CanonicalAssetType.OPTION),
+            side=command.side,
+            executed_qty=fill_qty,
+            executed_price=exec_price,
+            fee=round(fee, 2),
+            slippage=slippage,
+            timestamp="2026-08-23 09:00:00"
         )
         self.reports.append(report)
+        logger.debug(f"[ExecutionEngine Issued] Report: {report.exec_id} | Order: {report.client_order_id} | Price: {report.executed_price}")
         return report
