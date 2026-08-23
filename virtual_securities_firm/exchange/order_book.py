@@ -73,3 +73,15 @@ class OrderBook:
                 "best_ask": self.best_ask
             }
         return round(match_price, 2)
+
+    def cancel_order(self, order_id: str) -> bool:
+        """호가창에 대기 중인 주문 취소"""
+        original_bids_len = len(self.bids)
+        self.bids = [o for o in self.bids if o.get("order_id") != order_id]
+        bids_canceled = len(self.bids) < original_bids_len
+
+        original_asks_len = len(self.asks)
+        self.asks = [o for o in self.asks if o.get("order_id") != order_id]
+        asks_canceled = len(self.asks) < original_asks_len
+
+        return bids_canceled or asks_canceled

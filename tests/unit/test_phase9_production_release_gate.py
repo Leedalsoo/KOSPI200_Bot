@@ -1,4 +1,4 @@
-"""Phase 9 Unit Test: Production Release Gate & 20 Safety Invariants Verification."""
+"""Phase 9 Unit Test: Production Release Gate & 20 Real Safety Invariants Verification."""
 import pytest
 from datetime import datetime
 
@@ -19,13 +19,15 @@ def test_phase9_production_release_gate_invariants():
     paper = BrokerFactory.create_broker(mode=BrokerMode.PAPER, vssf_runtime=vssf)
     shadow = BrokerFactory.create_broker(mode=BrokerMode.SHADOW, vssf_runtime=vssf)
     real_stub = BrokerFactory.create_broker(mode=BrokerMode.REAL)
-    adapter = RealMarketDataAdapter()
+    adapter = RealMarketDataAdapter(auto_reconnect=True)
+    adapter.connect()
 
     # 1. Broker Mode Isolation & Disarmed Real Broker
     assert isinstance(paper, PaperBrokerAdapter)
     assert isinstance(shadow, ShadowBrokerAdapter)
     assert isinstance(real_stub, RealBrokerAdapterStub)
     assert real_stub.is_connected() is False
+    assert paper.cancel_order("TEST-CANCEL") is False  # Real cancel_order test
 
     # 2. Risk Limit Final Gate
     huge_cmd = CanonicalOrderCommand(
@@ -35,13 +37,18 @@ def test_phase9_production_release_gate_invariants():
     )
     assert paper.send_order(huge_cmd) is None
 
-    # 3. Market Data Safety
-    assert adapter.check_heartbeat(datetime.now()) is True
+    # 3. Market Data Safety & Auto-Reconnect
+    adapter.disconnect()
+    assert adapter.is_connected() is False
+    tick = adapter.parse_packet({"seq_id": 1, "timestamp_ns": 1000, "underlying_price": 350.0})
+    assert tick is not None
+    assert adapter.is_connected() is True  # Auto-reconnected
 
-    # 4. Ledger & Accounting Integrity
+    # 4. Authoritative Reconciliation (is_healthy == True)
     reconcil = vssf.reconciliation_engine.reconcile_state(
         account_snapshot=vssf.account,
         execution_history=vssf.execution_engine.reports,
         current_positions=vssf.account.positions
     )
-    assert reconcil.get("is_valid", True) is True
+    assert reconcil.get("is_healthy", False) is True
+    assert reconcil.get("balance_ok", False) is True

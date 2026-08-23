@@ -45,6 +45,15 @@ class VirtualSecuritiesFirmRuntime:
             "settlement_runs": 0,
         }
 
+    @property
+    def orderbook(self) -> OrderBook:
+        """하위 호환성을 위한 orderbook 프로퍼티 alias"""
+        return self.order_book
+
+    def cancel_order(self, client_order_id: str) -> bool:
+        """주문 취소 위임"""
+        return self.order_book.cancel_order(client_order_id)
+
     def process_market_data(self, tick: CanonicalMarketTick) -> None:
         self.metrics["market_ticks"] += 1
         self.order_book.update_bid_ask(tick.bid_price, tick.ask_price)

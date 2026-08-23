@@ -90,7 +90,7 @@ def run_shadow_trading_audit(tick_count: int = 1000) -> bool:
     results.append(("Shadow: Execution Report Recording", shadow_fills > 0, f"{shadow_fills} shadow fills logged"))
     results.append(("Shadow: Real Broker Air-Gap Isolation", True, "0.000000% Real Order Dispatch (100% In-Memory Air-Gap)"))
     results.append(("Shadow: Account State & PnL Integrity", summary.total_balance > 0, f"Shadow Equity: {summary.total_balance:,.2f} KRW"))
-    results.append(("Shadow: Reconciliation Audit", reconcil_res.get("is_valid", True), "Shadow Ledger & Account 100% HEALTHY"))
+    results.append(("Shadow: Reconciliation Audit", reconcil_res.get("is_healthy", False), f"Shadow Ledger is_healthy: {reconcil_res.get('is_healthy')}"))
 
     # -------------------------------------------------------------
     # PRINT RESULTS

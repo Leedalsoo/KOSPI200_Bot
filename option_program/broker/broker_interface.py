@@ -63,7 +63,7 @@ class PaperBrokerAdapter(IBrokerAdapter):
         return self.vssf.process_order(command)
 
     def cancel_order(self, client_order_id: str) -> bool:
-        return self.vssf.orderbook.cancel_order(client_order_id)
+        return self.vssf.cancel_order(client_order_id)
 
     def get_account_summary(self) -> CanonicalAccountSummary:
         return self.vssf.account.get_canonical_summary()
@@ -97,7 +97,7 @@ class ShadowBrokerAdapter(IBrokerAdapter):
         return rep
 
     def cancel_order(self, client_order_id: str) -> bool:
-        return self.vssf.orderbook.cancel_order(client_order_id)
+        return self.vssf.cancel_order(client_order_id)
 
     def get_account_summary(self) -> CanonicalAccountSummary:
         return self.vssf.account.get_canonical_summary()

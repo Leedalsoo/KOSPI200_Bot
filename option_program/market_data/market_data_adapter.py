@@ -38,11 +38,12 @@ class RealMarketDataAdapter(IMarketDataProvider):
     외부 증권사 API(키움, LS, 한투 등)의 JSON/바이너리 패킷을 파싱하여
     순수 CanonicalMarketTick으로 정규화하고 네트워크 이상을 무손실 방어함.
     """
-    def __init__(self, heartbeat_timeout_sec: float = 5.0):
+    def __init__(self, heartbeat_timeout_sec: float = 5.0, auto_reconnect: bool = True):
         self._connected: bool = False
         self._last_seq_id: int = 0
         self._last_timestamp_ns: int = 0
         self._heartbeat_timeout_sec: float = heartbeat_timeout_sec
+        self._auto_reconnect: bool = auto_reconnect
         self._last_heartbeat_time: datetime = datetime.now()
         
         # 메트릭 통계
@@ -69,11 +70,20 @@ class RealMarketDataAdapter(IMarketDataProvider):
     def is_connected(self) -> bool:
         return self._connected
 
+    def reconnect(self) -> bool:
+        """연결 끊김/타임아웃 발생 시 자동 재연결 시도"""
+        logger.info("[MarketDataAdapter] Attempting auto-reconnect...")
+        self.disconnect()
+        return self.connect()
+
     def parse_packet(self, raw_packet: Dict[str, Any]) -> Optional[CanonicalMarketTick]:
         """외부 증권사 원시 패킷 ➔ CanonicalMarketTick 파싱 및 무결성 검증"""
         if not self._connected:
-            logger.warning("[MarketDataAdapter] Packet received while disconnected.")
-            return None
+            if self._auto_reconnect:
+                self.reconnect()
+            else:
+                logger.warning("[MarketDataAdapter] Packet received while disconnected.")
+                return None
 
         # 하트비트 갱신
         self._last_heartbeat_time = datetime.now()
