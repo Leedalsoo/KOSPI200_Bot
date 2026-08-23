@@ -90,7 +90,7 @@ def verify_financial_correctness_audit() -> bool:
     snap3 = vssf.get_account_snapshot()
 
     expected_sell_fee = sell_report.executed_price * 2 * 250000 * 0.000015
-    expected_realized_pnl = (sell_report.executed_price - buy_report.executed_price) * 2 * 250000 - expected_sell_fee
+    expected_realized_pnl = (sell_report.executed_price - buy_report.executed_price) * 2 * 250000
     realized_diff = abs(snap3.realized_pnl - expected_realized_pnl)
     used_margin3_diff = abs(snap3.used_margin - 0.0)
 

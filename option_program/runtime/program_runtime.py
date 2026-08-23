@@ -1,4 +1,4 @@
-"""Option Program Runtime (OptionProgram) - Active Signal Generation."""
+"""Option Program Runtime (OptionProgram) - Pure Strategy Signal Generation."""
 import logging
 import uuid
 from typing import List, Optional, Dict, Any
@@ -10,22 +10,21 @@ from shared.contracts.canonical import (
     CanonicalAssetType,
     CanonicalOptionType
 )
-from strategy.plugins.track1 import Track1
-from strategy.plugins.track2 import Track2
-from strategy.plugins.track3 import Track3
-from strategy.plugins.track4 import Track4
-from strategy.plugins.track5 import Track5
-from strategy.plugins.track6 import Track6
-from strategy.plugins.track7 import Track7
-from strategy.plugins.track8 import Track8
-from strategy.plugins.track9 import Track9
-
-from strategy.regime_detector import RegimeDetector
+from option_program.strategy.plugins.track1 import Track1
+from option_program.strategy.plugins.track2 import Track2
+from option_program.strategy.plugins.track3 import Track3
+from option_program.strategy.plugins.track4 import Track4
+from option_program.strategy.plugins.track5 import Track5
+from option_program.strategy.plugins.track6 import Track6
+from option_program.strategy.plugins.track7 import Track7
+from option_program.strategy.plugins.track8 import Track8
+from option_program.strategy.plugins.track9 import Track9
+from option_program.strategy.regime_detector import RegimeDetector
 
 logger = logging.getLogger(__name__)
 
 class OptionProgramRuntime:
-    """[OptionProgram 런타임: 실시간 주문 흐름 및 체결 리포트 수신 전담]"""
+    """[OptionProgram 런타임: 순수 전략 알고리즘 오케스트레이터 & 주문 전송 전담]"""
     def __init__(self):
         self.regime_detector = RegimeDetector()
         self.strategies = [
@@ -44,14 +43,13 @@ class OptionProgramRuntime:
         self.last_price: float = 350.0
 
     def process_tick(self, tick: CanonicalMarketTick) -> List[CanonicalOrderCommand]:
-        """[틱 분석 ➔ 전략 알고리즘 평가 ➔ 실제 주문 명령(CanonicalOrderCommand) 생성]"""
+        """[틱 수신 ➔ Sensor / Regime Detector / Track 1~9 평가 ➔ 순수 전략 주문 명령 생성]"""
         self.tick_counter += 1
-        price_diff = tick.underlying_price - self.last_price
         self.last_price = tick.underlying_price
 
         commands: List[CanonicalOrderCommand] = []
 
-        # 1. Evaluate strategy plugins
+        # Evaluate Track 1 ~ Track 9 strategies purely
         for st in self.strategies:
             try:
                 if hasattr(st, "on_tick"):
@@ -72,21 +70,6 @@ class OptionProgramRuntime:
                             commands.append(cmd)
             except Exception as e:
                 logger.debug(f"Strategy note: {e}")
-
-        # 2. Active Trade Signal Trigger (일정 틱 변동 및 주기에 따른 파생상품 자동 주문 생성)
-        if self.tick_counter % 150 == 0 or abs(price_diff) > 0.3:
-            side = CanonicalOrderSide.BUY if price_diff >= 0 else CanonicalOrderSide.SELL
-            cmd = CanonicalOrderCommand(
-                client_order_id=f"ORD-ACTIVE-{uuid.uuid4().hex[:8].upper()}",
-                track_id="Track1_TailDefense",
-                asset_type=CanonicalAssetType.OPTION,
-                side=side,
-                qty=1,
-                price=round(tick.last_price, 2),
-                option_type=CanonicalOptionType.CALL if price_diff >= 0 else CanonicalOptionType.PUT,
-                strike=round(tick.strike_price, 2)
-            )
-            commands.append(cmd)
 
         return commands
 

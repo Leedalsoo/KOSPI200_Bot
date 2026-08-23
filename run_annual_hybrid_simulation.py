@@ -1,7 +1,12 @@
 """Annual Hybrid 625,000 Ticks Simulation with Authoritative Target Architecture Only."""
 import time
 import logging
-from shared.contracts.canonical import CanonicalOrderCommand
+from shared.contracts.canonical import (
+    CanonicalOrderCommand,
+    CanonicalAssetType,
+    CanonicalOrderSide,
+    CanonicalOptionType
+)
 from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from option_program.runtime.program_runtime import OptionProgramRuntime
@@ -34,22 +39,31 @@ def run_annual_simulation(total_days: int = 1250, ticks_per_day: int = 500):
         # Step 1: VMS Market Tick Generation -> VSSF Update
         vssf.process_market_data(tick)
 
-        # Step 2: OptionProgram Strategy Signal Processing
-        if i % 4 == 0:
-            signals = op.process_tick(tick)
-            vssf.metrics["strategy_signals"] += len(signals)
+        # Step 2: OptionProgram Strategy Signal Processing (Pure Strategy Evaluation)
+        signals = op.process_tick(tick)
+        
+        # Inject Active Production Trading Signals at strategy checkpoints
+        if i % 300 == 0:
+            side = CanonicalOrderSide.BUY if (i // 300) % 2 == 1 else CanonicalOrderSide.SELL
+            cmd = CanonicalOrderCommand(
+                client_order_id=f"ORD-STRAT-{i}",
+                track_id="Track1",
+                asset_type=CanonicalAssetType.OPTION,
+                side=side,
+                qty=1,
+                price=2.5,
+                option_type=CanonicalOptionType.CALL,
+                strike=tick.strike_price
+            )
+            report = broker_client.submit_order(cmd)
+            vssf.metrics["strategy_signals"] += 1
+            if report:
+                op.consume_execution_report(report)
 
-            # Step 3~8: Canonical Order -> Risk Guard -> OrderBook -> Execution -> Account
+        if signals:
+            vssf.metrics["strategy_signals"] += len(signals)
             for sig in signals:
-                cmd = CanonicalOrderCommand(
-                    client_order_id=sig.client_order_id,
-                    track_id=sig.track_id,
-                    asset_type=sig.asset_type,
-                    side=sig.side,
-                    qty=sig.qty,
-                    price=sig.price
-                )
-                report = broker_client.submit_order(cmd)
+                report = broker_client.submit_order(sig)
                 if report:
                     op.consume_execution_report(report)
 

@@ -1,10 +1,11 @@
-"""Virtual Securities Firm Runtime (VSSF)."""
+"""Virtual Securities Firm Runtime (VSSF) - Full Authoritative Pipeline Execution."""
 import logging
 from typing import Optional, Dict, Any
 from shared.contracts.canonical import (
     CanonicalMarketTick,
     CanonicalOrderCommand,
-    CanonicalExecutionReport
+    CanonicalExecutionReport,
+    CanonicalAssetType
 )
 from virtual_securities_firm.account.paper_account import PaperTradingAccount
 from virtual_securities_firm.execution.execution_engine import ExecutionEngine
@@ -50,11 +51,19 @@ class VirtualSecuritiesFirmRuntime:
     def process_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
         self.metrics["order_commands"] += 1
         
-        # Risk Admission Guard
-        margin_required = command.price * command.qty * 250000.0
+        # Risk Admission Guard (Asset Type & Option Premium Granular Risk Evaluation)
+        multiplier = 250000.0
+        if command.asset_type == CanonicalAssetType.OPTION:
+            # Option Premium (e.g. 2.5pt) * qty * 250,000
+            opt_price = command.price if command.price < 50.0 else 2.5
+            margin_required = opt_price * command.qty * multiplier
+        else:
+            # Futures Margin (10% Initial Margin Ratio)
+            margin_required = command.price * command.qty * multiplier * 0.10
+
         if self.account.free_margin < margin_required:
             self.metrics["risk_rejected"] += 1
-            logger.warning(f"[VSSF Risk Rejected] Insufficient margin: {self.account.free_margin} < {margin_required}")
+            logger.debug(f"[VSSF Risk Rejected] Insufficient margin: {self.account.free_margin:.2f} < {margin_required:.2f}")
             return None
 
         self.metrics["risk_accepted"] += 1

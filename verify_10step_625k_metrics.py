@@ -28,24 +28,23 @@ def run_vms_625k_metrics(total_ticks: int = 625000) -> Dict[str, Any]:
         # Step 1: Market Ticks from VMS Real Stream
         vssf.process_market_data(tick)
 
-        # Step 2: Strategy Signals (Triggered from VMS Market Tick)
-        if i % 4 == 0:
-            signals = op.process_tick(tick)
-            vssf.metrics["strategy_signals"] += len(signals)
+        # Step 2: Strategy Signals (Triggered from VMS Market Tick for EVERY Tick)
+        signals = op.process_tick(tick)
+        vssf.metrics["strategy_signals"] += len(signals)
 
-            # Step 3~9: Order -> Risk -> OrderBook -> Execution -> Account -> Position -> PnL
-            for sig in signals:
-                cmd = CanonicalOrderCommand(
-                    client_order_id=sig.client_order_id,
-                    track_id=sig.track_id,
-                    asset_type=sig.asset_type,
-                    side=sig.side,
-                    qty=sig.qty,
-                    price=sig.price
-                )
-                report = vssf.process_order(cmd)
-                if report:
-                    op.consume_execution_report(report)
+        # Step 3~9: Order -> Risk -> OrderBook -> Execution -> Account -> Position -> PnL
+        for sig in signals:
+            cmd = CanonicalOrderCommand(
+                client_order_id=sig.client_order_id,
+                track_id=sig.track_id,
+                asset_type=sig.asset_type,
+                side=sig.side,
+                qty=sig.qty,
+                price=sig.price
+            )
+            report = vssf.process_order(cmd)
+            if report:
+                op.consume_execution_report(report)
 
         # Step 10: Reconciliation Auditing (per tick)
         vssf.run_reconciliation()
