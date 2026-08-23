@@ -22,10 +22,11 @@ logger = logging.getLogger(__name__)
 
 class BrokerMode(str, Enum):
     PAPER = "PAPER"
+    SHADOW = "SHADOW"
     REAL = "REAL"
 
 class IBrokerAdapter(ABC):
-    """[Phase 5 브로커 인터페이스 표준 계약]"""
+    """[Phase 5/Shadow 브로커 인터페이스 표준 계약]"""
     @abstractmethod
     def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
         pass
@@ -62,7 +63,40 @@ class PaperBrokerAdapter(IBrokerAdapter):
         return self.vssf.process_order(command)
 
     def cancel_order(self, client_order_id: str) -> bool:
-        # VSSF 호가창 취소
+        return self.vssf.orderbook.cancel_order(client_order_id)
+
+    def get_account_summary(self) -> CanonicalAccountSummary:
+        return self.vssf.account.get_canonical_summary()
+
+    def get_positions(self) -> Dict[str, Any]:
+        return self.vssf.account.positions
+
+    def is_connected(self) -> bool:
+        return self._connected
+
+class ShadowBrokerAdapter(IBrokerAdapter):
+    """[Shadow Trading 공식 어댑터]
+    
+    실시간 라이브 시세 스트림을 수신하여 모든 전략/리스크 로직을 실전과 100% 동일하게 병렬 구동하되,
+    실제 증권사로는 절대 주문을 송출하지 않고 VSSF 기반 Shadow Execution & PnL을 실시간 미러링함.
+    """
+    def __init__(self, vssf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None, initial_capital: float = 25000000.0):
+        self.vssf = vssf_runtime if vssf_runtime is not None else VirtualSecuritiesFirmRuntime(initial_capital=initial_capital)
+        self._connected = True
+        self.shadow_executions: List[CanonicalExecutionReport] = []
+
+    def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
+        if not self._connected:
+            logger.warning("[ShadowBroker] Cannot shadow order while disconnected.")
+            return None
+        # VSSF 인메모리 가상 체결 및 Shadow PnL 추적
+        rep = self.vssf.process_order(command)
+        if rep is not None:
+            self.shadow_executions.append(rep)
+            logger.info(f"[Shadow Execution] Order: {rep.client_order_id} | Price: {rep.executed_price} | Qty: {rep.executed_qty}")
+        return rep
+
+    def cancel_order(self, client_order_id: str) -> bool:
         return self.vssf.orderbook.cancel_order(client_order_id)
 
     def get_account_summary(self) -> CanonicalAccountSummary:
@@ -75,7 +109,7 @@ class PaperBrokerAdapter(IBrokerAdapter):
         return self._connected
 
 class RealBrokerAdapterStub(IBrokerAdapter):
-    """[Phase 5 실전 증권사 어댑터 스텁]
+    """[실전 증권사 어댑터 스텁]
     
     향후 키움/LS/한투 등 실전 브로커 API 연동을 위한 규격 호환 스텁.
     """
@@ -91,7 +125,6 @@ class RealBrokerAdapterStub(IBrokerAdapter):
         if not self._connected:
             logger.warning(f"[{self.broker_name}] Disconnected. Cannot send real order.")
             return None
-        # 실전 증권사 API 호출 규격 매핑
         return None
 
     def cancel_order(self, client_order_id: str) -> bool:
@@ -115,11 +148,13 @@ class RealBrokerAdapterStub(IBrokerAdapter):
         return self._connected
 
 class BrokerFactory:
-    """[Phase 5 브로커 팩토리] 단 1개의 설정 플래그로 Paper / Real 브로커 스위칭"""
+    """[브로커 팩토리] 단 1개의 설정 플래그로 Paper / Shadow / Real 브로커 스위칭"""
     @staticmethod
     def create_broker(mode: BrokerMode = BrokerMode.PAPER, vssf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None) -> IBrokerAdapter:
         if mode == BrokerMode.PAPER:
             return PaperBrokerAdapter(vssf_runtime=vssf_runtime)
+        elif mode == BrokerMode.SHADOW:
+            return ShadowBrokerAdapter(vssf_runtime=vssf_runtime)
         elif mode == BrokerMode.REAL:
             return RealBrokerAdapterStub()
         else:
