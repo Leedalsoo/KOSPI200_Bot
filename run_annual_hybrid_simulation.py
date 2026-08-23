@@ -39,6 +39,9 @@ from strategy.plugins.track9 import Track9
 from strategy.sensors.market_sensors import FuturesSensor, WeeklyOptionsSensor, DailyOptionsSensor
 from strategy.simulation.virtual_feed_engine import SlippageEngine, PaperTradingAccount
 from sensor.trade_replay_analyzer import TradeReplayAnalyzer
+from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
+from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
+from option_program.runtime.program_runtime import OptionProgramRuntime
 
 def print_banner():
     print("=" * 80)
@@ -75,7 +78,13 @@ def run_annual_hybrid_simulation():
     daily_sensor = DailyOptionsSensor()
     analyzer = TradeReplayAnalyzer(max_history=500, mode="VIRTUAL")
 
+    # Target Architecture Runtimes
+    vms_runtime = VirtualMarketSimulatorRuntime(time_scale=1000.0)
+    vsf_runtime = VirtualSecuritiesFirmRuntime(symbol="KOSPI200_OPT")
+    option_program_runtime = OptionProgramRuntime(vsf_runtime, vms_runtime)
+
     print("   [완료] Track 1~9 전략 및 센서 3종 인스턴스 준비 완료")
+    print("   [완료] Target Architecture Runtimes (VMS, VSSF, OptionProgram) 로딩 완료")
     print(f"   [완료] 가상 계좌 초기 자본: ₩{int(account.capital):,} | 슬리피지 엔진 Ready")
 
     # 2. 1,250 영업일 (625,000 Ticks) 실질 틱 바이 틱 시뮬레이션 루프
@@ -108,6 +117,10 @@ def run_annual_hybrid_simulation():
             # 틱 가격 변동
             delta = current_price * (trend + random.gauss(0, daily_vol / math.sqrt(ticks_per_day)))
             current_price = max(100.0, current_price + delta)
+            
+            # Target Architecture Integration Tick Drive
+            vms_runtime.set_underlying_price(current_price)
+            option_program_runtime.process_tick()
             
             # 센서 틱 전달
             spot_price = current_price - 0.20

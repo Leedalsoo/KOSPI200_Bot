@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-09T12:56:36.013292",
+  "timestamp": "2026-08-23T14:37:38.493949",
   "engine": "KOSPI200_BOT_CORE_V1_REAL_TICK_ENGINE",
   "simulation_mode": "5YEAR_1000X_TICK_BY_TICK",
   "speed_multiplier": "1000x",
@@ -12,6 +12,6 @@
   "total_trades": 3440,
   "win_rate_pct": 69.51,
   "mdd_pct": 1.2,
-  "elapsed_seconds": 2.216,
-  "ticks_per_second": 282098.8
+  "elapsed_seconds": 4.297,
+  "ticks_per_second": 145440.9
 }

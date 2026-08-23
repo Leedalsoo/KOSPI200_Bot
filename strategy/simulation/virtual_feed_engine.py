@@ -3,6 +3,9 @@ import random
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 
+from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
+from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -85,6 +88,7 @@ class HistoricalReplayEngine:
     """
     def __init__(self, control_interface: Optional[VirtualBrokerControlInterface] = None) -> None:
         self.control = control_interface if control_interface is not None else VirtualBrokerControlInterface()
+        self.vms_runtime = VirtualMarketSimulatorRuntime(time_scale=float(self.control.config.replay_speed))
         self.scenario_ticks: List[Dict[str, Any]] = []
         self.current_idx = 0
         self.is_active = False
@@ -240,7 +244,9 @@ class PaperTradingAccount:
         self.reserve = 0.0
         self.total_equity = initial_capital
         self.orders_history: List[Dict[str, Any]] = []
-        logger.info("Paper Trading Account initialized with initial capital: ₩%s", f"{initial_capital:,.0f}")
+        self.firm_runtime = VirtualSecuritiesFirmRuntime(symbol="KOSPI200_OPT")
+        self.firm_runtime.account.total_balance = initial_capital
+        logger.info("Paper Trading Account initialized with Target VSSF Runtime. Initial capital: ₩%s", f"{initial_capital:,.0f}")
 
     def update_equity(self, 
                       current_price: float, 
