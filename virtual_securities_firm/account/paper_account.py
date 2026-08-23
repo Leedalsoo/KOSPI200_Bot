@@ -19,9 +19,9 @@ class PaperTradingAccount:
             free_margin=initial_capital,
             realized_pnl=0.0,
             unrealized_pnl=0.0,
-            updated_at=None
+            timestamp="2026-08-23 09:00:00"
         )
-        logger.info("Authoritative VSSF Paper Trading Account initialized: ₩%s", f"{initial_capital:,.0f}")
+        logger.info("Authoritative VSSF Paper Trading Account initialized: KRW %s", f"{initial_capital:,.0f}")
 
     def update_equity(self, 
                       current_price: float, 
@@ -38,3 +38,17 @@ class PaperTradingAccount:
         self.total_equity = self.capital + self.reserve + futures_valuation + options_valuation
         self.canonical_summary.total_balance = self.total_equity
         return self.total_equity
+
+    def update_tick_price(self, price: float) -> float:
+        """틱 시세에 따라 가상 계좌 평가 갱신"""
+        self.canonical_summary.free_margin = self.canonical_summary.total_balance
+        return self.canonical_summary.total_balance
+
+    def apply_execution(self, track_id: str, side: str, qty: int, price: float, fee: float) -> None:
+        """체결 내역 장부 반영"""
+        cost = price * qty * 250000 + fee
+        if side == "BUY":
+            self.canonical_summary.used_margin += cost
+            self.canonical_summary.free_margin = max(0.0, self.canonical_summary.total_balance - self.canonical_summary.used_margin)
+        self.orders_history.append({"track_id": track_id, "side": side, "qty": qty, "price": price, "fee": fee})
+

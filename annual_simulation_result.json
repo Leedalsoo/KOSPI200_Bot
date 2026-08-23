@@ -1,17 +1,1 @@
-{
-  "timestamp": "2026-08-23T15:11:25.994204",
-  "engine": "KOSPI200_BOT_CORE_V1_REAL_TICK_ENGINE",
-  "simulation_mode": "5YEAR_1000X_TICK_BY_TICK",
-  "speed_multiplier": "1000x",
-  "soak_days": 1250,
-  "total_ticks_processed": 625000,
-  "initial_capital": 25000000,
-  "final_capital": 367659677.57,
-  "total_pnl": 342659677.57,
-  "total_return_pct": 1370.64,
-  "total_trades": 3440,
-  "win_rate_pct": 69.51,
-  "mdd_pct": 1.2,
-  "elapsed_seconds": 4.464,
-  "ticks_per_second": 140008.3
-}
+{"status":"SUCCESS","architecture":"Target_Authoritative_Owner","total_ticks":625000,"total_executions":0,"elapsed_seconds":6.25,"ticks_per_second":99950.2,"final_balance":25000000.0,"realized_pnl":0.0,"unrealized_pnl":0.0,"used_margin":0.0,"free_margin":25000000.0}

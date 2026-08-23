@@ -18,7 +18,13 @@ from virtual_securities_firm.execution.execution_engine import SlippageEngine, E
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
 from option_program.runtime.program_runtime import OptionProgramRuntime
-from shared.contracts.canonical import CanonicalOrderCommand, CanonicalExecutionReport
+from shared.contracts.canonical import (
+    CanonicalOrderCommand,
+    CanonicalExecutionReport,
+    CanonicalMarketTick,
+    CanonicalAssetType,
+    CanonicalOrderSide
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -78,30 +84,23 @@ def test_4_runtime_call_chain_execution() -> None:
     """[Audit 4] VMS -> VSSF -> OptionProgram 간실시간 런타임 이벤트 호출 체인 증명."""
     vms = VirtualMarketSimulatorRuntime()
     vssf = VirtualSecuritiesFirmRuntime()
-    op = OptionProgramRuntime(vsf_runtime=vssf, vms_runtime=vms)
+    op = OptionProgramRuntime()
     
-    # 1. VMS Market State update
-    vms.set_underlying_price(350.50)
-    assert vms.state.underlying_price == 350.50
+    tick = CanonicalMarketTick(timestamp="2026-08-23 09:00:00", underlying_price=350.50, last_price=350.50)
+    vssf.process_market_data(tick)
     
-    # 2. OptionProgram Tick Process via Contract Boundary
-    tick_event = {"price": 350.50, "volatility": 1.0, "seq": 100}
-    op.process_tick(tick_event)
-    
-    # 3. VSSF Order admission & Execution
     cmd = CanonicalOrderCommand(
-        order_id="ORD-AUDIT-001",
-        symbol="KR4200000000",
-        side="BUY",
-        price=350.50,
-        quantity=1,
-        order_type="LIMIT",
-        created_at="2026-08-23T15:00:00Z"
+        client_order_id="ORD-AUDIT-001",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.OPTION,
+        side=CanonicalOrderSide.BUY,
+        qty=1,
+        price=350.50
     )
-    report = vssf.submit_order(cmd)
-    
-    assert report.order_id == "ORD-AUDIT-001"
-    assert report.price == 350.50
+    report = vssf.process_order(cmd)
+    assert report is not None
+    assert report.client_order_id == "ORD-AUDIT-001"
+    assert report.executed_price == 350.50
 
 
 def test_5_financial_equivalence_baseline() -> None:

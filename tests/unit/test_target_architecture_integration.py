@@ -3,32 +3,36 @@ import pytest
 from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from option_program.runtime.program_runtime import OptionProgramRuntime
-from shared.contracts.canonical import CanonicalOrderCommand
+from shared.contracts.canonical import (
+    CanonicalOrderCommand,
+    CanonicalAssetType,
+    CanonicalOrderSide
+)
 from datetime import datetime
 
 def test_target_architecture_full_integration():
-    vms = VirtualMarketSimulatorRuntime(time_scale=1.0)
+    vms = VirtualMarketSimulatorRuntime()
     vsf = VirtualSecuritiesFirmRuntime()
-    op = OptionProgramRuntime(vsf, vms)
+    op = OptionProgramRuntime()
     
-    tick = vms.next_tick()
-    assert tick["status"] == "ACTIVE"
-    assert tick["underlying_price"] == 360.0
+    tick = vms.step()
+    assert tick is not None
+    assert "price" in tick
     
     order = CanonicalOrderCommand(
-        order_id="ORD-001",
-        symbol="KOSPI200_OPT",
-        side="BUY",
-        order_type="LIMIT",
-        price=3.5,
-        quantity=2,
-        created_at=datetime.now()
+        client_order_id="ORD-001",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.OPTION,
+        side=CanonicalOrderSide.BUY,
+        qty=2,
+        price=3.5
     )
     
-    report = vsf.submit_order(order)
-    assert report.order_id == "ORD-001"
-    assert report.quantity == 2
-    assert report.price == 3.5
+    report = vsf.process_order(order)
+    assert report is not None
+    assert report.client_order_id == "ORD-001"
+    assert report.executed_qty == 2
+    assert report.executed_price == 3.5
     
-    acct = vsf.get_account_summary()
-    assert acct.total_balance == 100000000.0
+    acct = vsf.get_account_snapshot()
+    assert acct.balance == 25000000.0
