@@ -9,7 +9,8 @@ from shared.contracts.canonical import (
     CanonicalAssetType,
     CanonicalOptionType
 )
-from option_program.broker.broker_interface import BrokerFactory, BrokerMode, PaperBrokerAdapter, ShadowBrokerAdapter, RealBrokerAdapterStub
+from option_program.broker.broker_interface import BrokerFactory, BrokerMode, PaperBrokerAdapter, ShadowBrokerAdapter
+from option_program.broker.real_broker_adapter import RealBrokerAdapter
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from option_program.market_data.market_data_adapter import RealMarketDataAdapter
 
@@ -18,15 +19,15 @@ def test_phase9_production_release_gate_invariants():
     vssf = VirtualSecuritiesFirmRuntime(initial_capital=50_000_000.0)
     paper = BrokerFactory.create_broker(mode=BrokerMode.PAPER, vssf_runtime=vssf)
     shadow = BrokerFactory.create_broker(mode=BrokerMode.SHADOW, vssf_runtime=vssf)
-    real_stub = BrokerFactory.create_broker(mode=BrokerMode.REAL)
+    real_broker = BrokerFactory.create_broker(mode=BrokerMode.REAL)
     adapter = RealMarketDataAdapter(auto_reconnect=True)
     adapter.connect()
 
     # 1. Broker Mode Isolation & Disarmed Real Broker
     assert isinstance(paper, PaperBrokerAdapter)
     assert isinstance(shadow, ShadowBrokerAdapter)
-    assert isinstance(real_stub, RealBrokerAdapterStub)
-    assert real_stub.is_connected() is False
+    assert isinstance(real_broker, RealBrokerAdapter)
+    assert real_broker.is_connected() is False
     assert paper.cancel_order("TEST-CANCEL") is False  # Real cancel_order test
 
     # 2. Risk Limit Final Gate

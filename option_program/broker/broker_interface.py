@@ -109,10 +109,7 @@ class ShadowBrokerAdapter(IBrokerAdapter):
         return self._connected
 
 class RealBrokerAdapterStub(IBrokerAdapter):
-    """[실전 증권사 어댑터 스텁]
-    
-    향후 키움/LS/한투 등 실전 브로커 API 연동을 위한 규격 호환 스텁.
-    """
+    """[실전 증권사 어댑터 스텁 — 하위 호환성 유지]"""
     def __init__(self, broker_name: str = "KIWOOM_OPENAPI"):
         self.broker_name = broker_name
         self._connected = False
@@ -150,12 +147,13 @@ class RealBrokerAdapterStub(IBrokerAdapter):
 class BrokerFactory:
     """[브로커 팩토리] 단 1개의 설정 플래그로 Paper / Shadow / Real 브로커 스위칭"""
     @staticmethod
-    def create_broker(mode: BrokerMode = BrokerMode.PAPER, vssf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None) -> IBrokerAdapter:
+    def create_broker(mode: BrokerMode = BrokerMode.PAPER, vssf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None, broker_config: Optional[Any] = None) -> IBrokerAdapter:
         if mode == BrokerMode.PAPER:
             return PaperBrokerAdapter(vssf_runtime=vssf_runtime)
         elif mode == BrokerMode.SHADOW:
             return ShadowBrokerAdapter(vssf_runtime=vssf_runtime)
         elif mode == BrokerMode.REAL:
-            return RealBrokerAdapterStub()
+            from option_program.broker.real_broker_adapter import RealBrokerAdapter
+            return RealBrokerAdapter(config=broker_config)
         else:
             raise ValueError(f"Unknown BrokerMode: {mode}")

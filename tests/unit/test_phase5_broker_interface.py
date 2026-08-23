@@ -11,13 +11,13 @@ from shared.contracts.canonical import (
 from option_program.broker.broker_interface import (
     BrokerMode,
     BrokerFactory,
-    PaperBrokerAdapter,
-    RealBrokerAdapterStub
+    PaperBrokerAdapter
 )
+from option_program.broker.real_broker_adapter import RealBrokerAdapter
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 
 def test_phase5_broker_interface_and_factory_invariants():
-    """Validates PaperBrokerAdapter, RealBrokerAdapterStub, BrokerFactory and VSSF execution."""
+    """Validates PaperBrokerAdapter, RealBrokerAdapter, BrokerFactory and VSSF execution."""
     vssf = VirtualSecuritiesFirmRuntime(initial_capital=20_000_000.0)
     tick = CanonicalMarketTick(
         seq_id=1, timestamp="09:00:00.000",
@@ -48,7 +48,7 @@ def test_phase5_broker_interface_and_factory_invariants():
     assert summary.account_id == "ACC-VSSF-001"
     assert len(paper.get_positions()) > 0
 
-    # 4. Factory Creation (REAL Stub)
+    # 4. Factory Creation (REAL Production Broker)
     real = BrokerFactory.create_broker(mode=BrokerMode.REAL)
-    assert isinstance(real, RealBrokerAdapterStub)
+    assert isinstance(real, RealBrokerAdapter)
     assert real.is_connected() is False

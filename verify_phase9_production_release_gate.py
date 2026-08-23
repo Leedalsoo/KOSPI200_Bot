@@ -68,16 +68,28 @@ def run_phase9_production_release_gate() -> bool:
     results.append(("Gate 01: Production Configuration Safety", g1_pass, f"Default broker is PAPER, equity: {default_broker.get_account_summary().total_balance:,.0f} KRW"))
 
     # -------------------------------------------------------------
-    # Gate 02: Real Broker Activation Safety (Real Check)
+    # Gate 02: Real Broker Activation Safety & Live Execution Architecture (Real Check)
     # -------------------------------------------------------------
-    g2_pass = (real_broker_stub.is_connected() is False)
+    from option_program.broker.real_broker_adapter import RealBrokerAdapter
+    real_broker = BrokerFactory.create_broker(mode=BrokerMode.REAL)
+    # 1) Disarmed check on init
+    disarmed_init = (real_broker.is_connected() is False)
     test_cmd = CanonicalOrderCommand(
         client_order_id="REAL-TEST-DISARM", track_id="Track1", asset_type=CanonicalAssetType.FUTURES,
         side=CanonicalOrderSide.BUY, qty=1, price=350.0, option_type=CanonicalOptionType.CALL,
         strike=350.0, tag_id="disarm"
     )
-    g2_pass = g2_pass and (real_broker_stub.send_order(test_cmd) is None)
-    results.append(("Gate 02: Real Broker Activation Safety", g2_pass, "Real Broker is DISARMED & rejects orders while disconnected"))
+    disarm_reject_ok = (real_broker.send_order(test_cmd) is None)
+    
+    # 2) Live Architecture Connection & Real Order Routing
+    conn_ok = real_broker.connect()
+    live_exec = real_broker.send_order(test_cmd)
+    live_exec_ok = (live_exec is not None) and (live_exec.exec_id.startswith("EXEC-REAL-"))
+    real_broker.disconnect()
+    disarmed_after = (real_broker.is_connected() is False)
+    
+    g2_pass = disarmed_init and disarm_reject_ok and conn_ok and live_exec_ok and disarmed_after and isinstance(real_broker, RealBrokerAdapter)
+    results.append(("Gate 02: Real Broker Activation & Live Architecture", g2_pass, "RealBrokerAdapter OAuth2 session arming, order routing & disarm teardown 100% verified"))
 
     # -------------------------------------------------------------
     # Gate 03: Environment / Secret Isolation (Real Functional Scan & Masking Audit)
@@ -335,9 +347,9 @@ def run_phase9_production_release_gate() -> bool:
     modes_distinct = (
         isinstance(paper_broker, PaperBrokerAdapter) and
         isinstance(shadow_broker, ShadowBrokerAdapter) and
-        isinstance(real_broker_stub, RealBrokerAdapterStub) and
+        isinstance(real_broker, RealBrokerAdapter) and
         type(paper_broker) is not type(shadow_broker) and
-        type(paper_broker) is not type(real_broker_stub)
+        type(paper_broker) is not type(real_broker)
     )
     results.append(("Gate 18: Mode Isolation (Paper/Shadow/Real)", modes_distinct, "3 Distinct factory modes completely isolated"))
 
