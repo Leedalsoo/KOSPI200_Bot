@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 import pytest
-from strategy.simulation.virtual_feed_engine import (
+from virtual_market_simulator.market.synthetic_market_generator import (
     VirtualBrokerConfig,
     VirtualBrokerControlInterface,
-    HistoricalReplayEngine,
-    SlippageEngine
+    HistoricalReplayEngine
 )
+from virtual_securities_firm.execution.execution_engine import SlippageEngine
 from sensor.trade_replay_analyzer import TradeReplayAnalyzer
 
 def test_1_virtual_broker_config_defaults() -> None:

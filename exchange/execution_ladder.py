@@ -41,7 +41,7 @@ from core.contracts import (
     PositionExitStatus,
     PositionRecord,
 )
-from exchange.orderbook_sim import VirtualOrderBook
+from virtual_securities_firm.exchange.order_book import OrderBook as VirtualOrderBook
 
 logger = logging.getLogger(__name__)
 

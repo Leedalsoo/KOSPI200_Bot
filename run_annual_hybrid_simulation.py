@@ -37,7 +37,8 @@ from strategy.plugins.track7 import Track7
 from strategy.plugins.track8 import Track8
 from strategy.plugins.track9 import Track9
 from strategy.sensors.market_sensors import FuturesSensor, WeeklyOptionsSensor, DailyOptionsSensor
-from strategy.simulation.virtual_feed_engine import SlippageEngine, PaperTradingAccount
+from virtual_securities_firm.execution.execution_engine import SlippageEngine
+from virtual_securities_firm.account.paper_account import PaperTradingAccount
 from sensor.trade_replay_analyzer import TradeReplayAnalyzer
 from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
