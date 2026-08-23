@@ -1,6 +1,5 @@
 """Option Program Runtime (OptionProgram) - Pure Strategy Signal Generation."""
 import logging
-import uuid
 from typing import List, Optional, Dict, Any
 from shared.contracts.canonical import (
     CanonicalMarketTick,
@@ -41,6 +40,7 @@ class OptionProgramRuntime:
         self.received_execution_reports: List[CanonicalExecutionReport] = []
         self.tick_counter: int = 0
         self.last_price: float = 350.0
+        self.current_regime: str = "NORMAL"
         
         # 전략별 실측 메트릭 (호출 수, 시그널 수, 생성된 주문 수, 예외 발생 수)
         self.strategy_metrics: Dict[str, Dict[str, int]] = {
@@ -56,10 +56,18 @@ class OptionProgramRuntime:
         """[틱 수신 ➔ Sensor / Regime Detector / Track 1~9 평가 ➔ 순수 전략 주문 명령 생성]"""
         self.tick_counter += 1
         self.last_price = tick.underlying_price
+        
+        # 1. Regime Detector 평가
+        try:
+            if hasattr(self.regime_detector, "get_regime_info"):
+                reg_info = self.regime_detector.get_regime_info()
+                self.current_regime = reg_info.get("regime", "NORMAL")
+        except Exception as e:
+            logger.debug(f"RegimeDetector note: {e}")
 
         commands: List[CanonicalOrderCommand] = []
 
-        # Evaluate Track 1 ~ Track 9 strategies purely
+        # 2. Track 1 ~ Track 9 전략 평가 (결정론적 주문 생성)
         for st in self.strategies:
             st_name = getattr(st, "name", st.__class__.__name__)
             m = self.strategy_metrics[st_name]
@@ -69,9 +77,13 @@ class OptionProgramRuntime:
                     signals = st.on_tick(tick.underlying_price, tick.timestamp)
                     if signals:
                         m["signals_generated"] += len(signals)
-                        for sig in signals:
+                        for local_seq, sig in enumerate(signals, start=1):
+                            # [결정론적 주문 ID]: seq_id/tick_counter + track_id + local_sequence (재현성 100% 보장)
+                            seq_num = tick.seq_id if tick.seq_id > 0 else self.tick_counter
+                            det_order_id = f"ORD-T{seq_num}-{st_name}-{local_seq}"
+                            
                             cmd = CanonicalOrderCommand(
-                                client_order_id=f"ORD-{uuid.uuid4().hex[:8].upper()}",
+                                client_order_id=det_order_id,
                                 track_id=st_name,
                                 asset_type=CanonicalAssetType.OPTION if sig.get("asset") == "OPTION" else CanonicalAssetType.FUTURES,
                                 side=CanonicalOrderSide.BUY if sig.get("side") == "BUY" else CanonicalOrderSide.SELL,

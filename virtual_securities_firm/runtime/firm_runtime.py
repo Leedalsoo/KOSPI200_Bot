@@ -41,7 +41,8 @@ class VirtualSecuritiesFirmRuntime:
             "account_mutations": 0,
             "position_mutations": 0,
             "pnl_updates": 0,
-            "reconciliation_checks": 0
+            "reconciliation_checks": 0,
+            "settlement_runs": 0,
         }
 
     def process_market_data(self, tick: CanonicalMarketTick) -> None:
@@ -82,12 +83,19 @@ class VirtualSecuritiesFirmRuntime:
         if report:
             self.metrics["executions_issued"] += 1
 
-            # Account & Position Mutation
+            # Account, Position & Ledger Mutation (Authoritative chain)
             self.account.apply_execution(report)
             self.metrics["account_mutations"] += 1
             self.metrics["position_mutations"] += 1
 
         return report
+
+    def run_settlement(self, final_settlement_price: Optional[float] = None) -> Dict[str, Any]:
+        """[M5 Authoritative Settlement] 일일 MTM 정산 및 정산 장부 기록"""
+        price = final_settlement_price if final_settlement_price is not None else 350.0
+        record = self.settlement_engine.perform_eod_settlement(price)
+        self.metrics["settlement_runs"] += 1
+        return record
 
     def get_account_snapshot(self):
         return self.account.get_canonical_summary()

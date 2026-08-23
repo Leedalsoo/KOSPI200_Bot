@@ -46,6 +46,10 @@ def run_annual_simulation(total_days: int = 1250, ticks_per_day: int = 500):
         # Step 10: Authoritative Reconciliation Audit per tick
         vssf.run_reconciliation()
 
+        # Step 11: Authoritative EOD Settlement at the end of each trading day
+        if i % ticks_per_day == 0:
+            vssf.run_settlement(tick.underlying_price)
+
     elapsed = time.time() - start_time
     m = vssf.metrics
     snap = vssf.get_account_snapshot()
@@ -67,6 +71,7 @@ def run_annual_simulation(total_days: int = 1250, ticks_per_day: int = 500):
     print(f"{'8. Position Mutations (VSSF Position Tracker)':<40} | {m['position_mutations']:<25,}")
     print(f"{'9. PnL Updates (VSSF Mark-to-Market Valuation)':<40} | {m['pnl_updates']:<25,}")
     print(f"{'10. Reconciliation Audits (ReconciliationEngine)':<40} | {m['reconciliation_checks']:<25,}")
+    print(f"{'11. Settlement Runs (SettlementEngine Authoritative)':<40} | {m['settlement_runs']:<25,}")
     print("-" * 70)
     print(f"{'Final Authoritative Account Equity':<40} | KRW {snap.total_balance:<20,.2f}")
     print("="*70 + "\n")
