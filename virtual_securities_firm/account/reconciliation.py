@@ -38,9 +38,13 @@ class AuthoritativeReconciliationEngine:
         pnl_ok = True
 
         # 4. Margin Risk Integrity Audit
-        margin_sum = used_margin + free_margin
-        margin_diff = abs(balance_val - margin_sum)
-        margin_ok = (margin_diff < 1e-2) or (free_margin >= 0 and used_margin >= 0)
+        # free_margin = max(0, balance_val - used_margin)
+        if balance_val >= used_margin:
+            margin_diff = abs(balance_val - (used_margin + free_margin))
+            margin_ok = margin_diff < 1e-2
+        else:
+            margin_diff = abs(free_margin - 0.0)
+            margin_ok = (free_margin == 0.0)
 
         is_healthy = balance_ok and position_ok and pnl_ok and margin_ok
 

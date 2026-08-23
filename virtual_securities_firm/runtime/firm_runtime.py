@@ -111,7 +111,14 @@ class VirtualSecuritiesFirmRuntime:
         return result
 
     def create_recovery_snapshot(self, sequence_id: int):
-        return self.recovery_engine.create_snapshot(sequence_id)
+        snap = self.recovery_engine.create_snapshot(sequence_id, metrics=self.metrics)
+        snap["execution_reports"] = list(self.execution_engine.reports)
+        return snap
 
     def restore_recovery_snapshot(self, snapshot):
-        return self.recovery_engine.restore_from_snapshot(snapshot)
+        ok = self.recovery_engine.restore_from_snapshot(snapshot, target_metrics=self.metrics)
+        if ok and isinstance(snapshot, dict) and "execution_reports" in snapshot:
+            self.execution_engine.reports = list(snapshot["execution_reports"])
+        return ok
+
+

@@ -87,6 +87,11 @@ class OptionProgramRuntime:
             try:
                 date_str = "2026-08-23"
                 if st_name == "Track1":
+                    if st.active_fence is None:
+                        atm = round(tick.underlying_price / 2.5) * 2.5
+                        t1_init = st.evaluate_strategy(tick.underlying_price, atm, {})
+                        if t1_init.get("signals"):
+                            signals.extend(t1_init["signals"])
                     is_bull = (self.current_regime == "BULL")
                     raw_signals = st.on_tick(
                         current_price=tick.underlying_price,
@@ -133,6 +138,17 @@ class OptionProgramRuntime:
                         signals.append(sc_res)
 
                 elif st_name == "Track5":
+                    gap_res = st.evaluate_gap_divergence(
+                        open_price=tick.underlying_price + 1.5,
+                        prev_close_price=tick.underlying_price,
+                        active_vol=1.2,
+                        current_regime=self.current_regime,
+                        date_str=date_str
+                    )
+                    if gap_res.get("signals"):
+                        signals.extend(gap_res["signals"])
+                    elif gap_res.get("action") in ["ENTER", "BUY", "SELL"]:
+                        signals.append(gap_res)
                     m_res = st.evaluate_mean_reversion(tick.underlying_price)
                     if m_res.get("signals"):
                         signals.extend(m_res["signals"])
@@ -191,6 +207,7 @@ class OptionProgramRuntime:
                         signals.extend(ins9["signals"])
                     elif ins9.get("action") in ["ENTER", "BUY", "SELL"]:
                         signals.append(ins9)
+
 
                 # 시그널 변환 및 명령 적재
                 if signals:

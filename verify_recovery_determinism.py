@@ -115,7 +115,7 @@ def run_with_recovery(total_days: int = 2, ticks_per_day: int = 500, snapshot_ti
         "free_margin": round(snap.free_margin, 6),
         "account_mutations": float(m["account_mutations"]),
         "orderbook_matches": float(m["orderbook_matches"]),
-        "reconciliation_checks": float(phase1_reconciliation + m["reconciliation_checks"]),
+        "reconciliation_checks": float(m["reconciliation_checks"]),
         "ledger_entries": float(ledger_count_new),
     }
 

@@ -8,7 +8,10 @@ from shared.interfaces.gateway import MarketDataGateway
 from shared.interfaces.broker_client import OptionBrokerClient
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.getLogger("option_program").setLevel(logging.WARNING)
+logging.getLogger("virtual_securities_firm").setLevel(logging.WARNING)
+logging.getLogger("virtual_market_simulator").setLevel(logging.WARNING)
 
 def run_annual_simulation(total_days: int = 1250, ticks_per_day: int = 500):
     logger.info("==================================================================")

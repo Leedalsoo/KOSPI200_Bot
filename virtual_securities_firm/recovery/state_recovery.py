@@ -12,7 +12,7 @@ class StateRecoveryEngine:
         self.account = account
         self.snapshots: Dict[int, Any] = {}
 
-    def create_snapshot(self, sequence_id: int) -> Dict[str, Any]:
+    def create_snapshot(self, sequence_id: int, metrics: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         snap = self.account.get_canonical_summary()
         ledger_txs = list(getattr(self.account.ledger_engine, "transactions", []))
         snapshot_dict = {
@@ -25,12 +25,13 @@ class StateRecoveryEngine:
             "unrealized_pnl": snap.unrealized_pnl,
             "positions": {k: dict(v) for k, v in getattr(snap, "positions", {}).items()},
             "ledger_transactions": [dict(tx) for tx in ledger_txs],
+            "metrics": dict(metrics) if metrics is not None else {},
             "timestamp": snap.timestamp,
         }
         self.snapshots[sequence_id] = snapshot_dict
         return snapshot_dict
 
-    def restore_from_snapshot(self, snapshot: Any) -> bool:
+    def restore_from_snapshot(self, snapshot: Any, target_metrics: Optional[Dict[str, Any]] = None) -> bool:
         """스냅샷 기반 계좌, 포지션, 원장(Ledger) 전체 상태 100% 복구"""
         try:
             if isinstance(snapshot, dict):
@@ -44,6 +45,8 @@ class StateRecoveryEngine:
                     self.account.positions = {k: dict(v) for k, v in snapshot["positions"].items()}
                 if "ledger_transactions" in snapshot:
                     self.account.ledger_engine.transactions = [dict(tx) for tx in snapshot["ledger_transactions"]]
+                if target_metrics is not None and "metrics" in snapshot:
+                    target_metrics.update(snapshot["metrics"])
             else:
                 bal = getattr(snapshot, "balance", getattr(snapshot, "total_balance", 25000000.0))
                 self.account.balance = float(bal)
@@ -55,8 +58,11 @@ class StateRecoveryEngine:
                     self.account.positions = {k: dict(v) for k, v in snapshot.positions.items()}
                 if hasattr(snapshot, "ledger_transactions"):
                     self.account.ledger_engine.transactions = [dict(tx) for tx in snapshot.ledger_transactions]
+                if target_metrics is not None and hasattr(snapshot, "metrics"):
+                    target_metrics.update(getattr(snapshot, "metrics", {}))
             logger.info(f"[StateRecoveryEngine] Successfully Restored Full Runtime State: Balance={self.account.balance}, Positions={len(self.account.positions)}, LedgerEntries={len(self.account.ledger_engine.transactions)}")
             return True
+
         except Exception as e:
             logger.error(f"[StateRecoveryEngine] Recovery Failed: {e}")
             return False
