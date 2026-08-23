@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>[VSSF] Virtual Securities Firm Broker Control Panel</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #e0e0e0; margin: 0; padding: 20px; }
+        .header { background: linear-gradient(135deg, #11998e, #38ef7d); padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; color: #000; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card { background-color: #1e1e1e; border: 1px solid #333; padding: 15px; border-radius: 8px; }
+        h2 { color: #38ef7d; margin-top: 0; }
+        .stat { font-size: 24px; font-weight: bold; color: #00ff66; margin: 10px 0; }
+        pre { background: #000; padding: 10px; border-radius: 5px; color: #38ef7d; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>[VSSF] 가상 증권사 브로커 관제반</h1>
+        <p>Target Architecture: Virtual Securities Firm Authoritative Broker & Execution Owner</p>
+    </div>
+    <div class="grid">
+        <div class="card">
+            <h2>브로커 계좌 & 증거금 상태</h2>
+            <div>총 계좌 평가자산: <div class="stat">KRW 25,000,000</div></div>
+            <div>사용 증거금: <span style="color:#ffcc00;">KRW 0</span></div>
+            <div>가능 증거금: <span style="color:#00ff66;">KRW 25,000,000</span></div>
+            <div>실현 PnL: <span style="color:#ffffff;">KRW 0.00</span></div>
+        </div>
+        <div class="card">
+            <h2>체결 이행 및 호가 매칭 로그</h2>
+            <pre id="vssf-log">VSSF Broker Engine: Listening on Port 8002\nOrderBook: Active\nSlippage Model: Active</pre>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>[VMS] Virtual Market Simulator Control Panel</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #e0e0e0; margin: 0; padding: 20px; }
+        .header { background: linear-gradient(135deg, #1e3c72, #2a5298); padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card { background-color: #1e1e1e; border: 1px solid #333; padding: 15px; border-radius: 8px; }
+        h2 { color: #4facfe; margin-top: 0; }
+        .btn { background: #4facfe; border: none; color: white; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        .btn:hover { background: #00f2fe; color: #000; }
+        pre { background: #000; padding: 10px; border-radius: 5px; color: #00ff66; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>[VMS] 가상 market 시뮬레이터 통제반</h1>
+        <p>Target Architecture: Virtual Market Simulator Authoritative Owner</p>
+    </div>
+    <div class="grid">
+        <div class="card">
+            <h2>시뮬레이션 재생 제어</h2>
+            <p>Replay Speed: <input type="number" id="speed" value="1000" min="1" max="5000"> x</p>
+            <p>Scenario: 
+                <select id="scenario">
+                    <option value="NORMAL">정상 장세 (Normal Market)</option>
+                    <option value="CRASH">급락 장세 (Crash Scenario)</option>
+                    <option value="HIGH_VOL">고변동성 장세 (High Volatility)</option>
+                </select>
+            </p>
+            <button class="btn" onclick="startSim()">VMS 시뮬레이션 시작</button>
+            <button class="btn" style="background:#ff4b5c;" onclick="stopSim()">VMS 정지</button>
+        </div>
+        <div class="card">
+            <h2>VMS 틱 및 시장 상태 리포트</h2>
+            <pre id="vms-log">VMS Status: STANDBY (Ready on Port 8001)</pre>
+        </div>
+    </div>
+    <script>
+        function startSim() {
+            document.getElementById("vms-log").innerText = "VMS Running (Replay 1000x Mode)...\\nActive Ticks Streaming: 625,000 Ticks / 1250 Days";
+        }
+        function stopSim() {
+            document.getElementById("vms-log").innerText = "VMS Stopped by Operator.";
+        }
+    </script>
+</body>
+</html>

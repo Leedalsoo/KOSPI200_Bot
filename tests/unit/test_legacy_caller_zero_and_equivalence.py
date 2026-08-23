@@ -121,3 +121,10 @@ def test_5_financial_equivalence_baseline() -> None:
     assert res["execution_price"] > 0
     assert res["delay_ms"] > 0
     assert account.capital == 25000000.0
+    
+    # Financial Equivalence: VSSF Account Snapshot Total Equity matches initial capital
+    vssf_runtime = VirtualSecuritiesFirmRuntime(initial_capital=25000000.0)
+    snap = vssf_runtime.get_account_snapshot()
+    assert snap.balance == 25000000.0
+    assert snap.realized_pnl == 0.0
+    assert snap.unrealized_pnl == 0.0
