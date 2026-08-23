@@ -20,5 +20,19 @@ class LedgerEngine:
             "timestamp": report.timestamp
         })
 
+    def record_settlement(self, settlement_type: str, realized_pnl: float, unrealized_pnl: float, balance_after: float, timestamp: str = "2026-08-23 15:45:00") -> Dict[str, Any]:
+        """[Authoritative Settlement Ledger] 정산 이벤트 분개 기록"""
+        entry = {
+            "type": "SETTLEMENT",
+            "settlement_type": settlement_type,
+            "realized_pnl": round(realized_pnl, 2),
+            "unrealized_pnl": round(unrealized_pnl, 2),
+            "balance_after": round(balance_after, 2),
+            "timestamp": timestamp
+        }
+        self.transactions.append(entry)
+        return entry
+
     def get_ledger_records(self) -> List[Dict[str, Any]]:
         return list(self.transactions)
+

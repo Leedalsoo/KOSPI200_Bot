@@ -1,6 +1,7 @@
 """Option Program Runtime (OptionProgram) - Pure Strategy Signal Generation."""
 import logging
 from typing import List, Optional, Dict, Any
+import numpy as np
 from shared.contracts.canonical import (
     CanonicalMarketTick,
     CanonicalOrderCommand,
@@ -40,6 +41,7 @@ class OptionProgramRuntime:
         self.received_execution_reports: List[CanonicalExecutionReport] = []
         self.tick_counter: int = 0
         self.last_price: float = 350.0
+        self.price_history: List[float] = []
         self.current_regime: str = "NORMAL"
         
         # 전략별 실측 메트릭 (호출 수, 시그널 수, 생성된 주문 수, 예외 발생 수)
@@ -56,12 +58,20 @@ class OptionProgramRuntime:
         """[틱 수신 ➔ Sensor / Regime Detector / Track 1~9 평가 ➔ 순수 전략 주문 명령 생성]"""
         self.tick_counter += 1
         self.last_price = tick.underlying_price
+        self.price_history.append(tick.underlying_price)
+        if len(self.price_history) > 60:
+            self.price_history.pop(0)
         
-        # 1. Regime Detector 평가
+        # 1. Regime Detector 실제 시계열 데이터 기반 HMM 국면 연산 실행 (GAP 6 완전 해소)
         try:
-            if hasattr(self.regime_detector, "get_regime_info"):
-                reg_info = self.regime_detector.get_regime_info()
-                self.current_regime = reg_info.get("regime", "NORMAL")
+            if len(self.price_history) >= 2:
+                # 로그 수익률 계산: log(P_t / P_{t-1})
+                prices = np.array(self.price_history, dtype=np.float64)
+                returns = np.diff(np.log(prices))
+                regime, _ = self.regime_detector.detect_regime_sync(returns)
+                self.current_regime = regime
+            else:
+                self.current_regime = "NEUTRAL"
         except Exception as e:
             logger.debug(f"RegimeDetector note: {e}")
 

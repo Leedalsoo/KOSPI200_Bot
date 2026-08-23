@@ -43,6 +43,7 @@ def run_continuous(total_days: int = 2, ticks_per_day: int = 500) -> Dict[str, f
 
     snap = vssf.get_account_snapshot()
     m = vssf.metrics
+    ledger_count = len(getattr(vssf.account.ledger_engine, "transactions", []))
     return {
         "balance": round(snap.total_balance, 6),
         "realized_pnl": round(snap.realized_pnl, 6),
@@ -52,6 +53,7 @@ def run_continuous(total_days: int = 2, ticks_per_day: int = 500) -> Dict[str, f
         "account_mutations": float(m["account_mutations"]),
         "orderbook_matches": float(m["orderbook_matches"]),
         "reconciliation_checks": float(m["reconciliation_checks"]),
+        "ledger_entries": float(ledger_count),
     }
 
 
@@ -104,6 +106,7 @@ def run_with_recovery(total_days: int = 2, ticks_per_day: int = 500, snapshot_ti
 
     snap = vssf_new.get_account_snapshot()
     m = vssf_new.metrics
+    ledger_count_new = len(getattr(vssf_new.account.ledger_engine, "transactions", []))
     return {
         "balance": round(snap.total_balance, 6),
         "realized_pnl": round(snap.realized_pnl, 6),
@@ -113,6 +116,7 @@ def run_with_recovery(total_days: int = 2, ticks_per_day: int = 500, snapshot_ti
         "account_mutations": float(m["account_mutations"]),
         "orderbook_matches": float(m["orderbook_matches"]),
         "reconciliation_checks": float(phase1_reconciliation + m["reconciliation_checks"]),
+        "ledger_entries": float(ledger_count_new),
     }
 
 
@@ -136,13 +140,14 @@ def verify_recovery_determinism(ticks_count: int = 1000) -> Tuple[bool, Dict[str
         "account_mutations": "6. Executed Trades Qty",
         "orderbook_matches": "7. OrderBook Matches",
         "reconciliation_checks": "8. Reconciliation Checks (Cumulative)",
+        "ledger_entries": "9. Authoritative Ledger Entries",
     }
 
     diffs: Dict[str, float] = {}
     all_pass = True
 
-    print(f"\n{'Financial State Metric':<30} | {'Base (Continuous)':>18} | {'Recovered (Restart)':>18} | {'|Diff|':>10} | {'Status':<6}")
-    print("-" * 92)
+    print(f"\n{'Financial State Metric':<35} | {'Base (Continuous)':>18} | {'Recovered (Restart)':>18} | {'|Diff|':>10} | {'Status':<6}")
+    print("-" * 97)
 
     for k, label in labels.items():
         v_base = base_res[k]
@@ -152,9 +157,9 @@ def verify_recovery_determinism(ticks_count: int = 1000) -> Tuple[bool, Dict[str
         status = "PASS" if diff <= TOLERANCE else "FAIL"
         if diff > TOLERANCE:
             all_pass = False
-        print(f"{label:<30} | {v_base:>18,.4f} | {v_rec:>18,.4f} | {diff:>10.6f} | {status}")
+        print(f"{label:<35} | {v_base:>18,.4f} | {v_rec:>18,.4f} | {diff:>10.6f} | {status}")
 
-    print("=" * 92)
+    print("=" * 97)
     overall = "PASS - Recovery Determinism & Reconciliation 100% Proven" if all_pass else "FAIL - State Mismatch"
     print(f"\n[RESULT] {overall}\n")
 
@@ -162,6 +167,7 @@ def verify_recovery_determinism(ticks_count: int = 1000) -> Tuple[bool, Dict[str
         raise AssertionError("State Recovery Determinism check FAILED!")
 
     return all_pass, diffs
+
 
 
 if __name__ == "__main__":
