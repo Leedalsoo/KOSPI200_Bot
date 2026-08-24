@@ -114,38 +114,56 @@ class RealMarketDataAdapter(IMarketDataProvider):
 
         self._last_seq_id = seq_id
 
-        # 4. CanonicalMarketTick 표준 DTO 생성
-        underlying = float(raw_packet.get("underlying_price", raw_packet.get("current_price", 350.0)))
-        strike = float(raw_packet.get("strike_price", raw_packet.get("strike", 350.0)))
-        opt_type = str(raw_packet.get("option_type", "CALL")).upper()
-        
-        bid = float(raw_packet.get("bid_price", raw_packet.get("bid", underlying - 0.05)))
-        ask = float(raw_packet.get("ask_price", raw_packet.get("ask", underlying + 0.05)))
-        last = float(raw_packet.get("last_price", raw_packet.get("last", underlying)))
-        vol = int(raw_packet.get("volume", raw_packet.get("vol", 100)))
-        ts_str = str(raw_packet.get("timestamp", datetime.now().strftime("%H:%M:%S.%f")[:-3]))
+        # 4. CanonicalMarketTick 표준 DTO 생성 및 가격 무결성 방어
+        try:
+            underlying = float(raw_packet.get("underlying_price", raw_packet.get("current_price", 350.0)))
+            strike = float(raw_packet.get("strike_price", raw_packet.get("strike", 350.0)))
+            opt_type = str(raw_packet.get("option_type", "CALL")).upper()
+            
+            bid = float(raw_packet.get("bid_price", raw_packet.get("bid", underlying - 0.05)))
+            ask = float(raw_packet.get("ask_price", raw_packet.get("ask", underlying + 0.05)))
+            last = float(raw_packet.get("last_price", raw_packet.get("last", underlying)))
+            vol = int(raw_packet.get("volume", raw_packet.get("vol", 100)))
+            ts_str = str(raw_packet.get("timestamp", datetime.now().strftime("%H:%M:%S.%f")[:-3]))
 
-        tick = CanonicalMarketTick(
-            timestamp=ts_str,
-            underlying_price=underlying,
-            strike_price=strike,
-            option_type=opt_type,
-            bid_price=bid,
-            ask_price=ask,
-            last_price=last,
-            volume=vol,
-            seq_id=seq_id
-        )
+            # 비정상 가격 방어 (음수 가격 또는 극단적 이상치)
+            if underlying <= 0 or bid < 0 or ask < 0 or last < 0:
+                logger.warning(f"[MarketDataAdapter] Invalid negative/zero price dropped: under={underlying}, bid={bid}, ask={ask}")
+                return None
 
-        self.metrics["parsed_ticks"] += 1
-        return tick
+            tick = CanonicalMarketTick(
+                timestamp=ts_str,
+                underlying_price=underlying,
+                strike_price=strike,
+                option_type=opt_type,
+                bid_price=bid,
+                ask_price=ask,
+                last_price=last,
+                volume=vol,
+                seq_id=seq_id
+            )
+
+            self.metrics["parsed_ticks"] += 1
+            return tick
+        except (ValueError, TypeError) as e:
+            logger.error(f"[MarketDataAdapter] Malformed packet payload: {e}")
+            return None
 
     def check_heartbeat(self, current_time: Optional[datetime] = None) -> bool:
-        """하트비트 타임아웃 검사"""
+        """하트비트 타임아웃 검사 및 자동 복구 트리거"""
         now = current_time if current_time is not None else datetime.now()
         elapsed = (now - self._last_heartbeat_time).total_seconds()
         if elapsed > self._heartbeat_timeout_sec:
             self.metrics["heartbeat_timeouts"] += 1
             logger.warning(f"[MarketDataAdapter] Heartbeat timeout: {elapsed:.2f}s > {self._heartbeat_timeout_sec}s")
+            if self._auto_reconnect:
+                self.reconnect()
             return False
         return True
+
+    def get_metrics(self) -> Dict[str, int]:
+        return dict(self.metrics)
+
+    def reset_metrics(self) -> None:
+        for k in self.metrics:
+            self.metrics[k] = 0
