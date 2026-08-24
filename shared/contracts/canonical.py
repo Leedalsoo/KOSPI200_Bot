@@ -86,3 +86,18 @@ class CanonicalAccountSummary:
     @balance.setter
     def balance(self, val: float) -> None:
         self.total_balance = val
+
+@dataclass(frozen=True)
+class CanonicalStrategySignal:
+    """[Strategy ➔ Signal Generator 전략 신호 DTO]"""
+    signal_id: str
+    track_id: str
+    asset_type: CanonicalAssetType
+    side: CanonicalOrderSide
+    qty: int
+    price: float
+    option_type: Optional[CanonicalOptionType] = None
+    strike: float = 0.0
+    tag_id: str = ""
+    reason: str = ""
+    timestamp: str = ""
