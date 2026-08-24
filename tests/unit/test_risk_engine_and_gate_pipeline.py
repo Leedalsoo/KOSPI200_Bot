@@ -153,3 +153,44 @@ def test_risk_gate_kill_switch_immediate_block():
     engine.reset_kill_switch()
     approved, token, _ = gate.admit_order(cmd, account)
     assert approved is True
+
+def test_risk_sensor_margin_diet_block():
+    """Validates that RiskSensor margin diet snapshot blocks non-hedge new entries."""
+    from option_program.risk_control.risk_engine import RiskSensor
+    sensor = RiskSensor()
+    gate = RiskGate()
+    account = create_sample_account()
+
+    # Scan with margin ratio 0.90 (>0.85) -> Margin Diet Triggered
+    snapshot = sensor.scan_risk(active_vol=1.0, base_vol=1.0, current_regime="NORMAL", account_margin_ratio=0.90)
+    assert snapshot.is_margin_diet_required is True
+
+    # 1. Regular Entry -> Blocked by Margin Diet
+    cmd_entry = CanonicalOrderCommand(
+        client_order_id="RISK-ENTRY-001",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.OPTION,
+        side=CanonicalOrderSide.BUY,
+        qty=1,
+        price=2.0,
+        option_type=CanonicalOptionType.CALL,
+        strike=350.0,
+        tag_id="SCALP"
+    )
+    approved, _, reason = gate.admit_order(cmd_entry, account, sensor_snapshot=snapshot)
+    assert approved is False
+    assert "MARGIN_DIET_ACTIVE" in reason
+
+    # 2. Risk Hedge Order -> Allowed even under Margin Diet
+    cmd_hedge = CanonicalOrderCommand(
+        client_order_id="RISK-HEDGE-001",
+        track_id="HEDGE_DELTA",
+        asset_type=CanonicalAssetType.FUTURES,
+        side=CanonicalOrderSide.SELL,
+        qty=1,
+        price=350.0,
+        tag_id="RISK_HEDGE"
+    )
+    approved_h, token_h, _ = gate.admit_order(cmd_hedge, account, sensor_snapshot=snapshot)
+    assert approved_h is True
+    assert token_h is not None

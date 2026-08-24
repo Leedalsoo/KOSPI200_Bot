@@ -1,7 +1,8 @@
-"""Production Risk Engine & Pre-Trade Risk Gate Architecture.
+"""Production Risk Engine, Risk Sensors & Pre-Trade Risk Gate Architecture.
 
 Provides:
 - RiskConfig: Comprehensive risk parameter thresholds (Margin, Max Qty, Daily Loss, Kill Switch).
+- RiskSensor: Continuous monitoring of market volatility spikes, macro regimes, and account equity drawdowns.
 - RiskEngine: Multi-layer risk admission evaluation across Strategy Track 1~9.
 - RiskGate: Authoritative pre-trade gateway issuing cryptographic/unique RiskApprovalToken.
 """
@@ -10,6 +11,7 @@ from typing import Dict, Any, Optional, List, Tuple
 import uuid
 import logging
 import time
+import math
 
 from shared.contracts.canonical import (
     CanonicalOrderCommand,
@@ -28,7 +30,17 @@ class RiskConfig:
     max_daily_loss_krw: float = 10_000_000.0         # 일일 최대 누적 허용 손실 (1천만원)
     max_margin_utilization_ratio: float = 0.85       # 최대 증거금 사용률 (85%)
     max_position_per_instrument: int = 100           # 종목당 최대 보유 수량
+    vol_spike_threshold_multiplier: float = 1.30     # 변동성 스파이크 배율 임계치
     margin_diet_active: bool = False                 # 긴급 마진 다이어트 활성화 여부
+
+@dataclass
+class RiskSensorSnapshot:
+    """실시간 리스크 센서 관측 스냅샷 DTO"""
+    is_vol_spike: bool = False
+    is_crisis_regime: bool = False
+    is_margin_diet_required: bool = False
+    active_vol_ratio: float = 1.0
+    reason: str = "NORMAL"
 
 @dataclass
 class RiskEvaluationResult:
@@ -39,11 +51,57 @@ class RiskEvaluationResult:
     estimated_margin_ratio: float = 0.0
     token: Optional[RiskApprovalToken] = None
 
+class RiskSensor:
+    """[리스크 센서] 실시간 시장 변동성, 마진 상태, 국면 위험을 지속 감시"""
+
+    def __init__(self, config: Optional[RiskConfig] = None):
+        self.config = config or RiskConfig()
+
+    def scan_risk(
+        self,
+        active_vol: float,
+        base_vol: float,
+        current_regime: str = "NORMAL",
+        account_margin_ratio: float = 0.0
+    ) -> RiskSensorSnapshot:
+        """시장 데이터 및 계좌 상태 기반 리스크 센싱"""
+        # 1. 결측치 및 NaN 방어
+        if any(v is None or (isinstance(v, float) and math.isnan(v)) for v in [active_vol, base_vol]):
+            return RiskSensorSnapshot(reason="INVALID_OR_NAN_SENSOR_INPUT")
+
+        vol_ratio = (active_vol / base_vol) if base_vol > 0 else 1.0
+        is_vol_spike = vol_ratio >= self.config.vol_spike_threshold_multiplier
+        is_crisis = current_regime in ["CRISIS", "HIGH_VOLATILITY", "EXTREME_MOVE"]
+        is_margin_diet = account_margin_ratio > self.config.max_margin_utilization_ratio
+
+        reason = "NORMAL"
+        if is_margin_diet:
+            reason = f"MARGIN_DIET_TRIGGERED (Ratio={account_margin_ratio:.2%})"
+        elif is_vol_spike:
+            reason = f"VOLATILITY_SPIKE_DETECTED (Ratio={vol_ratio:.2f})"
+        elif is_crisis:
+            reason = f"CRISIS_REGIME_ACTIVE ({current_regime})"
+
+        return RiskSensorSnapshot(
+            is_vol_spike=is_vol_spike,
+            is_crisis_regime=is_crisis,
+            is_margin_diet_required=is_margin_diet,
+            active_vol_ratio=vol_ratio,
+            reason=reason
+        )
+
 class RiskEngine:
     """[리스크 엔진] Track 1~9의 주문 명령에 대해 다층 리스크를 사전 심사"""
-    def __init__(self, config: Optional[RiskConfig] = None, margin_engine: Optional[MarginEngine] = None):
+
+    def __init__(
+        self,
+        config: Optional[RiskConfig] = None,
+        margin_engine: Optional[MarginEngine] = None,
+        risk_sensor: Optional[RiskSensor] = None
+    ):
         self.config = config or RiskConfig()
         self.margin_engine = margin_engine or MarginEngine()
+        self.sensor = risk_sensor or RiskSensor(self.config)
         self._is_kill_switch_active: bool = False
         self._daily_realized_loss: float = 0.0
 
@@ -66,7 +124,8 @@ class RiskEngine:
         self,
         command: CanonicalOrderCommand,
         account: CanonicalAccountSummary,
-        positions: Optional[Dict[str, Any]] = None
+        positions: Optional[Dict[str, Any]] = None,
+        sensor_snapshot: Optional[RiskSensorSnapshot] = None
     ) -> RiskEvaluationResult:
         """사전 거래 리스크(Pre-Trade Risk) 전수 심사"""
         positions = positions or {}
@@ -99,7 +158,7 @@ class RiskEngine:
             )
 
         # 4. 종목별 포지션 한도 검사
-        inst_key = f"{command.asset_type.value}_{command.strike}_{command.option_type.value}"
+        inst_key = f"{command.asset_type.value}_{command.strike}_{command.option_type.value if command.option_type else 'NONE'}"
         current_inst_qty = positions.get(inst_key, {}).get("qty", 0) if isinstance(positions.get(inst_key), dict) else 0
         if current_inst_qty + command.qty > self.config.max_position_per_instrument:
             return RiskEvaluationResult(
@@ -130,7 +189,16 @@ class RiskEngine:
                 estimated_margin_ratio=est_margin_ratio
             )
 
-        # 6. 모든 리스크 게이트 통과 -> 승인 토큰 발행
+        # 6. 리스크 센서 마진 다이어트 발동 시 신규 주문 차단
+        if sensor_snapshot and sensor_snapshot.is_margin_diet_required and command.tag_id != "RISK_HEDGE":
+            return RiskEvaluationResult(
+                is_approved=False,
+                rejection_reason=f"MARGIN_DIET_ACTIVE: Blocked new entry under {sensor_snapshot.reason}",
+                required_margin=req_margin,
+                estimated_margin_ratio=est_margin_ratio
+            )
+
+        # 7. 모든 리스크 게이트 통과 -> 승인 토큰 발행
         order_uuid = uuid.uuid4()
         token = RiskApprovalToken(
             order_id=order_uuid,
@@ -147,6 +215,7 @@ class RiskEngine:
 
 class RiskGate:
     """[최종 리스크 게이트] 주문 발주 직전 단일 진입점으로 작동하여 승인 토큰 부여"""
+
     def __init__(self, risk_engine: Optional[RiskEngine] = None):
         self.engine = risk_engine or RiskEngine()
 
@@ -154,10 +223,11 @@ class RiskGate:
         self,
         command: CanonicalOrderCommand,
         account: CanonicalAccountSummary,
-        positions: Optional[Dict[str, Any]] = None
+        positions: Optional[Dict[str, Any]] = None,
+        sensor_snapshot: Optional[RiskSensorSnapshot] = None
     ) -> Tuple[bool, Optional[RiskApprovalToken], Optional[str]]:
         """주문 승인/거부 판정 및 승인 토큰 반환"""
-        res = self.engine.evaluate_order(command, account, positions)
+        res = self.engine.evaluate_order(command, account, positions, sensor_snapshot)
         if res.is_approved and res.token is not None:
             logger.debug(f"[RiskGate] Order {command.client_order_id} APPROVED -> Token {res.token.order_id}")
             return True, res.token, None
