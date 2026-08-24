@@ -7,7 +7,13 @@ import gc
 import logging
 import signal
 import sys
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, List
+
+from shared.contracts.canonical import CanonicalMarketTick, CanonicalOrderCommand, CanonicalExecutionReport
+from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
+from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
+from option_program.broker.broker_interface import BrokerFactory, BrokerMode, IBrokerAdapter
+from option_program.runtime.program_runtime import OptionProgramRuntime
 
 # Windows 환경 대응을 위한 uvloop 임포트 예외 처리
 try:
@@ -20,16 +26,26 @@ logger = logging.getLogger(__name__)
 
 
 class TradingSystem:
-    """통합 Conductor: 시스템 전체 수명 주기 및 신호 통제"""
+    """통합 Conductor: VMS -> OptionProgram -> Broker -> VSSF 전체 파이프라인 수명 주기 통제"""
 
-    def __init__(self, config: Dict[str, Any]) -> None:
-        self.config: Dict[str, Any] = config
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        self.config: Dict[str, Any] = config or {}
         self.is_running: bool = False
         self._shutdown_event: Optional[asyncio.Event] = None
         self._main_task: Optional[asyncio.Task[None]] = None
+        
+        # 4대 핵심 런타임 컴포넌트 선언
+        self.vms: Optional[VirtualMarketSimulatorRuntime] = None
+        self.vssf: Optional[VirtualSecuritiesFirmRuntime] = None
+        self.broker: Optional[IBrokerAdapter] = None
+        self.op_runtime: Optional[OptionProgramRuntime] = None
+        
+        self.ticks_processed: int = 0
+        self.orders_routed: int = 0
+        self.executions_handled: int = 0
 
     async def initialize(self) -> None:
-        """[목표 C] 의존성 주입 및 에이전트 초기화 (에러 시 시스템 부팅 즉각 차단)"""
+        """[통합 의존성 주입] VMS, VSSF, Broker Adapter, OptionProgramRuntime 초기화 및 바인딩"""
         try:
             logger.info("TradingSystem: 컴포넌트 초기화 및 의존성 주입 시작")
             
@@ -38,21 +54,32 @@ class TradingSystem:
 
             # 🛡️ [정규장 GC 동결] 런타임 지연(Latency) 방지를 위해 GC 비활성화
             gc.disable()
-            # FSM, Bus, Risk, Strategy 에이전트들의 인스턴스화 및 의존성 주입 로직을 시뮬레이션
-            # 실제 초기화 오류 발생 시 즉시 시스템 부팅 차단
-            self.is_running = False  # 초기화 직후에는 아직 running 상태가 아님
-            logger.info("TradingSystem: 컴포넌트 초기화 완료 및 gc.disable() 설정")
+
+            # 1. Virtual Securities Firm Runtime (VSSF) 초기화
+            init_cap = float(self.config.get("initial_capital", 50_000_000.0))
+            self.vssf = VirtualSecuritiesFirmRuntime(initial_capital=init_cap)
+
+            # 2. Broker Mode 결정 및 Broker Adapter 생성 (PAPER / SHADOW / REAL)
+            mode_str = str(self.config.get("broker_mode", "PAPER")).upper()
+            broker_mode = BrokerMode.PAPER if mode_str == "PAPER" else (BrokerMode.SHADOW if mode_str == "SHADOW" else BrokerMode.REAL)
+            self.broker = BrokerFactory.create_broker(mode=broker_mode, vssf_runtime=self.vssf)
+
+            # 3. Virtual Market Simulator Runtime (VMS) 초기화
+            self.vms = VirtualMarketSimulatorRuntime()
+
+            # 4. Option Program Runtime (전략, 신호, 리스크, FSM) 초기화
+            self.op_runtime = OptionProgramRuntime(account_summary=self.vssf.get_account_snapshot())
+
+            self.is_running = False
+            logger.info(f"TradingSystem: 전체 파이프라인 컴포넌트 초기화 완료 (Broker Mode: {broker_mode.value})")
         except Exception as exc:
-            logger.critical("TradingSystem: 초기화 실패 — 부팅 차단: %s", exc)
+            logger.critical("TradingSystem: 초기화 실패 — 부팅 차단: %s", exc, exc_info=True)
             sys.exit(1)
 
     def _lockdown_os(self) -> None:
         """메모리 스와핑 잠금 및 리얼타임 스케줄러 설정 (HFT 헌법 4부 강제)"""
-        # 1. mlockall (메모리 스와핑 차단)
         try:
             import ctypes
-            # libc에서 mlockall 함수 호출 시도
-            # MCL_CURRENT = 1, MCL_FUTURE = 2
             MCL_CURRENT = 1
             MCL_FUTURE = 2
             try:
@@ -71,7 +98,6 @@ class TradingSystem:
         except Exception as exc:
             logger.warning("OS Lockdown: mlockall 설정 중 예외 발생: %s", exc)
 
-        # 2. os.sched_setscheduler (SCHED_FIFO 실시간 우선순위 획득)
         try:
             import os
             sched_get_priority_max = getattr(os, "sched_get_priority_max", None)
@@ -86,7 +112,6 @@ class TradingSystem:
                 and sched_param is not None
             ):
                 pid = os.getpid()
-                # 최대로 얻을 수 있는 FIFO 우선순위 값 조회
                 max_priority = sched_get_priority_max(SCHED_FIFO)
                 param = sched_param(max_priority)
                 sched_setscheduler(pid, SCHED_FIFO, param)
@@ -98,7 +123,6 @@ class TradingSystem:
 
     def register_signals(self, loop: asyncio.AbstractEventLoop) -> None:
         """[목표 B] 시그널 핸들러 등록 및 Graceful Shutdown 바인딩"""
-        # Windows의 경우 loop.add_signal_handler가 NotImplementedError를 발생시키므로 예외 처리 필수
         def make_handler(s: int) -> Callable[[], Any]:
             def handler() -> Any:
                 return asyncio.create_task(self._handle_signal(s))
@@ -108,7 +132,6 @@ class TradingSystem:
             try:
                 loop.add_signal_handler(sig, make_handler(sig))
             except (NotImplementedError, ValueError):
-                # Windows 환경에서는 add_signal_handler가 미지원되므로, signal 모듈 수준 핸들러 등록 등으로 우회하거나 로깅 처리
                 logger.warning("TradingSystem: loop.add_signal_handler 미지원 환경. 시그널 우회 처리.")
 
     async def _handle_signal(self, sig: int) -> None:
@@ -116,14 +139,54 @@ class TradingSystem:
         logger.warning("TradingSystem: 시그널 수신 (%s) — Graceful Shutdown 시작", sig)
         await self.shutdown()
 
-    async def run_loop(self) -> None:
-        """[목표 A] uvloop/asyncio 기반 메인 루프 실행"""
+    async def run_loop(self, max_ticks: Optional[int] = None) -> None:
+        """[전체 통합 파이프라인 가동] VMS 틱 스트림 -> OptionProgram -> RiskGate -> Broker -> VSSF -> Ledger"""
+        if self.vms is None or self.vssf is None or self.broker is None or self.op_runtime is None:
+            raise RuntimeError("TradingSystem must be initialized before run_loop.")
+
         self.is_running = True
         self._shutdown_event = asyncio.Event()
-        logger.info("TradingSystem: 메인 루프 가동")
+        logger.info("TradingSystem: 메인 실시간 파이프라인 루프 가동")
+
         try:
-            # 셧다운 이벤트가 발생할 때까지 대기
-            await self._shutdown_event.wait()
+            tick_generator = self.vms.generate_tick_stream(total_days=1, ticks_per_day=max_ticks or 1000)
+            
+            for tick in tick_generator:
+                if self._shutdown_event.is_set():
+                    break
+                
+                # 1. VSSF에 최신 틱 시세 반영
+                self.vssf.process_market_data(tick)
+
+                # 2. OptionProgram에 VSSF 최신 계좌 스냅샷 동기화 (Read-Only)
+                self.op_runtime.update_account_summary(self.vssf.get_account_snapshot())
+
+                # 3. OptionProgram 틱 평가 및 파이프라인 주문 명령 생성 (Sensor -> Track1~9 -> SignalGen -> Arbiter -> RiskGate -> FSM)
+                commands = self.op_runtime.process_tick(tick)
+
+                # 4. Broker 인터페이스를 통한 발주 및 체결 처리
+                for cmd in commands:
+                    self.orders_routed += 1
+                    report = self.broker.send_order(cmd)
+                    if report is not None:
+                        self.executions_handled += 1
+                        # 5. 체결 보고서를 OptionProgram과 FSM에 통지
+                        self.op_runtime.consume_execution_report(report)
+
+                self.ticks_processed += 1
+
+                if max_ticks is not None and self.ticks_processed >= max_ticks:
+                    break
+
+                # 협력적 스케줄링을 위한 초소형 yield
+                if self.ticks_processed % 100 == 0:
+                    await asyncio.sleep(0)
+
+            # EOD 일일 정산 및 대조(Reconciliation) 수행
+            self.vssf.run_settlement(final_settlement_price=self.op_runtime.last_price)
+            rec = self.vssf.run_reconciliation()
+            logger.info(f"TradingSystem: 파이프라인 실행 완료 (Ticks: {self.ticks_processed}, Orders: {self.orders_routed}, Execs: {self.executions_handled}, Reconcil: {rec.get('is_healthy')})")
+
         except asyncio.CancelledError:
             logger.info("TradingSystem: 메인 루프 취소됨")
         finally:
@@ -133,11 +196,9 @@ class TradingSystem:
         """[목표 B] 모든 태스크 안전 취소 및 리소스 해제"""
         logger.warning("TradingSystem: shutdown 시작 — 자원 회수 시퀀스")
         
-        # 1. 셧다운 이벤트 셋하여 run_loop 대기 해제
         if self._shutdown_event is not None:
             self._shutdown_event.set()
 
-        # 2. 현재 실행 중인 모든 태스크 조회 및 취소 (자신 제외)
         current_task = asyncio.current_task()
         tasks = [t for t in asyncio.all_tasks() if t is not current_task]
         
@@ -145,11 +206,9 @@ class TradingSystem:
             logger.info("TradingSystem: %d개 태스크 취소 진행", len(tasks))
             for task in tasks:
                 task.cancel()
-            
-            # 취소 완료 대기
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        # 3. [GC 동결 해제 및 수동 정리] 메모리 누수 방지
+        # [GC 동결 해제 및 수동 정리]
         gc.enable()
         collected = gc.collect()
         logger.info("TradingSystem: gc.enable() 복구 및 수동 가비지 컬렉션 완료 (수집된 객체 수: %d)", collected)
@@ -164,17 +223,16 @@ def main() -> None:
     else:
         logger.info("TradingSystem: 표준 asyncio 이벤트 루프 사용 (uvloop 미지원 환경)")
 
-    config: Dict[str, Any] = {}
+    config: Dict[str, Any] = {"broker_mode": "PAPER", "initial_capital": 50_000_000.0}
     system = TradingSystem(config)
 
-    # 비동기 실행 흐름 기동
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     system.register_signals(loop)
 
     try:
         loop.run_until_complete(system.initialize())
-        loop.run_until_complete(system.run_loop())
+        loop.run_until_complete(system.run_loop(max_ticks=500))
     except KeyboardInterrupt:
         logger.warning("TradingSystem: KeyboardInterrupt 수신 — 즉각 종료")
     finally:
