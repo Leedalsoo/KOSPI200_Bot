@@ -14,6 +14,7 @@ from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimu
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from option_program.broker.broker_interface import BrokerFactory, BrokerMode, IBrokerAdapter
 from option_program.runtime.program_runtime import OptionProgramRuntime
+from web_interface.server import TargetArchitectureUIServer, UIWebSocketHub
 
 # Windows 환경 대응을 위한 uvloop 임포트 예외 처리
 try:
@@ -43,6 +44,10 @@ class TradingSystem:
         self.ticks_processed: int = 0
         self.orders_routed: int = 0
         self.executions_handled: int = 0
+        self.last_tick: Optional[CanonicalMarketTick] = None
+        self.broker_mode: str = str(self.config.get("broker_mode", "PAPER")).upper()
+        self.ui_server = TargetArchitectureUIServer(self)
+        self.ui_ws = UIWebSocketHub(self.ui_server)
 
     async def initialize(self) -> None:
         """[통합 의존성 주입] VMS, VSSF, Broker Adapter, OptionProgramRuntime 초기화 및 바인딩"""
@@ -155,6 +160,8 @@ class TradingSystem:
                 if self._shutdown_event.is_set():
                     break
                 
+                self.last_tick = tick
+
                 # 1. VSSF에 최신 틱 시세 반영
                 self.vssf.process_market_data(tick)
 
@@ -174,6 +181,7 @@ class TradingSystem:
                         self.op_runtime.consume_execution_report(report)
 
                 self.ticks_processed += 1
+                await self.ui_ws.broadcast()
 
                 if max_ticks is not None and self.ticks_processed >= max_ticks:
                     break
@@ -198,6 +206,11 @@ class TradingSystem:
         
         if self._shutdown_event is not None:
             self._shutdown_event.set()
+
+        try:
+            await self.ui_ws.stop()
+        except Exception:
+            pass
 
         current_task = asyncio.current_task()
         tasks = [t for t in asyncio.all_tasks() if t is not current_task]
@@ -232,6 +245,7 @@ def main() -> None:
 
     try:
         loop.run_until_complete(system.initialize())
+        loop.run_until_complete(system.ui_ws.start())
         loop.run_until_complete(system.run_loop(max_ticks=500))
     except KeyboardInterrupt:
         logger.warning("TradingSystem: KeyboardInterrupt 수신 — 즉각 종료")
@@ -242,3 +256,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

@@ -27,6 +27,8 @@ from option_program.strategy.decision_arbiter import DecisionArbiter
 from option_program.risk_control.risk_engine import RiskConfig, RiskSensor, RiskEngine, RiskGate
 from option_program.orders.oms_fsm import OmsFsm
 from option_program.orders.order_router import OrderRouter
+from option_program.market_analysis.market_condition_analyzer import MarketConditionAnalyzer
+from option_program.market_analysis.market_condition_models import MarketConditionSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,12 @@ class OptionProgramRuntime:
         self.risk_gate = RiskGate(self.risk_engine)
         self.oms_fsm = OmsFsm()
         self.order_router = OrderRouter(fsm=self.oms_fsm)
+        self.market_analyzer = MarketConditionAnalyzer()
+        self.market_condition: Optional[MarketConditionSnapshot] = None
+        self.last_risk_snapshot = None
+        self.last_orders: List[Dict[str, Any]] = []
+        self.last_signals: List[Dict[str, Any]] = []
+        self.enabled_strategies: Dict[str, bool] = {f"Track{i}": True for i in range(1, 10)}
         
         self.account_summary: CanonicalAccountSummary = account_summary or CanonicalAccountSummary(
             account_id="ACC-VSSF-001",
@@ -96,44 +104,53 @@ class OptionProgramRuntime:
         if len(self.price_history) > 60:
             self.price_history.pop(0)
         
-        # 1. Regime Detector 실제 시계열 데이터 기반 HMM 국면 연산 실행
+        # 1. 실제 틱을 MarketConditionAnalyzer가 관찰하여 현재 시장상태를 계산
+        self.market_condition = self.market_analyzer.analyze(tick)
+        self.current_regime = self.market_condition.regime
+
+        # 2. Regime Detector 기존 호환 경로 유지
         try:
             if len(self.price_history) >= 2:
                 prices = np.array(self.price_history, dtype=np.float64)
                 returns = np.diff(np.log(prices))
                 regime, _ = self.regime_detector.detect_regime_sync(returns)
-                self.current_regime = regime
+                if not self.market_condition:
+                    self.current_regime = regime
             else:
                 self.current_regime = "NEUTRAL"
         except Exception as e:
             logger.debug(f"RegimeDetector note: {e}")
 
-        # 2. Risk Sensor 스캔 (변동성 및 국면 관측)
+        # 3. Risk Sensor는 Analyzer가 관측한 실제 변동성과 국면을 사용
+        condition = self.market_condition
         sensor_snapshot = self.risk_sensor.scan_risk(
-            active_vol=1.5 if self.current_regime == "HIGH_VOL" else 1.0,
-            base_vol=1.0,
-            current_regime=self.current_regime,
+            active_vol=condition.volatility if condition else 0.0,
+            base_vol=condition.baseline_volatility if condition else 0.0,
+            current_regime=condition.regime if condition else self.current_regime,
             account_margin_ratio=(self.account_summary.used_margin / self.account_summary.total_balance) if self.account_summary.total_balance > 0 else 0.0
         )
 
         raw_signals_collected: List[CanonicalStrategySignal] = []
+        self.last_signals = []
 
         # 3. Track 1 ~ Track 9 전략 평가 및 CanonicalStrategySignal 수집
         for st in self.strategies:
             st_name = getattr(st, "name", st.__class__.__name__)
+            if not self.enabled_strategies.get(st_name, True):
+                continue
             m = self.strategy_metrics[st_name]
             m["ticks_evaluated"] += 1
             signals_dicts: List[Dict[str, Any]] = []
 
             try:
-                date_str = "2026-08-23"
+                date_str = (tick.timestamp or "2026-08-23").split(" ")[0]
                 if st_name == "Track1":
                     if st.active_fence is None:
                         atm = round(tick.underlying_price / 2.5) * 2.5
                         t1_init = st.evaluate_strategy(tick.underlying_price, atm, {})
                         if t1_init.get("signals"):
                             signals_dicts.extend(t1_init["signals"])
-                    is_bull = (self.current_regime == "BULL")
+                    is_bull = (condition.regime == "BULL") if condition else False
                     raw_signals = st.on_tick(
                         current_price=tick.underlying_price,
                         trend_signal=is_bull,
@@ -146,7 +163,7 @@ class OptionProgramRuntime:
                 elif st_name == "Track2":
                     if not st.trap_state.get("is_active"):
                         atm_2 = round(tick.underlying_price / 2.5) * 2.5
-                        t2_init = st.build_asymmetric_trap(current_atm=atm_2, active_vol=1.0, base_vol=1.0)
+                        t2_init = st.build_asymmetric_trap(current_atm=atm_2, active_vol=(condition.volatility if condition else 0.0), base_vol=(condition.baseline_volatility if condition else 0.0))
                         if t2_init.get("signals"):
                             signals_dicts.extend(t2_init["signals"])
                     trap_res = st.evaluate_trap_status(tick.underlying_price)
@@ -156,14 +173,14 @@ class OptionProgramRuntime:
                         signals_dicts.append(trap_res)
 
                 elif st_name == "Track3":
-                    dislocation = 0.35 if self.current_regime in ["BEAR", "HIGH_VOL"] else 0.05
+                    dislocation = condition.basis if condition else 0.0
                     m_data = {
                         "underlying_price": tick.underlying_price,
                         "time_str": "09:30:00",
                         "atm_strike": round(tick.underlying_price / 2.5) * 2.5,
-                        "near_synthetic_future": tick.underlying_price + dislocation,
+                        "near_synthetic_future": tick.underlying_price + (condition.basis if condition else 0.0),
                         "far_synthetic_future": tick.underlying_price,
-                        "active_vol": 1.5 if self.current_regime == "HIGH_VOL" else 1.0,
+                        "active_vol": condition.volatility if condition else 0.0,
                     }
                     arb_res = st.evaluate_arbitrage(m_data)
                     if arb_res.get("signals"):
@@ -172,7 +189,7 @@ class OptionProgramRuntime:
                         signals_dicts.append(arb_res)
 
                 elif st_name == "Track4":
-                    sc_vol = 1.35 if self.current_regime in ["HIGH_VOL", "BEAR"] else 1.0
+                    sc_vol = condition.volatility if condition else 0.0
                     sc_res = st.evaluate_scalping_basecamp_entry(
                         current_price=tick.underlying_price,
                         active_vol=sc_vol,
@@ -186,12 +203,12 @@ class OptionProgramRuntime:
                         signals_dicts.append(sc_res)
 
                 elif st_name == "Track5":
-                    gap_amt = 2.5 if self.current_regime in ["HIGH_VOL", "BEAR"] else 1.0
+                    gap_amt = abs(condition.price_change) if condition and condition.gap_detected else 0.0
                     gap_res = st.evaluate_gap_divergence(
                         open_price=tick.underlying_price + gap_amt,
                         prev_close_price=tick.underlying_price,
-                        active_vol=1.5 if self.current_regime == "HIGH_VOL" else 1.0,
-                        current_regime=self.current_regime,
+                        active_vol=condition.volatility if condition else 0.0,
+                        current_regime=condition.regime if condition else self.current_regime,
                         date_str=date_str
                     )
                     if gap_res.get("signals"):
@@ -205,7 +222,7 @@ class OptionProgramRuntime:
                         signals_dicts.append(m_res)
 
                 elif st_name == "Track6":
-                    vol_ratio = 1.45 if self.current_regime == "HIGH_VOL" else 1.0
+                    vol_ratio = condition.volatility_ratio if condition else 1.0
                     ins_res = st.evaluate_insurance_buy(
                         current_price=tick.underlying_price,
                         active_vol=vol_ratio,
@@ -292,6 +309,7 @@ class OptionProgramRuntime:
                 m["exceptions"] += 1
                 logger.error(f"Strategy {st_name} execution error: {e}", exc_info=True)
 
+        self.last_signals = [s.__dict__ for s in raw_signals_collected]
         if not raw_signals_collected:
             return []
 
@@ -337,6 +355,8 @@ class OptionProgramRuntime:
                 )
                 self._order_id_to_uuid[cmd.client_order_id] = order_uuid
                 commands.append(cmd)
+                self.last_orders.append({"client_order_id": cmd.client_order_id, "track_id": cmd.track_id, "side": cmd.side.value, "qty": cmd.qty, "price": cmd.price})
+                self.last_orders = self.last_orders[-50:]
                 if "orders_created" in m:
                     m["orders_created"] += 1
             else:
@@ -351,3 +371,9 @@ class OptionProgramRuntime:
         if order_uuid is not None:
             self.order_router.handle_execution_report(order_uuid, report)
             self.oms_fsm.clear_completed_locks()
+
+    def set_strategy_enabled(self, track_id: str, enabled: bool) -> None:
+        if track_id in self.enabled_strategies:
+            self.enabled_strategies[track_id] = bool(enabled)
+
+
