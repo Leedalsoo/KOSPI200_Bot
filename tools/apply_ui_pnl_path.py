@@ -1,4 +1,8 @@
-"""Target Architecture UI Backend API Server."""
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+SERVER_CODE = r'''"""Target Architecture UI Backend API Server."""
 import asyncio
 import logging
 from typing import Any, Dict, Optional, Set
@@ -173,3 +177,64 @@ class UIWebSocketHub:
             await self.server.wait_closed()
             self.server = None
         self.clients.clear()
+'''
+
+TEST_CODE = r'''from types import SimpleNamespace
+
+from web_interface.server import TargetArchitectureUIServer
+
+
+def test_ui_snapshot_contains_realtime_pnl_coord():
+    tick = SimpleNamespace(
+        timestamp="2026-08-25 09:00:01",
+        seq_id=42,
+        underlying_price=350.0,
+        bid_price=349.9,
+        ask_price=350.1,
+        volume=100,
+    )
+    account = SimpleNamespace(
+        total_balance=50_000_000.0,
+        realized_pnl=125_000.0,
+        unrealized_pnl=-25_000.0,
+        used_margin=1_000_000.0,
+        free_margin=49_000_000.0,
+        positions={},
+    )
+    condition = SimpleNamespace(to_dict=lambda: {"regime": "NORMAL"})
+    runtime = SimpleNamespace(
+        market_condition=condition,
+        last_risk_snapshot=None,
+        received_execution_reports=[],
+        strategy_metrics={},
+        current_regime="NORMAL",
+        enabled_strategies={},
+        last_orders=[],
+    )
+    system = SimpleNamespace(
+        last_tick=tick,
+        op_runtime=runtime,
+        vssf=SimpleNamespace(get_account_snapshot=lambda: account),
+        broker_mode="PAPER",
+        ticks_processed=42,
+        orders_routed=0,
+        executions_handled=0,
+    )
+
+    snapshot = TargetArchitectureUIServer(system).snapshot()
+
+    assert snapshot["coord"] == {"x": 42, "y": 100_000.0}
+    assert snapshot["pnl"]["total"] == 100_000.0
+'''
+
+
+def write_text(relative_path: str, content: str) -> None:
+    path = ROOT / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8", newline="\n")
+    print(f"[WRITE] {path}")
+
+
+write_text("web_interface/server.py", SERVER_CODE)
+write_text("tests/integration/test_ui_pnl_data_path.py", TEST_CODE)
+print("[DONE] UI PnL data path files applied.")
