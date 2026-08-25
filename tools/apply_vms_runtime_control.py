@@ -1,4 +1,11 @@
-"""Virtual Market Simulator Runtime - market data generation and UI control."""
+from pathlib import Path
+
+RUNTIME = Path("virtual_market_simulator/runtime/simulator_runtime.py")
+TEST = Path("tests/unit/test_vms_runtime_control.py")
+RUNTIME_BACKUP = RUNTIME.with_suffix(RUNTIME.suffix + ".bak_stage3")
+TEST_BACKUP = TEST.with_suffix(TEST.suffix + ".bak_stage3")
+
+RUNTIME_CONTENT = r'''"""Virtual Market Simulator Runtime - market data generation and UI control."""
 import logging
 import random
 from typing import Any, Dict, Generator, Optional
@@ -184,3 +191,71 @@ class VirtualMarketSimulatorRuntime:
             if not self._running:
                 return
             yield self._next_market_tick()
+'''
+
+TEST_CONTENT = r'''from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
+
+
+def test_generator_control_changes_runtime_tick():
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.set_generator_config(500.0, 1.0, 0.20, 25)
+    tick = next(runtime.generate_tick_stream(total_days=1, ticks_per_day=1))
+    assert tick.underlying_price >= 100.0
+    assert tick.volume == 25
+    assert round(tick.ask_price - tick.bid_price, 2) == 0.20
+
+
+def test_market_regime_is_used_by_runtime():
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.set_generator_config(350.0, 1.0, 0.05, 10)
+    runtime.set_market_regime("BULL")
+    first = next(runtime.generate_tick_stream(total_days=1, ticks_per_day=1))
+    second = next(runtime.generate_tick_stream(total_days=1, ticks_per_day=1))
+    assert second.underlying_price > first.underlying_price
+
+
+def test_market_stress_changes_generated_tick():
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.set_generator_config(350.0, 1.0, 0.05, 100)
+    runtime.inject_market_stress("LIQUIDITY_DROP")
+    tick = next(runtime.generate_tick_stream(total_days=1, ticks_per_day=1))
+    assert tick.volume == 25
+    assert round(tick.ask_price - tick.bid_price, 2) == 0.15
+
+
+def test_tick_speed_updates_runtime_control_state():
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.set_tick_speed("FAST")
+    state = runtime.get_control_state()
+    assert state["tick_speed"] == "FAST"
+    assert state["config"]["replay_speed"] == 1000
+
+
+def test_reset_restores_vms_defaults():
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.set_generator_config(500.0, 2.0, 0.2, 50)
+    runtime.set_market_regime("BEAR")
+    runtime.inject_market_stress("CRASH")
+    state = runtime.reset_simulation()
+    assert state["generator"]["base_price"] == 350.0
+    assert state["generator"]["volatility_ratio"] == 1.0
+    assert state["generator"]["spread"] == 0.05
+    assert state["generator"]["volume"] == 10
+    assert state["market_regime"] == "NORMAL"
+    assert state["stress"] is None
+    assert state["tick_speed"] == "NORMAL"
+'''
+
+for path in (RUNTIME, TEST):
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+RUNTIME_BACKUP.write_text(RUNTIME.read_text(encoding="utf-8"), encoding="utf-8")
+TEST_BACKUP.write_text(TEST.read_text(encoding="utf-8"), encoding="utf-8")
+RUNTIME.write_text(RUNTIME_CONTENT, encoding="utf-8")
+TEST.write_text(TEST_CONTENT, encoding="utf-8")
+
+print(f"Applied: {RUNTIME}")
+print(f"Backup : {RUNTIME_BACKUP}")
+print(f"Applied: {TEST}")
+print(f"Backup : {TEST_BACKUP}")
