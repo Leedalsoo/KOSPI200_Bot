@@ -1,0 +1,281 @@
+import React from 'react';
+import { useStore } from './store/rootStore';
+import { useWebSocket } from './hooks/useWebSocket';
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ScatterChart,
+  Scatter,
+  ReferenceLine,
+} from 'recharts';
+
+const tracks = [
+  ['Track1', 'Tail Defense'],
+  ['Track2', 'Asymmetric Trap'],
+  ['Track3', 'Stat Arbitrage'],
+  ['Track4', 'Gamma Scalping'],
+  ['Track5', 'Gap Protocol'],
+  ['Track6', 'Daily 0DTE'],
+  ['Track7', 'Weekly Insurance'],
+  ['Track8', 'Monthly Strangle'],
+  ['Track9', 'Insurance'],
+];
+
+const fmt = (v) => Number(v || 0).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
+const money = (v) => '₩' + fmt(v);
+
+function Card({ title, children, wide = false }) {
+  return (
+    <section style={{
+      ...styles.card,
+      gridColumn: wide ? '1 / -1' : undefined,
+    }}>
+      <div style={styles.cardTitle}>{title}</div>
+      {children}
+    </section>
+  );
+}
+
+function Metric({ label, value, danger = false }) {
+  return (
+    <div style={styles.metric}>
+      <span style={styles.label}>{label}</span>
+      <strong style={{ color: danger ? '#F87171' : '#F8FAFC' }}>{value}</strong>
+    </div>
+  );
+}
+
+function App() {
+  const state = useStore();
+  const { isConnected, sendCommand } = useWebSocket(
+    process.env.REACT_APP_WS_URL || 'ws://localhost:8765'
+  );
+
+  const condition = state.marketCondition || {};
+  const account = state.broker.account || {};
+  const strategies = state.optionProgram.strategy_metrics || {};
+  const enabled = state.optionProgram.enabled_strategies || {};
+  const executions = state.executions || [];
+  const orders = state.orders || [];
+  const positions = state.positions || {};
+  const payoff = state.payoff || [];
+  const coords = state.coords || [];
+
+  const toggleTrack = (trackId) => {
+    sendCommand({
+      action: 'set_strategy_enabled',
+      track_id: trackId,
+      enabled: enabled[trackId] === false,
+    });
+  };
+
+  return (
+    <div style={styles.page}>
+      <header style={styles.header}>
+        <div>
+          <div style={styles.kicker}>KOSPI200 HFT</div>
+          <h1 style={styles.title}>Integrated Control Panel</h1>
+          <div style={styles.sub}>Virtual Market · Virtual Securities Firm · Option Program</div>
+        </div>
+        <div style={styles.headerRight}>
+          <span style={{ ...styles.connection, ...(isConnected ? styles.connected : styles.disconnected) }}>
+            {isConnected ? '● CONNECTED' : '● DISCONNECTED'}
+          </span>
+          <span style={styles.badge}>{state.broker.mode || 'PAPER'}</span>
+          <span style={styles.badge}>Tick {state.market.seq_id || 0}</span>
+        </div>
+      </header>
+
+      <div style={styles.grid}>
+        <Card title="Virtual Market">
+          <div style={styles.metrics}>
+            <Metric label="KOSPI200" value={fmt(state.market.price)} />
+            <Metric label="Bid" value={fmt(state.market.bid)} />
+            <Metric label="Ask" value={fmt(state.market.ask)} />
+            <Metric label="Spread" value={fmt(state.market.spread)} />
+            <Metric label="Volume" value={fmt(state.market.volume)} />
+          </div>
+        </Card>
+
+        <Card title="Market Condition">
+          <div style={styles.metrics}>
+            <Metric label="Regime" value={condition.regime || 'NEUTRAL'} danger={String(condition.regime).includes('CRISIS')} />
+            <Metric label="Confidence" value={(Number(condition.regime_confidence || 0) * 100).toFixed(1) + '%'} />
+            <Metric label="Volatility Ratio" value={Number(condition.volatility_ratio || 1).toFixed(2) + 'x'} />
+            <Metric label="Liquidity" value={condition.liquidity_level || 'NORMAL'} />
+            <Metric label="Stress" value={(Number(condition.stress_level || 0) * 100).toFixed(1) + '%'} danger={Number(condition.stress_level || 0) >= 0.7} />
+          </div>
+          <div style={styles.flags}>
+            {(condition.stress_flags || []).length
+              ? condition.stress_flags.map((f) => <span key={f} style={styles.flag}>{f}</span>)
+              : <span style={styles.muted}>관측된 경보 없음</span>}
+          </div>
+        </Card>
+
+        <Card title="Account / Margin">
+          <div style={styles.metrics}>
+            <Metric label="Balance" value={money(account.balance)} />
+            <Metric label="Realized PnL" value={money(account.realized_pnl)} />
+            <Metric label="Unrealized PnL" value={money(account.unrealized_pnl)} />
+            <Metric label="Used Margin" value={money(account.used_margin)} />
+            <Metric label="Free Margin" value={money(account.free_margin)} />
+          </div>
+        </Card>
+
+        <Card title="Risk">
+          <div style={styles.metrics}>
+            <Metric label="Vol Spike" value={state.risk.is_vol_spike ? 'YES' : 'NO'} danger={state.risk.is_vol_spike} />
+            <Metric label="Crisis" value={state.risk.is_crisis_regime ? 'YES' : 'NO'} danger={state.risk.is_crisis_regime} />
+            <Metric label="Margin Diet" value={state.risk.is_margin_diet_required ? 'YES' : 'NO'} danger={state.risk.is_margin_diet_required} />
+            <Metric label="Vol Ratio" value={Number(state.risk.active_vol_ratio || 1).toFixed(2) + 'x'} />
+          </div>
+          <div style={styles.reason}>{state.risk.reason || 'NORMAL'}</div>
+        </Card>
+
+        <Card title="Strategy Matrix" wide>
+          <div style={styles.trackGrid}>
+            {tracks.map(([id, name]) => {
+              const m = strategies[id] || {};
+              const on = enabled[id] !== false;
+              return (
+                <div key={id} style={{ ...styles.track, borderColor: on ? '#10B981' : '#334155' }}>
+                  <div style={styles.trackHead}>
+                    <strong>{id}</strong>
+                    <button onClick={() => toggleTrack(id)} style={{ ...styles.toggle, background: on ? '#10B981' : '#475569' }}>
+                      <span style={{ left: on ? 18 : 2 }} />
+                    </button>
+                  </div>
+                  <div style={styles.trackName}>{name}</div>
+                  <div style={styles.trackStats}>
+                    <span>Ticks {m.ticks_evaluated || 0}</span>
+                    <span>Signals {m.signals_generated || 0}</span>
+                    <span>Orders {m.orders_created || 0}</span>
+                    <span>Errors {m.exceptions || 0}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+
+        <Card title="Positions">
+          {Object.keys(positions).length === 0 ? (
+            <div style={styles.muted}>포지션 없음</div>
+          ) : (
+            <div style={styles.list}>
+              {Object.entries(positions).map(([key, value]) => (
+                <div key={key} style={styles.row}>
+                  <span>{key}</span>
+                  <strong>{JSON.stringify(value)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card title="Orders / Executions">
+          <div style={styles.list}>
+            {orders.slice(-6).map((o, i) => (
+              <div key={i} style={styles.row}>
+                <span>{o.track_id || o.client_order_id}</span>
+                <span>{o.side || ''} {o.qty || ''}</span>
+              </div>
+            ))}
+            {!orders.length && <div style={styles.muted}>주문 대기 중</div>}
+          </div>
+          <div style={{ ...styles.sectionLabel, marginTop: 12 }}>Executions</div>
+          <div style={styles.list}>
+            {executions.slice(-6).map((e, i) => (
+              <div key={i} style={styles.row}>
+                <span>{e.track_id || e.exec_id}</span>
+                <span>{fmt(e.executed_price)} × {e.executed_qty}</span>
+              </div>
+            ))}
+            {!executions.length && <div style={styles.muted}>체결 대기 중</div>}
+          </div>
+        </Card>
+
+        <Card title="Composite Payoff" wide>
+          {payoff.length ? (
+            <div style={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer>
+                <ScatterChart>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" dataKey="x" />
+                  <YAxis type="number" dataKey="y" />
+                  <Tooltip />
+                  <ReferenceLine y={0} />
+                  <Scatter data={payoff} line={{ stroke: '#38BDF8' }} shape={() => null} />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          ) : <div style={styles.muted}>실제 포지션이 생성되면 Payoff가 표시됩니다.</div>}
+        </Card>
+
+        <Card title="Realtime PnL" wide>
+          <div style={{ width: '100%', height: 280 }}>
+            <ResponsiveContainer>
+              <LineChart data={coords}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="x" />
+                <YAxis />
+                <Tooltip />
+                <Line dataKey="y" stroke="#38BDF8" dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card title="Replay / Runtime">
+          <div style={styles.metrics}>
+            <Metric label="Last Tick" value={state.replay.timestamp || condition.timestamp || '-'} />
+            <Metric label="Seq" value={condition.seq_id || state.market.seq_id || 0} />
+            <Metric label="Flags" value={(condition.stress_flags || []).length} />
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+const styles = {
+  page: { minHeight: '100vh', background: '#0F172A', color: '#F8FAFC', padding: 20, fontFamily: 'Inter, system-ui, sans-serif' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, marginBottom: 20, padding: 18, background: '#111827', border: '1px solid #334155', borderRadius: 14 },
+  kicker: { color: '#38BDF8', fontSize: 11, fontWeight: 800, letterSpacing: '0.15em' },
+  title: { margin: '4px 0', fontSize: 25 },
+  sub: { color: '#94A3B8', fontSize: 12 },
+  headerRight: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' },
+  connection: { padding: '6px 10px', borderRadius: 8, fontSize: 11, fontWeight: 800 },
+  connected: { color: '#34D399', background: '#064E3B' },
+  disconnected: { color: '#F87171', background: '#450A0A' },
+  badge: { padding: '6px 10px', borderRadius: 8, background: '#1E293B', color: '#CBD5E1', fontSize: 11 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14 },
+  card: { background: '#111827', border: '1px solid #334155', borderRadius: 14, padding: 16, minWidth: 0 },
+  cardTitle: { color: '#CBD5E1', fontSize: 12, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 14 },
+  metrics: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 },
+  metric: { display: 'flex', flexDirection: 'column', gap: 3, padding: 10, background: '#0F172A', borderRadius: 9 },
+  label: { color: '#64748B', fontSize: 10 },
+  muted: { color: '#64748B', fontSize: 12 },
+  flags: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 12 },
+  flag: { color: '#FBBF24', background: '#422006', border: '1px solid #92400E', padding: '4px 7px', borderRadius: 6, fontSize: 9 },
+  reason: { marginTop: 10, color: '#94A3B8', fontFamily: 'monospace', fontSize: 10 },
+  trackGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 },
+  track: { background: '#0F172A', border: '1px solid', borderRadius: 10, padding: 11 },
+  trackHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  trackName: { marginTop: 7, fontSize: 12, fontWeight: 700 },
+  trackStats: { marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, color: '#94A3B8', fontSize: 9 },
+  toggle: { width: 38, height: 21, border: 0, borderRadius: 12, padding: 2, position: 'relative', cursor: 'pointer' },
+  toggleSpan: { position: 'absolute', top: 2, width: 17, height: 17, borderRadius: '50%', background: '#FFF' },
+  list: { display: 'flex', flexDirection: 'column', gap: 5 },
+  row: { display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 8px', background: '#0F172A', borderRadius: 7, fontSize: 10, color: '#CBD5E1' },
+  sectionLabel: { color: '#64748B', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em' },
+  '@media (max-width: 800px)': { grid: { gridTemplateColumns: '1fr' }, trackGrid: { gridTemplateColumns: '1fr 1fr' } },
+};
+
+export default App;
+
