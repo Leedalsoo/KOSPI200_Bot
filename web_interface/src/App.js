@@ -10,6 +10,13 @@ function App() {
   const { isConnected, sendCommand } = useWebSocket(
     process.env.REACT_APP_WS_URL || 'ws://localhost:8765'
   );
+
+  if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
+    window.__KOSPI200_UI_DEBUG__ = {
+      getState: () => useStore.getState(),
+    };
+  }
+
   const [activeTab, setActiveTab] = useState('option');
   const tabs = [
     ['option', '① 옵션 프로그램'],

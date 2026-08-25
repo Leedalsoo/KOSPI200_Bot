@@ -138,12 +138,12 @@ class UIWebSocketHub:
     async def handler(self, websocket):
         self.clients.add(websocket)
         try:
-            await websocket.send(orjson.dumps(self.adapter.snapshot()))
+            await websocket.send(orjson.dumps(self.adapter.snapshot()).decode("utf-8"))
             async for message in websocket:
                 try:
                     command = orjson.loads(message)
                     await self.adapter.handle_command(command)
-                    await websocket.send(orjson.dumps(self.adapter.snapshot()))
+                    await websocket.send(orjson.dumps(self.adapter.snapshot()).decode("utf-8"))
                 except Exception as exc:
                     logger.warning("UI command failed: %s", exc)
         finally:
@@ -157,7 +157,7 @@ class UIWebSocketHub:
     async def broadcast(self):
         if not self.clients:
             return
-        payload = orjson.dumps(self.adapter.snapshot())
+        payload = orjson.dumps(self.adapter.snapshot()).decode("utf-8")
         dead = []
         for client in list(self.clients):
             try:
