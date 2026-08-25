@@ -1,0 +1,69 @@
+from shared.contracts.canonical import CanonicalMarketTick
+from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
+
+
+def _tick(seq: int, price: float) -> CanonicalMarketTick:
+    return CanonicalMarketTick(
+        timestamp=f"2026-08-23 09:00:{seq:02d}.000",
+        underlying_price=price,
+        strike_price=350.0,
+        option_type="CALL",
+        bid_price=price - 0.1,
+        ask_price=price + 0.1,
+        last_price=price,
+        volume=10,
+        seq_id=seq,
+    )
+
+
+def test_scenario_source_is_default_and_produces_ticks() -> None:
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.set_scenario("CALM")
+    runtime.set_running(True)
+    ticks = list(runtime.generate_tick_stream(total_days=1, ticks_per_day=5))
+    assert len(ticks) == 5
+    assert all(t.seq_id > 0 for t in ticks)
+    assert runtime.get_control_state()["source"] == "SCENARIO"
+
+
+def test_scenario_selection_is_deterministic_after_reset() -> None:
+    runtime_a = VirtualMarketSimulatorRuntime()
+    runtime_b = VirtualMarketSimulatorRuntime()
+    runtime_a.set_scenario("HIGH_VOLATILITY")
+    runtime_b.set_scenario("HIGH_VOLATILITY")
+    a = list(runtime_a.generate_tick_stream(total_days=1, ticks_per_day=10))
+    b = list(runtime_b.generate_tick_stream(total_days=1, ticks_per_day=10))
+    assert [x.underlying_price for x in a] == [x.underlying_price for x in b]
+
+
+def test_replay_source_overrides_scenario_generation() -> None:
+    runtime = VirtualMarketSimulatorRuntime()
+    replay = [_tick(101, 401.0), _tick(102, 402.0), _tick(103, 403.0)]
+    runtime.load_replay(replay)
+    runtime.set_running(True)
+    ticks = list(runtime.generate_tick_stream(total_days=1, ticks_per_day=10))
+    assert [t.seq_id for t in ticks] == [101, 102, 103]
+    assert [t.underlying_price for t in ticks] == [401.0, 402.0, 403.0]
+    assert runtime.get_control_state()["source"] == "REPLAY"
+
+
+def test_replay_reset_restarts_from_first_tick() -> None:
+    runtime = VirtualMarketSimulatorRuntime()
+    replay = [_tick(1, 401.0), _tick(2, 402.0)]
+    runtime.load_replay(replay)
+    runtime.set_running(True)
+    first = list(runtime.generate_tick_stream(total_days=1, ticks_per_day=2))
+    runtime.replay.reset()
+    second = list(runtime.generate_tick_stream(total_days=1, ticks_per_day=2))
+    assert [t.seq_id for t in first] == [1, 2]
+    assert [t.seq_id for t in second] == [1, 2]
+
+
+def test_reset_clears_replay_and_stops_runtime() -> None:
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.load_replay([_tick(1, 401.0)])
+    runtime.reset_simulation()
+    state = runtime.get_control_state()
+    assert state["source"] == "SCENARIO"
+    assert state["replay"]["active"] is False
+    assert state["running"] is False

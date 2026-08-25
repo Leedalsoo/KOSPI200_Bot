@@ -1,4 +1,139 @@
-"""Virtual Market Simulator Runtime with scenario/replay tick supply."""
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+SCENARIO_ENGINE = '''"""Scenario-driven market tick parameter source."""
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import yaml
+
+
+@dataclass(frozen=True)
+class ScenarioAdjustment:
+    volatility_multiplier: float = 1.0
+    drift: float = 0.0
+    gap_pct: float = 0.0
+    shock_delta: float = 0.0
+
+
+class ScenarioEngine:
+    """Loads market-generation scenarios and produces deterministic adjustments."""
+
+    def __init__(self, config_path: Optional[str] = None, seed: int = 42) -> None:
+        self.config_path = Path(config_path or "config/market_scenarios.yaml")
+        self.seed = seed
+        self._rng = random.Random(seed)
+        self._scenarios: Dict[str, Dict[str, Any]] = {}
+        self._active_name = ""
+        self._load()
+
+    def _load(self) -> None:
+        with self.config_path.open("r", encoding="utf-8") as handle:
+            payload = yaml.safe_load(handle) or {}
+        scenarios = payload.get("scenarios") or {}
+        if not isinstance(scenarios, dict) or not scenarios:
+            raise ValueError("market_scenarios.yaml must define scenarios")
+        self._scenarios = {str(name): dict(value or {}) for name, value in scenarios.items()}
+        active = str(payload.get("active_scenario") or next(iter(self._scenarios)))
+        self.set_scenario(active)
+
+    @property
+    def active_scenario(self) -> str:
+        return self._active_name
+
+    @property
+    def available_scenarios(self) -> tuple[str, ...]:
+        return tuple(self._scenarios)
+
+    def set_scenario(self, name: str) -> None:
+        if name not in self._scenarios:
+            raise ValueError(f"unsupported scenario: {name}")
+        self._active_name = name
+        self._rng = random.Random(self.seed)
+
+    def next_adjustment(self, tick_index: int, ticks_per_day: int) -> ScenarioAdjustment:
+        cfg = self._scenarios[self._active_name]
+        base_volatility = float(cfg.get("base_volatility", 1.0))
+        drift_range = cfg.get("trend_drift_range", [-0.03, 0.03])
+        gap_range = cfg.get("gap_magnitude_percent", [0.0, 0.0])
+        shock_range = cfg.get("biweekly_shock_range", [0.0, 0.0])
+        interval_days = max(1, int(cfg.get("shock_interval_days", 999999)))
+        drift = self._rng.uniform(float(drift_range[0]), float(drift_range[1]))
+        gap_pct = 0.0
+        shock_delta = 0.0
+        interval_ticks = max(1, interval_days * max(1, ticks_per_day))
+        if tick_index > 0 and tick_index % interval_ticks == 0:
+            magnitude = self._rng.uniform(float(shock_range[0]), float(shock_range[1]))
+            direction = -1.0 if self._rng.random() < 0.5 else 1.0
+            shock_delta = magnitude * direction
+            gap = self._rng.uniform(float(gap_range[0]), float(gap_range[1])) / 100.0
+            gap_pct = gap * direction
+        return ScenarioAdjustment(max(0.01, base_volatility), drift, gap_pct, shock_delta)
+
+    def state(self) -> Dict[str, Any]:
+        return {"active_scenario": self._active_name, "available_scenarios": list(self.available_scenarios)}
+'''
+
+REPLAY_ENGINE = '''"""Canonical tick replay source."""
+from __future__ import annotations
+
+from collections.abc import Iterable, Iterator
+from typing import List, Optional
+
+from shared.contracts.canonical import CanonicalMarketTick
+
+
+class HistoricalReplayEngine:
+    """Deterministic in-memory replay source for canonical market ticks."""
+
+    def __init__(self, ticks: Optional[Iterable[CanonicalMarketTick]] = None) -> None:
+        self._ticks: List[CanonicalMarketTick] = list(ticks or [])
+        self._cursor = 0
+
+    @property
+    def active(self) -> bool:
+        return bool(self._ticks)
+
+    @property
+    def exhausted(self) -> bool:
+        return self._cursor >= len(self._ticks)
+
+    @property
+    def cursor(self) -> int:
+        return self._cursor
+
+    def load(self, ticks: Iterable[CanonicalMarketTick]) -> None:
+        self._ticks = list(ticks)
+        self._cursor = 0
+
+    def clear(self) -> None:
+        self._ticks = []
+        self._cursor = 0
+
+    def reset(self) -> None:
+        self._cursor = 0
+
+    def next_tick(self) -> Optional[CanonicalMarketTick]:
+        if self.exhausted:
+            return None
+        tick = self._ticks[self._cursor]
+        self._cursor += 1
+        return tick
+
+    def __iter__(self) -> Iterator[CanonicalMarketTick]:
+        while True:
+            tick = self.next_tick()
+            if tick is None:
+                return
+            yield tick
+'''
+
+RUNTIME = '''"""Virtual Market Simulator Runtime with scenario/replay tick supply."""
 from __future__ import annotations
 
 import logging
@@ -172,3 +307,83 @@ class VirtualMarketSimulatorRuntime:
                 yield tick
             else:
                 yield self._next_market_tick(tick_index, ticks_per_day)
+'''
+
+TESTS = '''from datetime import datetime
+from shared.contracts.canonical import CanonicalMarketTick
+from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimulatorRuntime
+
+
+def _tick(seq: int, price: float) -> CanonicalMarketTick:
+    return CanonicalMarketTick(timestamp=datetime(2026, 8, 23, 9, 0, seq), underlying_price=price, strike_price=350.0, option_type="CALL", bid_price=price - 0.1, ask_price=price + 0.1, last_price=price, volume=10, seq_id=seq)
+
+
+def test_scenario_source_is_default_and_produces_ticks():
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.set_scenario("CALM")
+    runtime.set_running(True)
+    ticks = list(runtime.generate_tick_stream(total_days=1, ticks_per_day=5))
+    assert len(ticks) == 5
+    assert runtime.get_control_state()["source"] == "SCENARIO"
+
+
+def test_scenario_selection_is_deterministic():
+    a = VirtualMarketSimulatorRuntime(); b = VirtualMarketSimulatorRuntime()
+    a.set_scenario("HIGH_VOLATILITY"); b.set_scenario("HIGH_VOLATILITY")
+    ta = list(a.generate_tick_stream(total_days=1, ticks_per_day=10))
+    tb = list(b.generate_tick_stream(total_days=1, ticks_per_day=10))
+    assert [x.underlying_price for x in ta] == [x.underlying_price for x in tb]
+
+
+def test_replay_source_overrides_scenario_generation():
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.load_replay([_tick(101, 401.0), _tick(102, 402.0), _tick(103, 403.0)])
+    runtime.set_running(True)
+    ticks = list(runtime.generate_tick_stream(total_days=1, ticks_per_day=10))
+    assert [t.seq_id for t in ticks] == [101, 102, 103]
+    assert [t.underlying_price for t in ticks] == [401.0, 402.0, 403.0]
+
+
+def test_replay_reset_restarts_from_first_tick():
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.load_replay([_tick(1, 401.0), _tick(2, 402.0)])
+    runtime.set_running(True)
+    first = list(runtime.generate_tick_stream(total_days=1, ticks_per_day=2))
+    runtime.replay.reset()
+    second = list(runtime.generate_tick_stream(total_days=1, ticks_per_day=2))
+    assert [t.seq_id for t in first] == [1, 2]
+    assert [t.seq_id for t in second] == [1, 2]
+
+
+def test_reset_clears_replay_and_stops_runtime():
+    runtime = VirtualMarketSimulatorRuntime()
+    runtime.load_replay([_tick(1, 401.0)])
+    runtime.reset_simulation()
+    state = runtime.get_control_state()
+    assert state["source"] == "SCENARIO"
+    assert state["replay"]["active"] is False
+    assert state["running"] is False
+'''
+
+FILES = {
+    "virtual_market_simulator/scenario/scenario_engine.py": SCENARIO_ENGINE,
+    "virtual_market_simulator/scenario/replay_engine.py": REPLAY_ENGINE,
+    "virtual_market_simulator/runtime/simulator_runtime.py": RUNTIME,
+    "tests/unit/test_vms_scenario_replay.py": TESTS,
+}
+
+
+def main() -> None:
+    for relative_path, content in FILES.items():
+        path = ROOT / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        backup = path.with_name(path.name + ".bak_stage4")
+        if path.exists():
+            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        path.write_text(content, encoding="utf-8")
+        print(f"Applied: {relative_path}")
+        if backup.exists(): print(f"Backup : {backup.relative_to(ROOT)}")
+
+
+if __name__ == "__main__":
+    main()
