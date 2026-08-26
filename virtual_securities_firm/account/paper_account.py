@@ -129,7 +129,9 @@ class PaperTradingAccount:
                 return
             self._processed_exec_ids.add(exec_id)
 
-        pnl_delta = self.position_mgr.update_position(effective_symbol, side_str, exec_qty, exec_price)
+        pnl_delta = self.position_mgr.update_position(
+            effective_symbol, side_str, exec_qty, exec_price, client_order_id=order_id
+        )
 
         if pnl_delta != 0.0:
             self.pnl_engine.add_realized(pnl_delta)
@@ -144,8 +146,6 @@ class PaperTradingAccount:
         self.unrealized_pnl = self.pnl_engine.calculate_unrealized(self.position_mgr.positions, last_p)
         total_equity = self.balance + self.realized_pnl + self.unrealized_pnl
         self.free_margin = self.margin_engine.calculate_free_margin(total_equity, self.used_margin)
-
-
 
         # Ledger Engine 기록
         self.ledger_engine.transactions.append({
@@ -169,3 +169,12 @@ class PaperTradingAccount:
 
     def get_positions(self) -> Dict[str, Dict[str, Any]]:
         return self.position_mgr.positions
+
+    def get_order_position(self, client_order_id: str) -> Dict[str, Any]:
+        """주문 ID 단위 귀속 포지션 조회 위임"""
+        return self.position_mgr.get_order_position(client_order_id)
+
+    def get_order_margin(self, client_order_id: str, multiplier: float = 250000.0) -> float:
+        """주문 ID 단위 귀속 마진 산출 위임"""
+        return self.position_mgr.get_order_margin(client_order_id, multiplier)
+

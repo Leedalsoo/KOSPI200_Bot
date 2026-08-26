@@ -1,4 +1,4 @@
-"""E2E Test: CANCELLED 주문 A의 신규 주문 B 체결 이후 완전한 독립성 검증.
+"""E2E Test: CANCELLED 주문 A의 동일 Symbol 신규 주문 B 체결 이후 완전한 독립성 검증.
 
 인과관계 및 검증 라이프사이클:
     [주문 A: 실패 -> CANCELLED]
@@ -6,34 +6,37 @@
         ↓
     stale cancel 실행 -> OrderStatus.CANCELLED
         ↓
-    CANCELLED 직후 주문 A 귀속 기준값 저장:
-    - positions_A_before
-    - used_margin_A_before
-    - executions_A_before
+    CANCELLED 직후 주문 A 귀속 기준값 저장 (PositionManager.order_positions 조회):
+    - A_position_before == 0
+    - A_margin_before == 0.0
+    - A_execution_before == 0
 
-    [주문 B: 정상 발주 및 체결]
+    [주문 B: 동일 Symbol 정상 발주 및 체결]
     Broker NORMAL 복구 -> 2번째 tick 실행
         ↓
-    신규 주문 B 생성 (client_order_id_B != client_order_id_A, order_uuid_B != order_uuid_A)
+    신규 주문 B 생성 (client_order_id_B != client_order_id_A, symbol_B == symbol_A)
         ↓
     RiskGate APPROVE -> Broker.send_order() 정상 호출
         ↓
     ExecutionReport 생성 -> 주문 B 정상 체결 (executed_qty > 0)
         ↓
-    주문 B에 의한 계좌 전체 Position/Margin 증가 관측
+    주문 B에 의한 계좌 전체 Position/Margin 증가 및 주문 B 귀속 Position/Margin 생성
+    (B_position > 0, B_margin > 0, B_execution > 0)
 
-    [주문 A의 독립성 실측]
+    [동일 Symbol 조건에서 주문 A의 독립성 실측]
     주문 B 체결 이후 주문 A 귀속 측정값 저장:
-    - positions_A_after
-    - used_margin_A_after
-    - executions_A_after
+    - A_position_after
+    - A_margin_after
+    - A_execution_after
         ↓
     명시적 equality assertion 검증:
-    assert positions_A_after == positions_A_before
-    assert used_margin_A_after == used_margin_A_before
-    assert executions_A_after == executions_A_before
+    assert symbol_A == symbol_B
+    assert A_position_after == A_position_before == 0
+    assert A_margin_after == A_margin_before == 0.0
+    assert A_execution_after == A_execution_before == 0
     assert status_A == OrderStatus.CANCELLED
-    assert calls_A_after == calls_A_before (재전송 없음)
+    assert calls_A_after == calls_A_before == 1 (재전송 없음)
+    assert B_position > 0 and B_margin > 0.0 (B는 정상 체결)
 """
 import unittest
 import asyncio
@@ -43,10 +46,10 @@ from shared.core.contracts import OrderStatus
 
 
 class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
-    """주문 B 정상 체결 이후에도 주문 A의 상태/체결/포지션/마진이 독립적으로 보존되는지 E2E 검증."""
+    """동일 symbol 주문 B 정상 체결 이후에도 주문 A의 상태/체결/포지션/마진이 독립적으로 보존되는지 E2E 검증."""
 
     def test_cancelled_order_a_independent_after_order_b_execution(self):
-        """[단일 E2E 실행] 주문 A CANCELLED 기준값 저장 -> 주문 B 정상 체결 -> 주문 A 귀속 상태 불변 및 독립성 실측."""
+        """[단일 E2E 실행] 주문 A CANCELLED -> 동일 Symbol 주문 B 정상 체결 -> 주문 A 귀속 상태 불변 및 독립성 실측."""
         async def _run():
             # 1. TradingSystem 초기화
             system = TradingSystem(config={"broker_mode": "PAPER", "initial_capital": 500_000_000.0})
@@ -99,27 +102,30 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
             status_A_cancelled = system.op_runtime.order_router.fsm.get_status(order_uuid_A)
             self.assertEqual(status_A_cancelled, OrderStatus.CANCELLED, "Order A must be CANCELLED")
 
-            # [주문 A CANCELLED 직후 실제 계좌/포지션/마진 상태에서 주문 A 귀속 기준값 측정 (before)]
-            pos_dict_A_before = {symbol_A: system.vssf.account.position_mgr.positions[symbol_A]} if symbol_A in system.vssf.account.position_mgr.positions else {}
-            positions_A_before = pos_dict_A_before.get(symbol_A, {}).get("qty", 0)
-            used_margin_A_before = system.vssf.account.margin_engine.calculate_used_margin(pos_dict_A_before)
-            executions_A_before = len([r for r in system.vssf.execution_engine.reports if getattr(r, "client_order_id", "") == client_order_id_A])
+            # [주문 A CANCELLED 직후 실제 주문별 attribution 기준값 측정 (before)]
+            ord_pos_A_before = system.vssf.account.get_order_position(client_order_id_A)
+            A_position_before = ord_pos_A_before.get("qty", 0)
+            A_margin_before = system.vssf.account.get_order_margin(client_order_id_A)
+            A_execution_before = len([
+                r for r in system.vssf.execution_engine.reports
+                if getattr(r, "client_order_id", "") == client_order_id_A
+            ])
 
-            self.assertEqual(positions_A_before, 0)
-            self.assertEqual(used_margin_A_before, 0.0)
-            self.assertEqual(executions_A_before, 0)
+            self.assertEqual(A_position_before, 0)
+            self.assertEqual(A_margin_before, 0.0)
+            self.assertEqual(A_execution_before, 0)
 
             calls_A_before = invoked_order_ids.count(client_order_id_A)
             self.assertEqual(calls_A_before, 1, "Order A must be called once in tick 1")
 
             # ----------------------------------------------------
-            # Phase 2: Broker NORMAL 복구 후 2번째 틱에서 신규 주문 B 처리
+            # Phase 2: Broker NORMAL 복구 후 2번째 틱에서 신규 주문 B 처리 (동일 Symbol)
             # ----------------------------------------------------
             system.broker.set_execution_behavior("NORMAL")
             await system.run_loop(max_ticks=2)
             self.assertEqual(system.ticks_processed, 2)
 
-            # 주문 B 식별
+            # 주문 B 식별 (동일 symbol 확인)
             new_orders_in_tick2 = [
                 o for o in system.op_runtime.last_orders
                 if o["client_order_id"] != client_order_id_A and "ORD-T2" in o["client_order_id"]
@@ -130,6 +136,13 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
             symbol_B = order_info_B.get("symbol", "")
             order_uuid_B = system.op_runtime._order_id_to_uuid.get(client_order_id_B)
             self.assertIsNotNone(order_uuid_B, "Order B UUID must be mapped")
+
+            # [동일 Symbol 명시적 검증]
+            self.assertEqual(
+                symbol_A,
+                symbol_B,
+                f"Order A and Order B must have the exact same symbol (A: {symbol_A}, B: {symbol_B})"
+            )
 
             # [A/B ID 분리 확인]
             self.assertNotEqual(client_order_id_A, client_order_id_B, "Order A and B client_order_id must differ")
@@ -147,52 +160,59 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
             self.assertGreaterEqual(calls_B, 1, "Order B must be sent to Broker")
 
             # 3) ExecutionReport 생성 및 체결
-            reports_B = [r for r in system.vssf.execution_engine.reports if getattr(r, "client_order_id", "") == client_order_id_B]
+            reports_B = [
+                r for r in system.vssf.execution_engine.reports
+                if getattr(r, "client_order_id", "") == client_order_id_B
+            ]
             self.assertGreater(len(reports_B), 0, "ExecutionReport for Order B must exist")
             executed_qty_B = sum(getattr(r, "executed_qty", 0) for r in reports_B)
             self.assertGreater(executed_qty_B, 0, "Order B executed qty must be > 0")
 
-            # 4) 실제 계좌 상태에서 주문 B 귀속 Position 및 Margin 측정
-            effective_symbol_B = reports_B[0].get_instrument_key() if hasattr(reports_B[0], "get_instrument_key") else getattr(reports_B[0], "symbol", symbol_B)
-            pos_dict_B = {effective_symbol_B: system.vssf.account.position_mgr.positions[effective_symbol_B]} if effective_symbol_B in system.vssf.account.position_mgr.positions else {}
-            positions_B = pos_dict_B.get(effective_symbol_B, {}).get("qty", 0)
-            margin_B = system.vssf.account.margin_engine.calculate_used_margin(pos_dict_B)
+            # 4) 실제 계좌 상태에서 주문 B 귀속 Position 및 Margin 측정 (주문별 Attribution)
+            ord_pos_B = system.vssf.account.get_order_position(client_order_id_B)
+            B_position = ord_pos_B.get("qty", 0)
+            B_margin = system.vssf.account.get_order_margin(client_order_id_B)
+            B_execution = len(reports_B)
 
-            self.assertGreater(positions_B, 0, "Order B Position must increase in account")
-            self.assertGreater(margin_B, 0.0, "Order B Margin must increase in account")
+            self.assertGreater(B_position, 0, "Order B Position attribution must be > 0")
+            self.assertGreater(B_margin, 0.0, "Order B Margin attribution must be > 0.0")
+            self.assertGreater(B_execution, 0, "Order B Execution count must be > 0")
             self.assertGreater(system.vssf.account.used_margin, 0.0, "Total account used margin must increase after Order B")
 
             # ----------------------------------------------------
-            # Phase 3: 주문 B 체결 이후 주문 A 귀속 상태 측정 및 명시적 equality assertion
+            # Phase 3: 동일 Symbol 주문 B 체결 이후 주문 A 귀속 상태 측정 및 명시적 equality assertion
             # ----------------------------------------------------
-            pos_dict_A_after = {symbol_A: system.vssf.account.position_mgr.positions[symbol_A]} if symbol_A in system.vssf.account.position_mgr.positions else {}
-            positions_A_after = pos_dict_A_after.get(symbol_A, {}).get("qty", 0)
-            used_margin_A_after = system.vssf.account.margin_engine.calculate_used_margin(pos_dict_A_after)
-            executions_A_after = len([r for r in system.vssf.execution_engine.reports if getattr(r, "client_order_id", "") == client_order_id_A])
+            ord_pos_A_after = system.vssf.account.get_order_position(client_order_id_A)
+            A_position_after = ord_pos_A_after.get("qty", 0)
+            A_margin_after = system.vssf.account.get_order_margin(client_order_id_A)
+            A_execution_after = len([
+                r for r in system.vssf.execution_engine.reports
+                if getattr(r, "client_order_id", "") == client_order_id_A
+            ])
 
-            # [명시적 equality assertion 1: Position]
+            # [명시적 equality assertion 1: Position Attribution]
             self.assertEqual(
-                positions_A_after,
-                positions_A_before,
-                f"Order A Position must remain equal before and after Order B (before: {positions_A_before}, after: {positions_A_after})"
+                A_position_after,
+                A_position_before,
+                f"Order A Position attribution must remain equal (before: {A_position_before}, after: {A_position_after})"
             )
-            self.assertEqual(positions_A_after, 0)
+            self.assertEqual(A_position_after, 0, "Order A Position attribution must be 0")
 
-            # [명시적 equality assertion 2: Margin]
+            # [명시적 equality assertion 2: Margin Attribution]
             self.assertEqual(
-                used_margin_A_after,
-                used_margin_A_before,
-                f"Order A Margin must remain equal before and after Order B (before: {used_margin_A_before}, after: {used_margin_A_after})"
+                A_margin_after,
+                A_margin_before,
+                f"Order A Margin attribution must remain equal (before: {A_margin_before}, after: {A_margin_after})"
             )
-            self.assertEqual(used_margin_A_after, 0.0)
+            self.assertEqual(A_margin_after, 0.0, "Order A Margin attribution must be 0.0")
 
             # [명시적 equality assertion 3: ExecutionReport / Executions]
             self.assertEqual(
-                executions_A_after,
-                executions_A_before,
-                f"Order A Executions must remain equal before and after Order B (before: {executions_A_before}, after: {executions_A_after})"
+                A_execution_after,
+                A_execution_before,
+                f"Order A Executions must remain equal (before: {A_execution_before}, after: {A_execution_after})"
             )
-            self.assertEqual(executions_A_after, 0)
+            self.assertEqual(A_execution_after, 0, "Order A Executions must be 0")
 
             # [추가 검증: CANCELLED 상태 유지 및 재전송 없음]
             status_A_after_B = system.op_runtime.order_router.fsm.get_status(order_uuid_A)
@@ -206,16 +226,25 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
             )
             self.assertEqual(calls_A_after, 1)
 
+            # [동일 Symbol 계좌 잔고 vs 주문 Attribution 분리 실측]
+            # 계좌 전체 해당 symbol 포지션은 주문 B에 의해 > 0 이지만, 주문 A 귀속 포지션은 0 유지
+            effective_symbol = reports_B[0].get_instrument_key() if hasattr(reports_B[0], "get_instrument_key") else getattr(reports_B[0], "symbol", symbol_B)
+            self.assertGreater(system.vssf.account.positions[effective_symbol]["qty"], 0)
+            self.assertEqual(A_position_after, 0)
+            self.assertEqual(B_position, executed_qty_B)
+
             # [종합 독립성 성립 assertion]
             self.assertTrue(
-                positions_A_after == positions_A_before == 0
-                and used_margin_A_after == used_margin_A_before == 0.0
-                and executions_A_after == executions_A_before == 0
+                symbol_A == symbol_B
+                and A_position_after == A_position_before == 0
+                and A_margin_after == A_margin_before == 0.0
+                and A_execution_after == A_execution_before == 0
                 and status_A_after_B == OrderStatus.CANCELLED
                 and calls_A_after == calls_A_before == 1
-                and positions_B > 0
-                and margin_B > 0.0,
-                "Order A must remain 100% independent and unaffected after Order B execution"
+                and B_position > 0
+                and B_margin > 0.0
+                and B_execution > 0,
+                "Order A must remain 100% independent and unaffected even when Order B executes on the same symbol"
             )
 
             await system.shutdown()
@@ -225,3 +254,4 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
