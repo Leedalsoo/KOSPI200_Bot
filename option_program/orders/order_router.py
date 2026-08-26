@@ -95,9 +95,13 @@ class OrderRouter:
             try:
                 report: Optional[CanonicalExecutionReport] = broker_adapter.send_order(command)
                 if report is not None and getattr(report, "executed_qty", 0) > 0:
-                    self.fsm.states[order_id] = OrderStatus.FILLED
-                    self._active_orders.pop(order_id, None)
-                    logger.info(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) executed via {mode_str} Broker: FILLED qty={report.executed_qty}")
+                    if report.executed_qty < command.qty:
+                        self.fsm.states[order_id] = OrderStatus.PARTIAL
+                        logger.info(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) executed via {mode_str} Broker: PARTIAL {report.executed_qty}/{command.qty}")
+                    else:
+                        self.fsm.states[order_id] = OrderStatus.FILLED
+                        self._active_orders.pop(order_id, None)
+                        logger.info(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) executed via {mode_str} Broker: FILLED qty={report.executed_qty}")
                 else:
                     self.fsm.states[order_id] = OrderStatus.REJECTED
                     self._active_orders.pop(order_id, None)
@@ -119,13 +123,19 @@ class OrderRouter:
     ) -> None:
         """체결 보고서 수신에 따른 FSM 상태 전이"""
         if report.executed_qty > 0:
-            self.fsm.states[order_id] = OrderStatus.FILLED
-            self._active_orders.pop(order_id, None)
-            logger.info(f"[OrderRouter] Order {order_id} FILLED: {report.executed_qty}@{report.executed_price}")
+            cmd_info = self._active_orders.get(order_id)
+            if cmd_info and report.executed_qty < cmd_info[0].qty:
+                self.fsm.states[order_id] = OrderStatus.PARTIAL
+                logger.info(f"[OrderRouter] Order {order_id} PARTIAL: {report.executed_qty}/{cmd_info[0].qty}@{report.executed_price}")
+            else:
+                self.fsm.states[order_id] = OrderStatus.FILLED
+                self._active_orders.pop(order_id, None)
+                logger.info(f"[OrderRouter] Order {order_id} FILLED: {report.executed_qty}@{report.executed_price}")
         else:
             self.fsm.states[order_id] = OrderStatus.REJECTED
             self._active_orders.pop(order_id, None)
             logger.warning(f"[OrderRouter] Order {order_id} REJECTED by Broker.")
+
 
     def scan_stale_orders(self, current_time: Optional[float] = None) -> List[uuid.UUID]:
         """지정된 타임아웃(30초)을 초과한 미체결/대기 주문 감지"""
