@@ -1,6 +1,7 @@
 """Target Architecture UI Backend API Server."""
 import inspect
 import logging
+import time
 from typing import Any, Dict, Set
 
 import orjson
@@ -193,10 +194,18 @@ class TargetArchitectureUIServer:
 class UIWebSocketHub:
     """실제 TradingSystem 상태를 하나의 WebSocket 경로로 fan-out."""
 
-    def __init__(self, adapter: TargetArchitectureUIServer, host: str = "127.0.0.1", port: int = 8765):
+    def __init__(
+        self,
+        adapter: TargetArchitectureUIServer,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+        throttle_interval: float = 0.05,
+    ):
         self.adapter = adapter
         self.host = host
         self.port = port
+        self.throttle_interval = throttle_interval
+        self.last_broadcast_time: float = 0.0
         self.clients: Set[Any] = set()
         self.server = None
 
@@ -222,6 +231,10 @@ class UIWebSocketHub:
     async def broadcast(self):
         if not self.clients:
             return
+        now = time.monotonic()
+        if now - self.last_broadcast_time < self.throttle_interval:
+            return
+        self.last_broadcast_time = now
         payload = orjson.dumps(self.adapter.snapshot()).decode("utf-8")
         dead = []
         for client in list(self.clients):
