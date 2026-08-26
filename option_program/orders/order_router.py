@@ -30,6 +30,8 @@ class OrderRouter:
         self.stale_timeout_sec = stale_timeout_sec
         # order_id -> (command, submitted_timestamp)
         self._active_orders: Dict[uuid.UUID, Tuple[CanonicalOrderCommand, float]] = {}
+        # order_id -> broker_adapter
+        self._order_brokers: Dict[uuid.UUID, Any] = {}
         # 멱등성 및 재사용 방지용 처리된 토큰/주문 식별자 추적
         self._processed_tokens: Set[str] = set()
         self._processed_order_ids: Set[uuid.UUID] = set()
@@ -89,6 +91,8 @@ class OrderRouter:
         self.fsm.states[order_id] = OrderStatus.VALIDATED
         self.fsm.states[order_id] = OrderStatus.SENT
         self._active_orders[order_id] = (command, time.time())
+        if broker_adapter is not None:
+            self._order_brokers[order_id] = broker_adapter
 
         # 3. Broker Adapter 실제 호출 (broker_adapter가 제공된 경우)
         if broker_adapter is not None:
@@ -98,6 +102,7 @@ class OrderRouter:
                     if report.executed_qty > command.qty:
                         self.fsm.states[order_id] = OrderStatus.REJECTED
                         self._active_orders.pop(order_id, None)
+                        self._order_brokers.pop(order_id, None)
                         logger.error(
                             f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) oversized execution rejected: "
                             f"executed_qty={report.executed_qty} > requested_qty={command.qty}"
@@ -108,14 +113,17 @@ class OrderRouter:
                     else:
                         self.fsm.states[order_id] = OrderStatus.FILLED
                         self._active_orders.pop(order_id, None)
+                        self._order_brokers.pop(order_id, None)
                         logger.info(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) executed via {mode_str} Broker: FILLED qty={report.executed_qty}")
                 else:
                     self.fsm.states[order_id] = OrderStatus.REJECTED
                     self._active_orders.pop(order_id, None)
+                    self._order_brokers.pop(order_id, None)
                     logger.warning(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) rejected/failed at {mode_str} Broker.")
             except Exception as exc:
                 self.fsm.states[order_id] = OrderStatus.REJECTED
                 self._active_orders.pop(order_id, None)
+                self._order_brokers.pop(order_id, None)
                 logger.error(f"[OrderRouter] Exception while sending order {command.client_order_id} to {mode_str} Broker: {exc}")
         else:
             logger.info(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) queued/routed to {mode_str} Broker.")
@@ -136,6 +144,7 @@ class OrderRouter:
             if requested_qty is not None and report.executed_qty > requested_qty:
                 self.fsm.states[order_id] = OrderStatus.REJECTED
                 self._active_orders.pop(order_id, None)
+                self._order_brokers.pop(order_id, None)
                 logger.error(
                     f"[OrderRouter] Order {order_id} oversized execution rejected: "
                     f"executed_qty={report.executed_qty} > requested_qty={requested_qty}"
@@ -146,14 +155,17 @@ class OrderRouter:
             elif requested_qty is not None and report.executed_qty == requested_qty:
                 self.fsm.states[order_id] = OrderStatus.FILLED
                 self._active_orders.pop(order_id, None)
+                self._order_brokers.pop(order_id, None)
                 logger.info(f"[OrderRouter] Order {order_id} FILLED: {report.executed_qty}@{report.executed_price}")
             else:
                 self.fsm.states[order_id] = OrderStatus.REJECTED
                 self._active_orders.pop(order_id, None)
+                self._order_brokers.pop(order_id, None)
                 logger.warning(f"[OrderRouter] Order {order_id} received execution report for inactive/unknown order: REJECTED.")
         else:
             self.fsm.states[order_id] = OrderStatus.REJECTED
             self._active_orders.pop(order_id, None)
+            self._order_brokers.pop(order_id, None)
             logger.warning(f"[OrderRouter] Order {order_id} REJECTED by Broker.")
 
 
@@ -171,11 +183,33 @@ class OrderRouter:
 
         return stale_order_ids
 
-    def cancel_stale_order(self, order_id: uuid.UUID) -> bool:
-        """미체결 지연 주문 강제 취소 전이"""
-        if order_id in self._active_orders:
+    def cancel_stale_order(self, order_id: uuid.UUID, broker_adapter: Optional[Any] = None) -> bool:
+        """미체결 지연 주문 실제 Broker cancel_order() 호출 및 FSM 상태 전이"""
+        if order_id not in self._active_orders:
+            return False
+
+        command, sub_time = self._active_orders[order_id]
+        client_order_id = getattr(command, "client_order_id", str(order_id))
+        broker = broker_adapter or self._order_brokers.get(order_id)
+
+        if broker is not None:
+            try:
+                cancelled = broker.cancel_order(client_order_id)
+                if cancelled:
+                    self.fsm.states[order_id] = OrderStatus.CANCELLED
+                    self._active_orders.pop(order_id, None)
+                    self._order_brokers.pop(order_id, None)
+                    logger.info(f"[OrderRouter] Stale order {order_id} ({client_order_id}) CANCELLED safely via Broker.")
+                    return True
+                else:
+                    logger.warning(f"[OrderRouter] Broker failed to cancel stale order {order_id} ({client_order_id}).")
+                    return False
+            except Exception as exc:
+                logger.error(f"[OrderRouter] Exception while cancelling stale order {order_id} ({client_order_id}) via Broker: {exc}")
+                return False
+        else:
             self.fsm.states[order_id] = OrderStatus.CANCELLED
             self._active_orders.pop(order_id, None)
-            logger.info(f"[OrderRouter] Stale order {order_id} CANCELLED safely.")
+            self._order_brokers.pop(order_id, None)
+            logger.info(f"[OrderRouter] Stale order {order_id} CANCELLED safely (no broker attached).")
             return True
-        return False

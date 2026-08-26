@@ -252,6 +252,88 @@ class TestBrokerResultsPositionPnLE2E(unittest.TestCase):
         self.assertEqual(len(self.vssf.account.get_positions()), 0)
         self.assertEqual(self.vssf.account.realized_pnl, 0.0)
 
+    def test_04b_stale_cancel_dispatches_real_broker_cancel_order_and_transitions_fsm(self):
+        """[STALE CANCEL -> BROKER] Stale 감지 시 Broker.cancel_order() 실제 호출(1회, 정확한 order_id) 및 FSM CANCELLED 확인."""
+        cmd = CanonicalOrderCommand(
+            client_order_id="ORD-STALE-BROKER-SUCCESS", track_id="Track1",
+            asset_type=CanonicalAssetType.OPTION, side=CanonicalOrderSide.BUY,
+            qty=10, price=2.5, option_type=CanonicalOptionType.CALL,
+            strike=350.0, expiry="2026-09"
+        )
+        _, token, _ = self.risk_gate.admit_order(cmd, self.account_snapshot, self.vssf.account.get_positions())
+
+        # Broker Mock 생성 (cancel_order 성공 반환)
+        mock_broker = MagicMock(spec=IBrokerAdapter)
+        mock_broker.cancel_order.return_value = True
+
+        # 주문 라우팅 (대기 큐잉 상태 등록)
+        oid = self.router.register_and_route(cmd, token, broker_adapter=None)
+        self.assertIsNotNone(oid)
+        self.assertEqual(self.fsm.get_status(oid), OrderStatus.SENT)
+        self.assertIn(oid, self.router._active_orders)
+
+        # 30초 초과 Stale 감지
+        stale_orders = self.router.scan_stale_orders(current_time=time.time() + 35.0)
+        self.assertIn(oid, stale_orders)
+
+        # Stale 주문 취소 실행 -> 실제 Broker.cancel_order() 호출 검증
+        cancelled = self.router.cancel_stale_order(oid, broker_adapter=mock_broker)
+
+        # 1. 취소 결과 성공 확인
+        self.assertTrue(cancelled)
+        # 2. Broker.cancel_order()가 정확히 1회 호출되었는지 확인
+        self.assertEqual(mock_broker.cancel_order.call_count, 1)
+        # 3. 올바른 client_order_id가 전달되었는지 확인
+        mock_broker.cancel_order.assert_called_once_with("ORD-STALE-BROKER-SUCCESS")
+        # 4. FSM 상태가 CANCELLED로 정상 전이되었는지 확인
+        self.assertEqual(self.fsm.get_status(oid), OrderStatus.CANCELLED)
+        # 5. _active_orders에서 order_id가 안전하게 제거되었는지 확인
+        self.assertNotIn(oid, self.router._active_orders)
+        self.assertNotIn(oid, self.router._order_brokers)
+
+    def test_04c_stale_cancel_broker_failure_and_exception_handling(self):
+        """[STALE CANCEL -> BROKER FAIL] Broker cancel_order() 실패 또는 예외 시 FSM CANCELLED 전이 차단 및 활성 주문 유지 확인."""
+        # 1. Broker cancel_order()가 False(실패)를 반환하는 경우
+        cmd_fail = CanonicalOrderCommand(
+            client_order_id="ORD-STALE-BROKER-FAIL", track_id="Track1",
+            asset_type=CanonicalAssetType.OPTION, side=CanonicalOrderSide.BUY,
+            qty=10, price=2.5, option_type=CanonicalOptionType.CALL,
+            strike=350.0, expiry="2026-09"
+        )
+        _, token_fail, _ = self.risk_gate.admit_order(cmd_fail, self.account_snapshot, self.vssf.account.get_positions())
+        mock_broker_fail = MagicMock(spec=IBrokerAdapter)
+        mock_broker_fail.cancel_order.return_value = False  # 취소 실패
+
+        oid_fail = self.router.register_and_route(cmd_fail, token_fail, broker_adapter=None)
+        cancelled_fail = self.router.cancel_stale_order(oid_fail, broker_adapter=mock_broker_fail)
+
+        self.assertFalse(cancelled_fail)
+        mock_broker_fail.cancel_order.assert_called_once_with("ORD-STALE-BROKER-FAIL")
+        # 실패 시 CANCELLED로 전이되지 않고 기존 SENT 상태 유지
+        self.assertNotEqual(self.fsm.get_status(oid_fail), OrderStatus.CANCELLED)
+        self.assertEqual(self.fsm.get_status(oid_fail), OrderStatus.SENT)
+        self.assertIn(oid_fail, self.router._active_orders)
+
+        # 2. Broker cancel_order() 실행 중 Exception이 발생하는 경우
+        cmd_exc = CanonicalOrderCommand(
+            client_order_id="ORD-STALE-BROKER-EXC", track_id="Track1",
+            asset_type=CanonicalAssetType.OPTION, side=CanonicalOrderSide.BUY,
+            qty=10, price=2.5, option_type=CanonicalOptionType.CALL,
+            strike=350.0, expiry="2026-09"
+        )
+        _, token_exc, _ = self.risk_gate.admit_order(cmd_exc, self.account_snapshot, self.vssf.account.get_positions())
+        mock_broker_exc = MagicMock(spec=IBrokerAdapter)
+        mock_broker_exc.cancel_order.side_effect = RuntimeError("Broker Network Timeout")
+
+        oid_exc = self.router.register_and_route(cmd_exc, token_exc, broker_adapter=None)
+        cancelled_exc = self.router.cancel_stale_order(oid_exc, broker_adapter=mock_broker_exc)
+
+        self.assertFalse(cancelled_exc)
+        mock_broker_exc.cancel_order.assert_called_once_with("ORD-STALE-BROKER-EXC")
+        self.assertNotEqual(self.fsm.get_status(oid_exc), OrderStatus.CANCELLED)
+        self.assertEqual(self.fsm.get_status(oid_exc), OrderStatus.SENT)
+        self.assertIn(oid_exc, self.router._active_orders)
+
     # =========================================================================
     # 5. Mark-to-Market 실시간 미실현 손익 동기화 검증
     # =========================================================================
