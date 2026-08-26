@@ -1,0 +1,300 @@
+/* KOSPI200 HFT Dashboard Responsive Stylesheet */
+
+/* Box sizing and base resets */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  width: 100%;
+  background: #0F172A;
+}
+
+/* Container */
+.dashboard-page {
+  min-height: 100vh;
+  background: #0F172A;
+  color: #F8FAFC;
+  padding: 20px;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* Header */
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 18px;
+  background: #111827;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  flex-wrap: wrap;
+}
+
+.dashboard-header-left {
+  min-width: 0;
+}
+
+.dashboard-header-title {
+  margin: 4px 0;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.dashboard-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Navigation Tabs */
+.dashboard-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+  width: 100%;
+}
+
+.dashboard-tab-button {
+  border: 1px solid #334155;
+  background: #111827;
+  color: #94A3B8;
+  border-radius: 10px;
+  padding: 12px 10px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease-in-out;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dashboard-tab-button.active {
+  background: #1E293B;
+  color: #F8FAFC;
+  border-color: #38BDF8;
+}
+
+/* Main Grid Layout */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  width: 100%;
+}
+
+/* Card Section */
+.dashboard-card {
+  background: #111827;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 16px;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.dashboard-card.wide {
+  grid-column: 1 / -1;
+}
+
+/* Sub Grids */
+.dashboard-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-track-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+/* Control buttons row */
+.dashboard-control-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.dashboard-btn {
+  border: 1px solid #475569;
+  background: #1E293B;
+  color: #E2E8F0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* List & Rows with word-break */
+.dashboard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.dashboard-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  background: #0F172A;
+  border-radius: 7px;
+  font-size: 10px;
+  color: #CBD5E1;
+  word-break: break-all;
+  min-width: 0;
+}
+
+.dashboard-row > strong {
+  word-break: break-all;
+  text-align: right;
+  max-width: 65%;
+}
+
+/* Chart container wrappers */
+.chart-wrapper-responsive {
+  width: 100%;
+  height: 300px;
+  min-height: 240px;
+  position: relative;
+}
+
+/* ================================================= */
+/* Tablet Responsive Breakpoint (768px ~ 1199px)     */
+/* ================================================= */
+@media (max-width: 1199px) and (min-width: 768px) {
+  .dashboard-page {
+    padding: 16px;
+  }
+
+  .dashboard-track-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ================================================= */
+/* Mobile Responsive Breakpoint (<= 767px)          */
+/* ================================================= */
+@media (max-width: 767px) {
+  .dashboard-page {
+    padding: 10px;
+  }
+
+  .dashboard-header {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .dashboard-header-title {
+    font-size: 20px;
+  }
+
+  .dashboard-header-right {
+    justify-content: flex-start;
+  }
+
+  .dashboard-tabs {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .dashboard-tab-button {
+    padding: 10px;
+    font-size: 12px;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .dashboard-card.wide {
+    grid-column: 1;
+  }
+
+  .dashboard-card {
+    padding: 12px;
+  }
+
+  .dashboard-metrics-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .dashboard-track-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .dashboard-form-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .dashboard-control-row {
+    gap: 6px;
+  }
+
+  .dashboard-btn {
+    padding: 7px 8px;
+    font-size: 10px;
+  }
+
+  .chart-wrapper-responsive {
+    height: 240px;
+  }
+}
+
+/* Extra small mobile (<= 380px) */
+@media (max-width: 380px) {
+  .dashboard-page {
+    padding: 6px;
+  }
+
+  .dashboard-header-title {
+    font-size: 18px;
+  }
+
+  .dashboard-btn {
+    padding: 6px 6px;
+    font-size: 9px;
+  }
+}

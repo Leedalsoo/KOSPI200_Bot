@@ -30,6 +30,7 @@ const money = (v) => '₩' + fmt(v);
 function Card({ title, children, wide = false }) {
   return (
     <section
+      className={`dashboard-card ${wide ? 'wide' : ''}`}
       style={{
         ...styles.card,
         gridColumn: wide ? '1 / -1' : undefined,
@@ -78,9 +79,9 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
   };
 
   return (
-    <div style={styles.grid}>
+    <div className="dashboard-grid" style={styles.grid}>
       <Card title="Virtual Market">
-        <div style={styles.metrics}>
+        <div className="dashboard-metrics-grid" style={styles.metrics}>
           <Metric label="KOSPI200" value={fmt(market.price)} />
           <Metric label="Bid" value={fmt(market.bid)} />
           <Metric label="Ask" value={fmt(market.ask)} />
@@ -91,7 +92,7 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
       </Card>
 
       <Card title="Market Condition">
-        <div style={styles.metrics}>
+        <div className="dashboard-metrics-grid" style={styles.metrics}>
           <Metric
             label="Regime"
             value={condition.regime || optionProgram.current_regime || 'NEUTRAL'}
@@ -118,7 +119,7 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
       </Card>
 
       <Card title="Account / Margin">
-        <div style={styles.metrics}>
+        <div className="dashboard-metrics-grid" style={styles.metrics}>
           <Metric label="Balance" value={money(account.balance)} />
           <Metric label="Realized PnL" value={money(account.realized_pnl)} />
           <Metric label="Unrealized PnL" value={money(account.unrealized_pnl)} />
@@ -128,7 +129,7 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
       </Card>
 
       <Card title="Risk">
-        <div style={styles.metrics}>
+        <div className="dashboard-metrics-grid" style={styles.metrics}>
           <Metric label="Vol Spike" value={risk.is_vol_spike ? 'YES' : 'NO'} danger={risk.is_vol_spike} />
           <Metric label="Crisis" value={risk.is_crisis_regime ? 'YES' : 'NO'} danger={risk.is_crisis_regime} />
           <Metric label="Margin Diet" value={risk.is_margin_diet_required ? 'YES' : 'NO'} danger={risk.is_margin_diet_required} />
@@ -138,7 +139,7 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
       </Card>
 
       <Card title="Strategy Matrix" wide>
-        <div style={styles.trackGrid}>
+        <div className="dashboard-track-grid" style={styles.trackGrid}>
           {tracks.map(([id, name]) => {
             const m = strategies[id] || {};
             const on = enabled[id] !== false;
@@ -172,9 +173,9 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
         {Object.keys(positions).length === 0 ? (
           <div style={styles.muted}>포지션 없음</div>
         ) : (
-          <div style={styles.list}>
+          <div className="dashboard-list" style={styles.list}>
             {Object.entries(positions).map(([key, value]) => (
-              <div key={key} style={styles.row}>
+              <div key={key} className="dashboard-row" style={styles.row}>
                 <span>{key}</span>
                 <strong>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</strong>
               </div>
@@ -185,9 +186,9 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
 
       <Card title="Orders / Executions">
         <div style={styles.sectionLabel}>Orders</div>
-        <div style={styles.list}>
+        <div className="dashboard-list" style={styles.list}>
           {orders.slice(-6).map((o, i) => (
-            <div key={i} style={styles.row}>
+            <div key={i} className="dashboard-row" style={styles.row}>
               <span>{o.track_id || o.client_order_id || '-'}</span>
               <span>{o.side || ''} {o.qty || ''}</span>
             </div>
@@ -195,9 +196,9 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
           {!orders.length && <div style={styles.muted}>주문 대기 중</div>}
         </div>
         <div style={{ ...styles.sectionLabel, marginTop: 12 }}>Executions</div>
-        <div style={styles.list}>
+        <div className="dashboard-list" style={styles.list}>
           {executions.slice(-6).map((e, i) => (
-            <div key={i} style={styles.row}>
+            <div key={i} className="dashboard-row" style={styles.row}>
               <span>{e.track_id || e.exec_id || '-'}</span>
               <span>{fmt(e.executed_price)} × {e.executed_qty || 0}</span>
             </div>
@@ -208,7 +209,7 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
 
       <Card title="Composite Payoff" wide>
         {payoff.length ? (
-          <div style={{ width: '100%', height: 300 }}>
+          <div className="chart-wrapper-responsive" style={{ width: '100%', height: 300 }}>
             <ResponsiveContainer>
               <ScatterChart>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -226,7 +227,7 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
       </Card>
 
       <Card title="Realtime PnL" wide>
-        <div style={{ width: '100%', height: 280 }}>
+        <div className="chart-wrapper-responsive" style={{ width: '100%', height: 280 }}>
           <ResponsiveContainer>
             <LineChart data={coords}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -240,7 +241,7 @@ export default function OptionProgramPanel({ state, isConnected, sendCommand }) 
       </Card>
 
       <Card title="Replay / Runtime">
-        <div style={styles.metrics}>
+        <div className="dashboard-metrics-grid" style={styles.metrics}>
           <Metric label="Last Tick" value={replay.timestamp || market.timestamp || condition.timestamp || '-'} />
           <Metric label="Seq" value={condition.seq_id || market.seq_id || 0} />
           <Metric label="Ticks Processed" value={replay.ticks_processed || 0} />
@@ -274,5 +275,4 @@ const styles = {
   list: { display: 'flex', flexDirection: 'column', gap: 5 },
   row: { display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 8px', background: '#0F172A', borderRadius: 7, fontSize: 10, color: '#CBD5E1' },
   sectionLabel: { color: '#64748B', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em' },
-  '@media (max-width: 800px)': { grid: { gridTemplateColumns: '1fr' }, trackGrid: { gridTemplateColumns: '1fr 1fr' } },
 };

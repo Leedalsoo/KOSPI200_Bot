@@ -4,6 +4,7 @@ import { useWebSocket } from './hooks/useWebSocket';
 import OptionProgramPanel from './OptionProgramPanel';
 import VirtualBrokerPanel from './components/VirtualBrokerPanel';
 import VirtualExchangePanel from './components/VirtualExchangePanel';
+import './responsive.css';
 
 function App() {
   const state = useStore();
@@ -25,14 +26,14 @@ function App() {
   ];
 
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
-        <div>
+    <div className="dashboard-page" style={styles.page}>
+      <header className="dashboard-header" style={styles.header}>
+        <div className="dashboard-header-left">
           <div style={styles.kicker}>KOSPI200 HFT</div>
-          <h1 style={styles.title}>Integrated Control Panel</h1>
+          <h1 className="dashboard-header-title" style={styles.title}>Integrated Control Panel</h1>
           <div style={styles.sub}>Virtual Market · Virtual Securities Firm · Option Program</div>
         </div>
-        <div style={styles.headerRight}>
+        <div className="dashboard-header-right" style={styles.headerRight}>
           <span style={{ ...styles.connection, ...(isConnected ? styles.connected : styles.disconnected) }}>
             {isConnected ? '● CONNECTED' : '● DISCONNECTED'}
           </span>
@@ -40,9 +41,15 @@ function App() {
           <span style={styles.badge}>Tick {state.market?.seq_id || 0}</span>
         </div>
       </header>
-      <nav style={styles.tabs} aria-label="Integrated Control Panel tabs">
+      <nav className="dashboard-tabs" style={styles.tabs} aria-label="Integrated Control Panel tabs">
         {tabs.map(([id, label]) => (
-          <button key={id} type="button" onClick={() => setActiveTab(id)} style={{ ...styles.tab, ...(activeTab === id ? styles.tabActive : {}) }}>
+          <button
+            key={id}
+            type="button"
+            onClick={() => setActiveTab(id)}
+            className={`dashboard-tab-button ${activeTab === id ? 'active' : ''}`}
+            style={{ ...styles.tab, ...(activeTab === id ? styles.tabActive : {}) }}
+          >
             {label}
           </button>
         ))}
@@ -70,7 +77,7 @@ const styles = {
   tabs: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 14 },
   tab: { border: '1px solid #334155', background: '#111827', color: '#94A3B8', borderRadius: 10, padding: '12px 10px', fontWeight: 800, cursor: 'pointer' },
   tabActive: { background: '#1E293B', color: '#F8FAFC', borderColor: '#38BDF8' },
-  '@media (max-width: 800px)': { tabs: { gridTemplateColumns: '1fr' }, header: { flexDirection: 'column', alignItems: 'stretch' } },
 };
 
 export default App;
+
