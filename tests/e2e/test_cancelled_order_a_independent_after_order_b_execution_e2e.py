@@ -83,7 +83,9 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
 
             # 주문 A 식별 및 정보 확보
             self.assertGreater(len(system.op_runtime.last_orders), 0, "last_orders must contain order A")
-            client_order_id_A = system.op_runtime.last_orders[0]["client_order_id"]
+            order_info_A = system.op_runtime.last_orders[0]
+            client_order_id_A = order_info_A["client_order_id"]
+            symbol_A = order_info_A.get("symbol", "")
             order_uuid_A = system.op_runtime._order_id_to_uuid.get(client_order_id_A)
             self.assertIsNotNone(order_uuid_A, "Order A UUID must be mapped")
 
@@ -97,11 +99,11 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
             status_A_cancelled = system.op_runtime.order_router.fsm.get_status(order_uuid_A)
             self.assertEqual(status_A_cancelled, OrderStatus.CANCELLED, "Order A must be CANCELLED")
 
-            # [주문 A CANCELLED 직후 귀속 기준값 직접 저장 (before 측정값)]
-            reports_A_before = [r for r in system.vssf.execution_engine.reports if getattr(r, "client_order_id", "") == client_order_id_A]
-            positions_A_before = sum(getattr(r, "executed_qty", 0) for r in reports_A_before)
-            used_margin_A_before = 0.0 if len(reports_A_before) == 0 else sum(getattr(r, "executed_qty", 0) * 1000.0 for r in reports_A_before)
-            executions_A_before = len(reports_A_before)
+            # [주문 A CANCELLED 직후 실제 계좌/포지션/마진 상태에서 주문 A 귀속 기준값 측정 (before)]
+            pos_dict_A_before = {symbol_A: system.vssf.account.position_mgr.positions[symbol_A]} if symbol_A in system.vssf.account.position_mgr.positions else {}
+            positions_A_before = pos_dict_A_before.get(symbol_A, {}).get("qty", 0)
+            used_margin_A_before = system.vssf.account.margin_engine.calculate_used_margin(pos_dict_A_before)
+            executions_A_before = len([r for r in system.vssf.execution_engine.reports if getattr(r, "client_order_id", "") == client_order_id_A])
 
             self.assertEqual(positions_A_before, 0)
             self.assertEqual(used_margin_A_before, 0.0)
@@ -119,11 +121,13 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
 
             # 주문 B 식별
             new_orders_in_tick2 = [
-                o["client_order_id"] for o in system.op_runtime.last_orders
+                o for o in system.op_runtime.last_orders
                 if o["client_order_id"] != client_order_id_A and "ORD-T2" in o["client_order_id"]
             ]
             self.assertGreater(len(new_orders_in_tick2), 0, "New order B must be generated in tick 2")
-            client_order_id_B = new_orders_in_tick2[0]
+            order_info_B = new_orders_in_tick2[0]
+            client_order_id_B = order_info_B["client_order_id"]
+            symbol_B = order_info_B.get("symbol", "")
             order_uuid_B = system.op_runtime._order_id_to_uuid.get(client_order_id_B)
             self.assertIsNotNone(order_uuid_B, "Order B UUID must be mapped")
 
@@ -148,20 +152,23 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
             executed_qty_B = sum(getattr(r, "executed_qty", 0) for r in reports_B)
             self.assertGreater(executed_qty_B, 0, "Order B executed qty must be > 0")
 
-            # 4) Position / Margin 증가
-            positions_B = executed_qty_B
-            margin_B = sum(getattr(r, "executed_qty", 0) * 1000.0 for r in reports_B)
-            self.assertGreater(positions_B, 0, "Order B Position must increase")
-            self.assertGreater(margin_B, 0.0, "Order B Margin must increase")
+            # 4) 실제 계좌 상태에서 주문 B 귀속 Position 및 Margin 측정
+            effective_symbol_B = reports_B[0].get_instrument_key() if hasattr(reports_B[0], "get_instrument_key") else getattr(reports_B[0], "symbol", symbol_B)
+            pos_dict_B = {effective_symbol_B: system.vssf.account.position_mgr.positions[effective_symbol_B]} if effective_symbol_B in system.vssf.account.position_mgr.positions else {}
+            positions_B = pos_dict_B.get(effective_symbol_B, {}).get("qty", 0)
+            margin_B = system.vssf.account.margin_engine.calculate_used_margin(pos_dict_B)
+
+            self.assertGreater(positions_B, 0, "Order B Position must increase in account")
+            self.assertGreater(margin_B, 0.0, "Order B Margin must increase in account")
             self.assertGreater(system.vssf.account.used_margin, 0.0, "Total account used margin must increase after Order B")
 
             # ----------------------------------------------------
             # Phase 3: 주문 B 체결 이후 주문 A 귀속 상태 측정 및 명시적 equality assertion
             # ----------------------------------------------------
-            reports_A_after = [r for r in system.vssf.execution_engine.reports if getattr(r, "client_order_id", "") == client_order_id_A]
-            positions_A_after = sum(getattr(r, "executed_qty", 0) for r in reports_A_after)
-            used_margin_A_after = 0.0 if len(reports_A_after) == 0 else sum(getattr(r, "executed_qty", 0) * 1000.0 for r in reports_A_after)
-            executions_A_after = len(reports_A_after)
+            pos_dict_A_after = {symbol_A: system.vssf.account.position_mgr.positions[symbol_A]} if symbol_A in system.vssf.account.position_mgr.positions else {}
+            positions_A_after = pos_dict_A_after.get(symbol_A, {}).get("qty", 0)
+            used_margin_A_after = system.vssf.account.margin_engine.calculate_used_margin(pos_dict_A_after)
+            executions_A_after = len([r for r in system.vssf.execution_engine.reports if getattr(r, "client_order_id", "") == client_order_id_A])
 
             # [명시적 equality assertion 1: Position]
             self.assertEqual(
