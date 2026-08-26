@@ -159,7 +159,15 @@ class RiskEngine:
 
         # 4. 종목별 포지션 한도 검사
         inst_key = f"{command.asset_type.value}_{command.strike}_{command.option_type.value if command.option_type else 'NONE'}"
-        current_inst_qty = positions.get(inst_key, {}).get("qty", 0) if isinstance(positions.get(inst_key), dict) else 0
+        current_inst_qty = 0
+        if isinstance(positions, dict):
+            if inst_key in positions and isinstance(positions[inst_key], dict):
+                current_inst_qty = positions[inst_key].get("qty", 0)
+            elif "KOSPI200_OPTION" in positions and isinstance(positions["KOSPI200_OPTION"], dict):
+                current_inst_qty = positions["KOSPI200_OPTION"].get("qty", 0)
+            elif command.track_id in positions and isinstance(positions[command.track_id], dict):
+                current_inst_qty = positions[command.track_id].get("qty", 0)
+
         if current_inst_qty + command.qty > self.config.max_position_per_instrument:
             return RiskEvaluationResult(
                 is_approved=False,

@@ -25,6 +25,7 @@ class PaperTradingAccount:
         self.pnl_engine = PnLEngine()
         self.margin_engine = MarginEngine(initial_capital)
         self.ledger_engine = LedgerEngine()
+        self._processed_exec_ids = set()
 
         self.canonical_summary = CanonicalAccountSummary(
             account_id="ACC-VSSF-001",
@@ -113,6 +114,13 @@ class PaperTradingAccount:
             exec_id = "EXEC-001"
             order_id = "ORD-001"
             slippage = 0.0
+
+        # Idempotency: 동일한 exec_id 중복 수신 시 포지션 중복 변경 방지
+        if exec_id and exec_id != "EXEC-001":
+            if exec_id in self._processed_exec_ids:
+                logger.warning(f"[VSSF Account] Duplicate ExecutionReport ignored: {exec_id}")
+                return
+            self._processed_exec_ids.add(exec_id)
 
         pnl_delta = self.position_mgr.update_position(symbol, side_str, exec_qty, exec_price)
         if pnl_delta != 0.0:
