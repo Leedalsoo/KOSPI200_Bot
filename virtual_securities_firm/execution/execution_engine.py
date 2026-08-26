@@ -81,8 +81,13 @@ class ExecutionEngine:
             executed_price=exec_price,
             fee=fee,
             slippage=slippage,
-            timestamp="2026-08-23 09:00:00"
+            timestamp="2026-08-23 09:00:00",
+            symbol=getattr(command, "symbol", "KOSPI200"),
+            option_type=getattr(command, "option_type", None),
+            strike=getattr(command, "strike", 0.0),
+            expiry=getattr(command, "expiry", ""),
         )
+
 
         self.reports.append(report)
         logger.debug(f"[ExecutionEngine Issued] Report: {report.exec_id} | Order: {report.client_order_id} | Price: {report.executed_price}")

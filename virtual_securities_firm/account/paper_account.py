@@ -104,6 +104,10 @@ class PaperTradingAccount:
             exec_id = getattr(rep, "exec_id", "EXEC-001")
             order_id = getattr(rep, "client_order_id", "ORD-001")
             slippage = getattr(rep, "slippage", 0.0)
+            if hasattr(rep, "get_instrument_key"):
+                effective_symbol = rep.get_instrument_key()
+            else:
+                effective_symbol = getattr(rep, "symbol", symbol)
         else:
             effective_track_id = str(track_id if track_id is not None else report_or_track_id)
             side_str = str(side)
@@ -114,6 +118,7 @@ class PaperTradingAccount:
             exec_id = "EXEC-001"
             order_id = "ORD-001"
             slippage = 0.0
+            effective_symbol = symbol
 
         # Idempotency: 동일한 exec_id 중복 수신 시 포지션 중복 변경 방지
         if exec_id and exec_id != "EXEC-001":
@@ -122,7 +127,8 @@ class PaperTradingAccount:
                 return
             self._processed_exec_ids.add(exec_id)
 
-        pnl_delta = self.position_mgr.update_position(symbol, side_str, exec_qty, exec_price)
+        pnl_delta = self.position_mgr.update_position(effective_symbol, side_str, exec_qty, exec_price)
+
         if pnl_delta != 0.0:
             self.pnl_engine.add_realized(pnl_delta)
             self.realized_pnl = self.pnl_engine.realized_pnl

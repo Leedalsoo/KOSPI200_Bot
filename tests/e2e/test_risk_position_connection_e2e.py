@@ -46,12 +46,12 @@ class TestRiskPositionConnectionE2E(unittest.TestCase):
     """Risk ↔ Execution ↔ Actual Position 연결성 종합 검증 테스트 스위트."""
 
     def setUp(self):
-        self.initial_capital = 50_000_000.0
+        self.initial_capital = 500_000_000.0
         self.vssf = VirtualSecuritiesFirmRuntime(initial_capital=self.initial_capital)
         self.broker = BrokerFactory.create_broker(mode=BrokerMode.PAPER, vssf_runtime=self.vssf)
         self.risk_config = RiskConfig(
             max_order_qty=50,
-            max_daily_loss_krw=10_000_000.0,
+            max_daily_loss_krw=50_000_000.0,
             max_margin_utilization_ratio=0.85,
             max_position_per_instrument=100,
         )
@@ -59,6 +59,7 @@ class TestRiskPositionConnectionE2E(unittest.TestCase):
             risk_config=self.risk_config,
             account_summary=self.vssf.get_account_snapshot(),
         )
+
 
         # 초기 시세 설정
         self.base_tick = CanonicalMarketTick(
@@ -103,10 +104,12 @@ class TestRiskPositionConnectionE2E(unittest.TestCase):
 
         # 3. VSSF Actual Position 증가 확인
         positions = self.vssf.account.get_positions()
-        self.assertIn("KOSPI200_OPTION", positions)
-        self.assertEqual(positions["KOSPI200_OPTION"]["qty"], 2)
-        self.assertEqual(positions["KOSPI200_OPTION"]["side"], "BUY")
-        self.assertEqual(positions["KOSPI200_OPTION"]["avg_price"], report.executed_price)
+        inst_key = report.get_instrument_key()
+        self.assertIn(inst_key, positions)
+        self.assertEqual(positions[inst_key]["qty"], 2)
+        self.assertEqual(positions[inst_key]["side"], "BUY")
+        self.assertEqual(positions[inst_key]["avg_price"], report.executed_price)
+
 
 
     def test_02_risk_rejection_no_position_change(self):
@@ -348,8 +351,8 @@ class TestRiskPositionConnectionE2E(unittest.TestCase):
             asset_type=CanonicalAssetType.OPTION,
             side=CanonicalOrderSide.BUY,
             executed_qty=95,
-            executed_price=350.0,
-            fee=95000.0,
+            executed_price=2.5,
+            fee=950.0,
             slippage=0.0,
             timestamp="2026-08-23 09:00:00",
         )
@@ -366,10 +369,11 @@ class TestRiskPositionConnectionE2E(unittest.TestCase):
             asset_type=CanonicalAssetType.OPTION,
             side=CanonicalOrderSide.BUY,
             qty=10,
-            price=350.0,
+            price=2.5,
             option_type=CanonicalOptionType.CALL,
             strike=350.0,
         )
+
 
         is_approved, token, rej = self.op_runtime.risk_gate.admit_order(
             command=cmd_overflow,

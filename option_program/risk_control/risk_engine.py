@@ -157,22 +157,26 @@ class RiskEngine:
                 rejection_reason=f"EXCEEDED_MAX_DAILY_LOSS: {total_loss:,.0f} >= {self.config.max_daily_loss_krw:,.0f} KRW"
             )
 
-        # 4. 종목별 포지션 한도 검사
-        inst_key = f"{command.asset_type.value}_{command.strike}_{command.option_type.value if command.option_type else 'NONE'}"
+        # 4. 종목별 포지션 한도 검사 (Instrument Identity 기반 정규화 조회)
+        if hasattr(command, "get_instrument_key"):
+            inst_key = command.get_instrument_key()
+        else:
+            inst_key = f"{command.asset_type.value}_{command.strike}_{command.option_type.value if command.option_type else 'NONE'}"
+
         current_inst_qty = 0
         if isinstance(positions, dict):
             if inst_key in positions and isinstance(positions[inst_key], dict):
                 current_inst_qty = positions[inst_key].get("qty", 0)
-            elif "KOSPI200_OPTION" in positions and isinstance(positions["KOSPI200_OPTION"], dict):
+            elif "KOSPI200_OPTION" in positions and isinstance(positions["KOSPI200_OPTION"], dict) and len(positions) == 1:
+                # 레거시 단일 포지션 구조 하위 호환
                 current_inst_qty = positions["KOSPI200_OPTION"].get("qty", 0)
-            elif command.track_id in positions and isinstance(positions[command.track_id], dict):
-                current_inst_qty = positions[command.track_id].get("qty", 0)
 
         if current_inst_qty + command.qty > self.config.max_position_per_instrument:
             return RiskEvaluationResult(
                 is_approved=False,
                 rejection_reason=f"EXCEEDED_INSTRUMENT_LIMIT: {current_inst_qty + command.qty} > {self.config.max_position_per_instrument}"
             )
+
 
         # 5. 필요 증거금 및 가용 증거금 한도 검사
         req_margin = self.margin_engine.calculate_order_margin(command)
