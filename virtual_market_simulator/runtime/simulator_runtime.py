@@ -163,7 +163,12 @@ class VirtualMarketSimulatorRuntime:
             delta = self._rng.uniform(-1.20, 0.30) * scale
         else:
             delta = self._rng.uniform(-0.35, 0.35) * scale
-        return delta + scenario_drift
+        total_delta = delta + scenario_drift
+        if self._market_regime == "BULL":
+            return max(0.01, total_delta)
+        elif self._market_regime == "BEAR":
+            return min(-0.01, total_delta)
+        return total_delta
 
     def _next_market_tick(self, tick_index: int = 0, ticks_per_day: int = 500) -> CanonicalMarketTick:
         adjustment = self.scenario.next_adjustment(tick_index, ticks_per_day)
@@ -183,8 +188,9 @@ class VirtualMarketSimulatorRuntime:
         spread = max(0.05, min(1.0, float(self.config.base_spread)))
         if self._stress_type == "LIQUIDITY_DROP":
             spread = min(1.0, spread * 3.0)
+        spread = round(spread, 2)
         bid = round(self._price - spread / 2.0, 2)
-        ask = round(self._price + spread / 2.0, 2)
+        ask = round(bid + spread, 2)
         volume = self._volume
         if self._stress_type == "LIQUIDITY_DROP":
             volume = max(1, int(volume * 0.25))
