@@ -120,6 +120,47 @@ class RiskEngine:
         if loss_amount < 0:
             self._daily_realized_loss += abs(loss_amount)
 
+    def calculate_expected_position(
+        self,
+        command: CanonicalOrderCommand,
+        positions: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """주문 체결 시 예상되는 Instrument Position (Side & Qty) 계산"""
+        positions = positions or {}
+        if hasattr(command, "get_instrument_key"):
+            inst_key = command.get_instrument_key()
+        else:
+            inst_key = f"{command.asset_type.value}_{command.strike}_{command.option_type.value if command.option_type else 'NONE'}"
+
+        current_pos = {}
+        if isinstance(positions, dict):
+            if inst_key in positions and isinstance(positions[inst_key], dict):
+                current_pos = positions[inst_key]
+            elif "KOSPI200_OPTION" in positions and isinstance(positions["KOSPI200_OPTION"], dict) and len(positions) == 1:
+                current_pos = positions["KOSPI200_OPTION"]
+
+        curr_qty = current_pos.get("qty", 0)
+        curr_side = current_pos.get("side")
+        order_side = command.side.value if hasattr(command.side, "value") else str(command.side)
+
+        if curr_qty == 0 or not curr_side:
+            return {"instrument_key": inst_key, "side": order_side, "qty": command.qty}
+
+        if curr_side == order_side:
+            # 동일 방향 추가 진입
+            return {"instrument_key": inst_key, "side": curr_side, "qty": curr_qty + command.qty}
+        else:
+            # 반대 방향 청산 / 반전
+            if command.qty < curr_qty:
+                # 부분 청산
+                return {"instrument_key": inst_key, "side": curr_side, "qty": curr_qty - command.qty}
+            elif command.qty == curr_qty:
+                # 완전 청산 (FLAT)
+                return {"instrument_key": inst_key, "side": "FLAT", "qty": 0}
+            else:
+                # 반전 (Reversal)
+                return {"instrument_key": inst_key, "side": order_side, "qty": command.qty - curr_qty}
+
     def evaluate_order(
         self,
         command: CanonicalOrderCommand,
@@ -157,25 +198,14 @@ class RiskEngine:
                 rejection_reason=f"EXCEEDED_MAX_DAILY_LOSS: {total_loss:,.0f} >= {self.config.max_daily_loss_krw:,.0f} KRW"
             )
 
-        # 4. 종목별 포지션 한도 검사 (Instrument Identity 기반 정규화 조회)
-        if hasattr(command, "get_instrument_key"):
-            inst_key = command.get_instrument_key()
-        else:
-            inst_key = f"{command.asset_type.value}_{command.strike}_{command.option_type.value if command.option_type else 'NONE'}"
-
-        current_inst_qty = 0
-        if isinstance(positions, dict):
-            if inst_key in positions and isinstance(positions[inst_key], dict):
-                current_inst_qty = positions[inst_key].get("qty", 0)
-            elif "KOSPI200_OPTION" in positions and isinstance(positions["KOSPI200_OPTION"], dict) and len(positions) == 1:
-                # 레거시 단일 포지션 구조 하위 호환
-                current_inst_qty = positions["KOSPI200_OPTION"].get("qty", 0)
-
-        if current_inst_qty + command.qty > self.config.max_position_per_instrument:
+        # 4. 종목별 포지션 한도 검사 (Expected Position 기준)
+        expected_pos = self.calculate_expected_position(command, positions)
+        if expected_pos["qty"] > self.config.max_position_per_instrument:
             return RiskEvaluationResult(
                 is_approved=False,
-                rejection_reason=f"EXCEEDED_INSTRUMENT_LIMIT: {current_inst_qty + command.qty} > {self.config.max_position_per_instrument}"
+                rejection_reason=f"EXCEEDED_INSTRUMENT_LIMIT: {expected_pos['qty']} > {self.config.max_position_per_instrument}"
             )
+
 
 
         # 5. 필요 증거금 및 가용 증거금 한도 검사
