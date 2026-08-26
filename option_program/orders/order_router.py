@@ -95,7 +95,14 @@ class OrderRouter:
             try:
                 report: Optional[CanonicalExecutionReport] = broker_adapter.send_order(command)
                 if report is not None and getattr(report, "executed_qty", 0) > 0:
-                    if report.executed_qty < command.qty:
+                    if report.executed_qty > command.qty:
+                        self.fsm.states[order_id] = OrderStatus.REJECTED
+                        self._active_orders.pop(order_id, None)
+                        logger.error(
+                            f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) oversized execution rejected: "
+                            f"executed_qty={report.executed_qty} > requested_qty={command.qty}"
+                        )
+                    elif report.executed_qty < command.qty:
                         self.fsm.states[order_id] = OrderStatus.PARTIAL
                         logger.info(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) executed via {mode_str} Broker: PARTIAL {report.executed_qty}/{command.qty}")
                     else:
@@ -122,15 +129,28 @@ class OrderRouter:
         report: CanonicalExecutionReport
     ) -> None:
         """체결 보고서 수신에 따른 FSM 상태 전이"""
+        cmd_info = self._active_orders.get(order_id)
+        requested_qty = cmd_info[0].qty if cmd_info else None
+
         if report.executed_qty > 0:
-            cmd_info = self._active_orders.get(order_id)
-            if cmd_info and report.executed_qty < cmd_info[0].qty:
+            if requested_qty is not None and report.executed_qty > requested_qty:
+                self.fsm.states[order_id] = OrderStatus.REJECTED
+                self._active_orders.pop(order_id, None)
+                logger.error(
+                    f"[OrderRouter] Order {order_id} oversized execution rejected: "
+                    f"executed_qty={report.executed_qty} > requested_qty={requested_qty}"
+                )
+            elif requested_qty is not None and report.executed_qty < requested_qty:
                 self.fsm.states[order_id] = OrderStatus.PARTIAL
                 logger.info(f"[OrderRouter] Order {order_id} PARTIAL: {report.executed_qty}/{cmd_info[0].qty}@{report.executed_price}")
-            else:
+            elif requested_qty is not None and report.executed_qty == requested_qty:
                 self.fsm.states[order_id] = OrderStatus.FILLED
                 self._active_orders.pop(order_id, None)
                 logger.info(f"[OrderRouter] Order {order_id} FILLED: {report.executed_qty}@{report.executed_price}")
+            else:
+                self.fsm.states[order_id] = OrderStatus.REJECTED
+                self._active_orders.pop(order_id, None)
+                logger.warning(f"[OrderRouter] Order {order_id} received execution report for inactive/unknown order: REJECTED.")
         else:
             self.fsm.states[order_id] = OrderStatus.REJECTED
             self._active_orders.pop(order_id, None)

@@ -12,6 +12,7 @@ Covers:
 """
 import sys
 import unittest
+from unittest.mock import MagicMock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,7 +27,12 @@ from shared.contracts.canonical import (  # noqa: E402
     CanonicalAssetType,
     CanonicalOptionType,
 )
+from shared.core.contracts import OrderStatus, RiskApprovalToken  # noqa: E402
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime  # noqa: E402
+from option_program.risk_control.risk_engine import RiskConfig, RiskEngine, RiskGate  # noqa: E402
+from option_program.orders.order_router import OrderRouter  # noqa: E402
+from option_program.orders.oms_fsm import OmsFsm  # noqa: E402
+from option_program.broker.broker_interface import IBrokerAdapter  # noqa: E402
 
 
 class TestBrokerExecutionPositionPnLConsistencyEdgeE2E(unittest.TestCase):
@@ -117,8 +123,15 @@ class TestBrokerExecutionPositionPnLConsistencyEdgeE2E(unittest.TestCase):
     # =========================================================================
 
     def test_G_oversized_execution_qty_defense(self):
-        """[TEST G] 요청수량 10개 대비 초과체결 11개 수신 시 시스템 방어 동작 확인."""
-        # 주문 커맨드: qty = 10
+        """[TEST G] 요청수량 10개 대비 초과체결 11개 수신 시 OrderRouter/FSM 방어 및 Mutation=0 검증."""
+        # 1. 사전 상태 Snapshot 측정
+        snap_before = self.vssf.account.get_canonical_summary()
+        pos_before = {k: dict(v) for k, v in self.vssf.account.get_positions().items()}
+        realized_pnl_before = self.vssf.account.realized_pnl
+        total_balance_before = self.vssf.account.balance
+        free_margin_before = self.vssf.account.free_margin
+
+        # 2. 주문 커맨드 생성: requested_qty = 10
         cmd = CanonicalOrderCommand(
             client_order_id="ORD-G-001", track_id="Track1",
             asset_type=CanonicalAssetType.OPTION, side=CanonicalOrderSide.BUY,
@@ -126,7 +139,28 @@ class TestBrokerExecutionPositionPnLConsistencyEdgeE2E(unittest.TestCase):
             strike=350.0, expiry="2026-09"
         )
 
-        # 비정상 체결 리포트: executed_qty = 11 (> requested_qty 10)
+        # 3. OrderRouter / FSM / RiskGate 준비
+        fsm = OmsFsm()
+        router = OrderRouter(fsm=fsm)
+        risk_config = RiskConfig(
+            max_order_qty=100,
+            max_daily_loss_krw=500_000_000.0,
+            max_margin_utilization_ratio=0.85,
+            max_position_per_instrument=100,
+        )
+        risk_engine = RiskEngine(config=risk_config)
+        risk_gate = RiskGate(risk_engine=risk_engine)
+        account_snapshot = self.vssf.get_account_snapshot()
+
+        is_approved, token, _ = risk_gate.admit_order(
+            command=cmd,
+            account=account_snapshot,
+            positions=self.vssf.account.get_positions(),
+        )
+        self.assertTrue(is_approved)
+        self.assertIsNotNone(token)
+
+        # 4. 비정상 초과 체결 리포트 생성: executed_qty = 11 (> requested_qty 10)
         rep_oversized = CanonicalExecutionReport(
             exec_id="EXEC-G-OVER", client_order_id=cmd.client_order_id, track_id=cmd.track_id,
             asset_type=cmd.asset_type, side=cmd.side, executed_qty=11, executed_price=2.5,
@@ -134,11 +168,52 @@ class TestBrokerExecutionPositionPnLConsistencyEdgeE2E(unittest.TestCase):
             symbol=cmd.symbol, option_type=cmd.option_type, strike=cmd.strike, expiry=cmd.expiry
         )
 
-        # 현재 시스템의 apply_execution 동작 점검
-        self.vssf.account.apply_execution(rep_oversized)
-        pos = self.vssf.account.get_positions()
-        # 현재 구현 상의 실제 포지션 수량 기록 및 확인
-        self.assertIn(self.inst_key, pos)
+        mock_broker = MagicMock(spec=IBrokerAdapter)
+        mock_broker.send_order.return_value = rep_oversized
+
+        # 5. OrderRouter를 통한 주문 라우팅 및 초과 체결 차단 실행
+        order_id = router.register_and_route(cmd, token, mock_broker)
+
+        # 6. FSM 상태 검증: 정상 FILLED가 되지 않고 REJECTED 상태로 차단되었는지 확인
+        self.assertIsNotNone(order_id)
+        final_fsm_status = fsm.get_status(order_id)
+        self.assertNotEqual(final_fsm_status, OrderStatus.FILLED)
+        self.assertEqual(final_fsm_status, OrderStatus.REJECTED)
+
+        # 7. handle_execution_report 경로 추가 검증
+        # 별도 신규 주문을 등록 후 handle_execution_report로 oversized execution 리포트 주입 시에도 차단되는지 확인
+        cmd2 = CanonicalOrderCommand(
+            client_order_id="ORD-G-002", track_id="Track1",
+            asset_type=CanonicalAssetType.OPTION, side=CanonicalOrderSide.BUY,
+            qty=10, price=2.5, option_type=CanonicalOptionType.CALL,
+            strike=350.0, expiry="2026-09"
+        )
+        _, token2, _ = risk_gate.admit_order(command=cmd2, account=account_snapshot, positions=self.vssf.account.get_positions())
+        oid2 = router.register_and_route(cmd2, token2, None)
+        self.assertIsNotNone(oid2)
+        router.handle_execution_report(oid2, rep_oversized)
+        self.assertNotEqual(fsm.get_status(oid2), OrderStatus.FILLED)
+        self.assertEqual(fsm.get_status(oid2), OrderStatus.REJECTED)
+
+        # 8. Mutation 0 불변조건 검증 (사후 상태 비교)
+        pos_after = self.vssf.account.get_positions()
+        snap_after = self.vssf.account.get_canonical_summary()
+
+        # (1) Position 검증: 포지션이 새로 생성되거나 수량이 증가하지 않음 (변화량 = 0)
+        self.assertEqual(len(pos_after), len(pos_before))
+        self.assertNotIn(self.inst_key, pos_after)
+
+        # (2) Realized PnL 검증: 실현 손익 변동 0
+        self.assertEqual(self.vssf.account.realized_pnl, realized_pnl_before)
+        self.assertEqual(snap_after.realized_pnl, snap_before.realized_pnl)
+
+        # (3) Total Balance 검증: 총 잔고 변동 0
+        self.assertEqual(self.vssf.account.balance, total_balance_before)
+        self.assertEqual(snap_after.total_balance, snap_before.total_balance)
+
+        # (4) Free Margin 검증: 가용 증거금 변동 0
+        self.assertEqual(self.vssf.account.free_margin, free_margin_before)
+        self.assertEqual(snap_after.free_margin, snap_before.free_margin)
 
     # =========================================================================
     # 4. TEST H: executed_qty < 0 (음수 체결수량 방어)
