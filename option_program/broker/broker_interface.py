@@ -1,12 +1,6 @@
-"""Phase 5: Dual Broker Interface & Paper Trading Adapter Layer.
-
-Provides:
-- IBrokerAdapter: Standard authoritative broker contract for Paper Trading (VSSF) and Real Brokers.
-- PaperBrokerAdapter: High-fidelity authoritative paper trading wrapper around VSSF.
-- RealBrokerAdapterStub: Production broker adapter stub for future real broker plug-in.
-- BrokerFactory: Unified switching mechanism between PAPER and REAL broker modes.
-"""
+"""Phase 5: Dual Broker Interface & Paper/Shadow Trading Control Layer."""
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from enum import Enum
@@ -14,19 +8,22 @@ from enum import Enum
 from shared.contracts.canonical import (
     CanonicalOrderCommand,
     CanonicalExecutionReport,
-    CanonicalAccountSummary
+    CanonicalAccountSummary,
 )
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 
 logger = logging.getLogger(__name__)
+
 
 class BrokerMode(str, Enum):
     PAPER = "PAPER"
     SHADOW = "SHADOW"
     REAL = "REAL"
 
+
 class IBrokerAdapter(ABC):
-    """[Phase 5/Shadow 브로커 인터페이스 표준 계약]"""
+    """Authoritative broker contract shared by PAPER, SHADOW and REAL adapters."""
+
     @abstractmethod
     def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
         pass
@@ -47,23 +44,97 @@ class IBrokerAdapter(ABC):
     def is_connected(self) -> bool:
         pass
 
-class PaperBrokerAdapter(IBrokerAdapter):
-    """[Phase 5 공식 Paper Trading 어댑터]
-    
-    VSSF(가상 증권사) 단일 권위 금융 엔진을 감싸 IBrokerAdapter 표준 계약을 100% 충족함.
-    """
-    def __init__(self, vssf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None, initial_capital: float = 25000000.0):
-        self.vssf = vssf_runtime if vssf_runtime is not None else VirtualSecuritiesFirmRuntime(initial_capital=initial_capital)
+    def set_connection(self, connected: bool) -> None:
+        self._connected = bool(connected)
+
+    def set_latency(self, latency_ms: float) -> None:
+        value = float(latency_ms)
+        if value < 0.0 or value > 5000.0:
+            raise ValueError("latency_ms must be between 0 and 5000")
+        self._latency_ms = value
+
+    def set_execution_behavior(self, mode: str) -> None:
+        value = str(mode).upper()
+        if value not in {"NORMAL", "DELAYED", "REJECT"}:
+            raise ValueError(f"unsupported execution behavior: {mode}")
+        self._execution_behavior = value
+
+    def control_snapshot(self) -> Dict[str, Any]:
+        """Return the broker control state exposed to the UI layer."""
+        return {
+            "connected": self.is_connected(),
+            "latency_ms": float(getattr(self, "_latency_ms", 0.0)),
+            "execution_behavior": getattr(self, "_execution_behavior", "NORMAL"),
+        }
+
+
+class _ControllableBrokerMixin:
+    """Common deterministic control behavior for non-live broker adapters."""
+
+    _ALLOWED_EXECUTION_BEHAVIORS = {"NORMAL", "DELAYED", "REJECT"}
+
+    def _init_control_state(self) -> None:
+        self._latency_ms = 0.0
+        self._execution_behavior = "NORMAL"
+
+    def set_connection(self, connected: bool) -> None:
+        self._connected = bool(connected)
+        logger.info("[%s] connection=%s", type(self).__name__, self._connected)
+
+    def set_latency(self, latency_ms: float) -> None:
+        value = float(latency_ms)
+        if value < 0.0 or value > 5000.0:
+            raise ValueError("latency_ms must be between 0 and 5000")
+        self._latency_ms = value
+
+    def set_execution_behavior(self, mode: str) -> None:
+        value = str(mode).upper()
+        if value not in self._ALLOWED_EXECUTION_BEHAVIORS:
+            raise ValueError(f"unsupported execution behavior: {mode}")
+        self._execution_behavior = value
+
+    def _before_send_order(self) -> bool:
+        if not self._connected:
+            return False
+        if self._execution_behavior == "REJECT":
+            logger.info("[%s] execution behavior REJECT blocked order", type(self).__name__)
+            return False
+        if self._execution_behavior == "DELAYED" and self._latency_ms > 0:
+            time.sleep(self._latency_ms / 1000.0)
+        return True
+
+    def control_snapshot(self) -> Dict[str, Any]:
+        return {
+            "connected": self.is_connected(),
+            "latency_ms": self._latency_ms,
+            "execution_behavior": self._execution_behavior,
+        }
+
+
+class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
+    """Official Paper Trading adapter backed by the authoritative VSSF runtime."""
+
+    def __init__(
+        self,
+        vssf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None,
+        initial_capital: float = 25000000.0,
+    ):
+        self.vssf = (
+            vssf_runtime
+            if vssf_runtime is not None
+            else VirtualSecuritiesFirmRuntime(initial_capital=initial_capital)
+        )
         self._connected = True
+        self._init_control_state()
 
     def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
-        if not self._connected:
-            logger.warning("[PaperBroker] Cannot send order while disconnected.")
+        if not self._before_send_order():
+            logger.warning("[PaperBroker] Order blocked by broker control state.")
             return None
         return self.vssf.process_order(command)
 
     def cancel_order(self, client_order_id: str) -> bool:
-        return self.vssf.cancel_order(client_order_id)
+        return self._connected and self.vssf.cancel_order(client_order_id)
 
     def get_account_summary(self) -> CanonicalAccountSummary:
         return self.vssf.account.get_canonical_summary()
@@ -74,30 +145,41 @@ class PaperBrokerAdapter(IBrokerAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
-class ShadowBrokerAdapter(IBrokerAdapter):
-    """[Shadow Trading 공식 어댑터]
-    
-    실시간 라이브 시세 스트림을 수신하여 모든 전략/리스크 로직을 실전과 100% 동일하게 병렬 구동하되,
-    실제 증권사로는 절대 주문을 송출하지 않고 VSSF 기반 Shadow Execution & PnL을 실시간 미러링함.
-    """
-    def __init__(self, vssf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None, initial_capital: float = 25000000.0):
-        self.vssf = vssf_runtime if vssf_runtime is not None else VirtualSecuritiesFirmRuntime(initial_capital=initial_capital)
+
+class ShadowBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
+    """Shadow adapter: mirrors orders into VSSF and never sends them to a real broker."""
+
+    def __init__(
+        self,
+        vssf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None,
+        initial_capital: float = 25000000.0,
+    ):
+        self.vssf = (
+            vssf_runtime
+            if vssf_runtime is not None
+            else VirtualSecuritiesFirmRuntime(initial_capital=initial_capital)
+        )
         self._connected = True
         self.shadow_executions: List[CanonicalExecutionReport] = []
+        self._init_control_state()
 
     def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
-        if not self._connected:
-            logger.warning("[ShadowBroker] Cannot shadow order while disconnected.")
+        if not self._before_send_order():
+            logger.warning("[ShadowBroker] Order blocked by broker control state.")
             return None
-        # VSSF 인메모리 가상 체결 및 Shadow PnL 추적
-        rep = self.vssf.process_order(command)
-        if rep is not None:
-            self.shadow_executions.append(rep)
-            logger.info(f"[Shadow Execution] Order: {rep.client_order_id} | Price: {rep.executed_price} | Qty: {rep.executed_qty}")
-        return rep
+        report = self.vssf.process_order(command)
+        if report is not None:
+            self.shadow_executions.append(report)
+            logger.info(
+                "[Shadow Execution] Order: %s | Price: %s | Qty: %s",
+                report.client_order_id,
+                report.executed_price,
+                report.executed_qty,
+            )
+        return report
 
     def cancel_order(self, client_order_id: str) -> bool:
-        return self.vssf.cancel_order(client_order_id)
+        return self._connected and self.vssf.cancel_order(client_order_id)
 
     def get_account_summary(self) -> CanonicalAccountSummary:
         return self.vssf.account.get_canonical_summary()
@@ -108,20 +190,25 @@ class ShadowBrokerAdapter(IBrokerAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
+
 class RealBrokerAdapterStub(IBrokerAdapter):
-    """[실전 증권사 어댑터 스텁 — 하위 호환성 유지]"""
+    """Compatibility stub retained for legacy imports; it never sends real orders."""
+
     def __init__(self, broker_name: str = "KIWOOM_OPENAPI"):
         self.broker_name = broker_name
         self._connected = False
+        self._latency_ms = 0.0
+        self._execution_behavior = "NORMAL"
 
     def connect(self) -> bool:
         self._connected = True
         return True
 
     def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
-        if not self._connected:
-            logger.warning(f"[{self.broker_name}] Disconnected. Cannot send real order.")
+        if not self._connected or self._execution_behavior == "REJECT":
             return None
+        if self._execution_behavior == "DELAYED" and self._latency_ms > 0:
+            time.sleep(self._latency_ms / 1000.0)
         return None
 
     def cancel_order(self, client_order_id: str) -> bool:
@@ -135,7 +222,7 @@ class RealBrokerAdapterStub(IBrokerAdapter):
             free_margin=0.0,
             realized_pnl=0.0,
             unrealized_pnl=0.0,
-            timestamp="2026-08-24 09:00:00"
+            timestamp="2026-08-24 09:00:00",
         )
 
     def get_positions(self) -> Dict[str, Any]:
@@ -144,16 +231,43 @@ class RealBrokerAdapterStub(IBrokerAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
+    def set_connection(self, connected: bool) -> None:
+        self._connected = bool(connected)
+
+    def set_latency(self, latency_ms: float) -> None:
+        value = float(latency_ms)
+        if value < 0.0 or value > 5000.0:
+            raise ValueError("latency_ms must be between 0 and 5000")
+        self._latency_ms = value
+
+    def set_execution_behavior(self, mode: str) -> None:
+        value = str(mode).upper()
+        if value not in {"NORMAL", "DELAYED", "REJECT"}:
+            raise ValueError(f"unsupported execution behavior: {mode}")
+        self._execution_behavior = value
+
+    def control_snapshot(self) -> Dict[str, Any]:
+        return {
+            "connected": self._connected,
+            "latency_ms": self._latency_ms,
+            "execution_behavior": self._execution_behavior,
+        }
+
+
 class BrokerFactory:
-    """[브로커 팩토리] 단 1개의 설정 플래그로 Paper / Shadow / Real 브로커 스위칭"""
+    """Unified switching mechanism between PAPER, SHADOW and REAL broker modes."""
+
     @staticmethod
-    def create_broker(mode: BrokerMode = BrokerMode.PAPER, vssf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None, broker_config: Optional[Any] = None) -> IBrokerAdapter:
+    def create_broker(
+        mode: BrokerMode = BrokerMode.PAPER,
+        vssf_runtime: Optional[VirtualSecuritiesFirmRuntime] = None,
+        broker_config: Optional[Any] = None,
+    ) -> IBrokerAdapter:
         if mode == BrokerMode.PAPER:
             return PaperBrokerAdapter(vssf_runtime=vssf_runtime)
-        elif mode == BrokerMode.SHADOW:
+        if mode == BrokerMode.SHADOW:
             return ShadowBrokerAdapter(vssf_runtime=vssf_runtime)
-        elif mode == BrokerMode.REAL:
+        if mode == BrokerMode.REAL:
             from option_program.broker.real_broker_adapter import RealBrokerAdapter
             return RealBrokerAdapter(config=broker_config)
-        else:
-            raise ValueError(f"Unknown BrokerMode: {mode}")
+        raise ValueError(f"Unknown BrokerMode: {mode}")

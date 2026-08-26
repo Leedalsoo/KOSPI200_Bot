@@ -12,23 +12,32 @@ from virtual_securities_firm.exchange.order_book import OrderBook
 from virtual_securities_firm.account.reconciliation import AuthoritativeReconciliationEngine
 from virtual_securities_firm.settlement.settlement_engine import SettlementEngine
 from virtual_securities_firm.recovery.state_recovery import StateRecoveryEngine
-from virtual_securities_firm.margin.margin_engine import MarginEngine
 
 logger = logging.getLogger(__name__)
 
+
 class VirtualSecuritiesFirmRuntime:
-    """[VSSF 런타임: M4~M5 완수 — MarginEngine 책임 이관 완료, 직접 계산 0]"""
+    """VSSF authoritative runtime with deterministic UI control hooks."""
+
+    _MARGIN_MODES = {"NORMAL", "TIGHT"}
+
     def __init__(self, initial_capital: float = 25000000.0):
         self.account = PaperTradingAccount(initial_capital=initial_capital)
         self.execution_engine = ExecutionEngine()
         self.order_book = OrderBook()
         self.reconciliation_engine = AuthoritativeReconciliationEngine(initial_capital=initial_capital)
 
-        # M5 Modules — authoritative path owner
+        # M5 modules — authoritative path owner
         self.settlement_engine = SettlementEngine(account=self.account)
         self.recovery_engine = StateRecoveryEngine(account=self.account)
-        # MarginEngine: 단일 권위자 확정 (PaperTradingAccount 소유 인스턴스 단일 공유)
         self.margin_engine = self.account.margin_engine
+
+        # Phase 5 control state. These values modify admission behavior only;
+        # account/position/ledger ownership remains inside VSSF.
+        self._margin_mode = "NORMAL"
+        self._leverage = 1.0
+        self._margin_call_pending = False
+        self._margin_shortage_pending = False
 
         self.metrics: Dict[str, int] = {
             "market_ticks": 0,
@@ -54,6 +63,42 @@ class VirtualSecuritiesFirmRuntime:
         """주문 취소 위임"""
         return self.order_book.cancel_order(client_order_id)
 
+    # ------------------------------------------------------------------
+    # Phase 5: VSSF/Broker Control
+    # ------------------------------------------------------------------
+    def set_margin_mode(self, mode: str) -> None:
+        value = str(mode).upper()
+        if value not in self._MARGIN_MODES:
+            raise ValueError(f"unsupported margin mode: {mode}")
+        self._margin_mode = value
+
+    def inject_margin_call(self) -> None:
+        """Reject exactly the next order as a deterministic margin-call injection."""
+        self._margin_call_pending = True
+
+    def inject_margin_shortage(self) -> None:
+        """Reject exactly the next order as a deterministic margin-shortage injection."""
+        self._margin_shortage_pending = True
+
+    def set_leverage(self, leverage: float) -> None:
+        value = float(leverage)
+        if value <= 0.0 or value > 20.0:
+            raise ValueError("leverage must be greater than 0 and no more than 20")
+        self._leverage = value
+
+    def control_snapshot(self) -> Dict[str, Any]:
+        return {
+            "margin_mode": self._margin_mode,
+            "leverage": self._leverage,
+            "margin_call_pending": self._margin_call_pending,
+            "margin_shortage_pending": self._margin_shortage_pending,
+        }
+
+    def _controlled_order_margin(self, command: CanonicalOrderCommand) -> float:
+        base_margin = self.margin_engine.calculate_order_margin(command)
+        mode_factor = 1.5 if self._margin_mode == "TIGHT" else 1.0
+        return base_margin * mode_factor / self._leverage
+
     def process_market_data(self, tick: CanonicalMarketTick) -> None:
         self.metrics["market_ticks"] += 1
         self.order_book.update_bid_ask(tick.bid_price, tick.ask_price)
@@ -63,20 +108,35 @@ class VirtualSecuritiesFirmRuntime:
     def process_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
         self.metrics["order_commands"] += 1
 
-        # [Risk Admission Guard] — MarginEngine 단독 책임, firm_runtime 직접 계산 없음
-        margin_required = self.margin_engine.calculate_order_margin(command)
+        # Phase 5 deterministic control injections are consumed once so the UI
+        # can trigger a bounded test without permanently disabling trading.
+        if self._margin_call_pending:
+            self._margin_call_pending = False
+            self.metrics["risk_rejected"] += 1
+            logger.info("[VSSF Control] Margin call injection rejected order %s", command.client_order_id)
+            return None
+
+        if self._margin_shortage_pending:
+            self._margin_shortage_pending = False
+            self.metrics["risk_rejected"] += 1
+            logger.info("[VSSF Control] Margin shortage injection rejected order %s", command.client_order_id)
+            return None
+
+        # MarginEngine remains the single calculation authority. Phase 5 only
+        # applies the selected control factor to its result.
+        margin_required = self._controlled_order_margin(command)
 
         if self.account.free_margin < margin_required:
             self.metrics["risk_rejected"] += 1
             logger.debug(
                 "[VSSF Risk Rejected] Insufficient margin: %.2f < %.2f",
-                self.account.free_margin, margin_required
+                self.account.free_margin,
+                margin_required,
             )
             return None
 
         self.metrics["risk_accepted"] += 1
 
-        # OrderBook Matching
         matched_price = self.order_book.match_order(command)
         if isinstance(matched_price, dict):
             m_price = matched_price.get("matched_price", command.price)
@@ -87,12 +147,9 @@ class VirtualSecuritiesFirmRuntime:
             return None
         self.metrics["orderbook_matches"] += 1
 
-        # Execution Engine
         report = self.execution_engine.execute_order(command, m_price, command.qty)
         if report:
             self.metrics["executions_issued"] += 1
-
-            # Account, Position & Ledger Mutation (Authoritative chain)
             self.account.apply_execution(report)
             self.metrics["account_mutations"] += 1
             self.metrics["position_mutations"] += 1
@@ -114,7 +171,7 @@ class VirtualSecuritiesFirmRuntime:
         result = self.reconciliation_engine.reconcile_state(
             account_snapshot=snap,
             execution_history=self.execution_engine.reports,
-            current_positions=self.account.positions
+            current_positions=self.account.positions,
         )
         self.metrics["reconciliation_checks"] += 1
         return result
@@ -129,5 +186,3 @@ class VirtualSecuritiesFirmRuntime:
         if ok and isinstance(snapshot, dict) and "execution_reports" in snapshot:
             self.execution_engine.reports = list(snapshot["execution_reports"])
         return ok
-
-

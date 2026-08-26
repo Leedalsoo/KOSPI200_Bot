@@ -56,6 +56,16 @@ class TargetArchitectureUIServer:
         risk = self.system.op_runtime.last_risk_snapshot
         reports = self.system.op_runtime.received_execution_reports[-20:]
         metrics = self.system.op_runtime.strategy_metrics
+        broker_control = (
+            self.system.broker.control_snapshot()
+            if hasattr(self.system.broker, "control_snapshot")
+            else {}
+        )
+        vssf_control = (
+            self.system.vssf.control_snapshot()
+            if hasattr(self.system.vssf, "control_snapshot")
+            else {}
+        )
         return {
             "type": "ui_snapshot",
             "market": {
@@ -68,17 +78,55 @@ class TargetArchitectureUIServer:
                 "volume": tick.volume if tick else 0,
             },
             "marketCondition": condition.to_dict() if condition else {},
-            "broker": {"mode": self.system.broker_mode, "account": {"balance": account.total_balance, "realized_pnl": account.realized_pnl, "unrealized_pnl": account.unrealized_pnl, "used_margin": account.used_margin, "free_margin": account.free_margin}},
-            "optionProgram": {"current_regime": self.system.op_runtime.current_regime, "strategy_metrics": metrics, "enabled_strategies": self.system.op_runtime.enabled_strategies},
+            "broker": {
+                "mode": self.system.broker_mode,
+                "control": broker_control,
+                "vssf_control": vssf_control,
+                "account": {
+                    "balance": account.total_balance,
+                    "realized_pnl": account.realized_pnl,
+                    "unrealized_pnl": account.unrealized_pnl,
+                    "used_margin": account.used_margin,
+                    "free_margin": account.free_margin,
+                },
+            },
+            "optionProgram": {
+                "current_regime": self.system.op_runtime.current_regime,
+                "strategy_metrics": metrics,
+                "enabled_strategies": self.system.op_runtime.enabled_strategies,
+            },
             "strategies": metrics,
             "positions": account.positions,
             "orders": self.system.op_runtime.last_orders[-20:],
-            "executions": [{"exec_id": r.exec_id, "client_order_id": r.client_order_id, "track_id": r.track_id, "asset_type": r.asset_type.value, "side": r.side.value, "executed_qty": r.executed_qty, "executed_price": r.executed_price, "fee": r.fee, "slippage": r.slippage, "timestamp": r.timestamp} for r in reports],
-            "pnl": {"realized": account.realized_pnl, "unrealized": account.unrealized_pnl, "total": account.realized_pnl + account.unrealized_pnl},
+            "executions": [
+                {
+                    "exec_id": r.exec_id,
+                    "client_order_id": r.client_order_id,
+                    "track_id": r.track_id,
+                    "asset_type": r.asset_type.value,
+                    "side": r.side.value,
+                    "executed_qty": r.executed_qty,
+                    "executed_price": r.executed_price,
+                    "fee": r.fee,
+                    "slippage": r.slippage,
+                    "timestamp": r.timestamp,
+                }
+                for r in reports
+            ],
+            "pnl": {
+                "realized": account.realized_pnl,
+                "unrealized": account.unrealized_pnl,
+                "total": account.realized_pnl + account.unrealized_pnl,
+            },
             "coord": self._build_pnl_coord(tick, account),
             "risk": risk.__dict__ if risk else {},
             "payoff": self._build_payoff(account.positions, tick.underlying_price if tick else 350.0),
-            "replay": {"timestamp": tick.timestamp if tick else "", "ticks_processed": self.system.ticks_processed, "orders_routed": self.system.orders_routed, "executions_handled": self.system.executions_handled},
+            "replay": {
+                "timestamp": tick.timestamp if tick else "",
+                "ticks_processed": self.system.ticks_processed,
+                "orders_routed": self.system.orders_routed,
+                "executions_handled": self.system.executions_handled,
+            },
             "command": dict(self.last_command_result),
         }
 
