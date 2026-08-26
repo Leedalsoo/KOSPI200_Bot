@@ -76,11 +76,15 @@ class TestCancelledOrderNoReexecutionE2E(unittest.TestCase):
             self.assertEqual(status_after_cancel, OrderStatus.CANCELLED, "State must be CANCELLED")
 
             # CANCELLED 직후 상태 스냅샷 기록 (before 측정값)
-            positions_before = dict(system.vssf.account.get_positions())
-            used_margin_before = system.vssf.account.used_margin
-            executions_handled_before = system.executions_handled
+            account_positions_before = dict(system.vssf.account.get_positions())
+            account_used_margin_before = system.vssf.account.used_margin
+            account_executions_handled_before = system.executions_handled
+
+            # CANCELLED 대상 주문에 귀속되는 상태 측정 (before)
             reports_for_target_before = [r for r in system.vssf.execution_engine.reports if getattr(r, "client_order_id", "") == target_client_order_id]
-            positions_for_target_before = 0
+            positions_before = sum(getattr(r, "executed_qty", 0) for r in reports_for_target_before)
+            used_margin_before = 0.0 if len(reports_for_target_before) == 0 else sum(getattr(r, "executed_qty", 0) * 1000.0 for r in reports_for_target_before)
+            executions_handled_before = len(reports_for_target_before)
 
             # STEP 4: CANCELLED 이후 후속 틱(2번째 틱) 실행
             # Broker를 NORMAL로 복구하여 시스템이 정상 가동되는 환경에서 대상 주문의 격리 상태 확인
@@ -89,39 +93,41 @@ class TestCancelledOrderNoReexecutionE2E(unittest.TestCase):
             self.assertEqual(system.ticks_processed, 2)
 
             # 후속 틱 이후 상태 스냅샷 기록 (after 측정값)
-            positions_after = dict(system.vssf.account.get_positions())
-            used_margin_after = system.vssf.account.used_margin
-            executions_handled_after = system.executions_handled
+            account_positions_after = dict(system.vssf.account.get_positions())
+            account_used_margin_after = system.vssf.account.used_margin
+            account_executions_handled_after = system.executions_handled
+
+            # CANCELLED 대상 주문에 귀속되는 상태 측정 (after)
             reports_for_target_after = [r for r in system.vssf.execution_engine.reports if getattr(r, "client_order_id", "") == target_client_order_id]
+            positions_after = sum(getattr(r, "executed_qty", 0) for r in reports_for_target_after)
+            used_margin_after = 0.0 if len(reports_for_target_after) == 0 else sum(getattr(r, "executed_qty", 0) * 1000.0 for r in reports_for_target_after)
+            executions_handled_after = len(reports_for_target_after)
 
-            # CANCELLED 된 해당 주문에 귀속되는 체결 수량 및 포지션 계산 (2번째 틱의 다른 정상 주문과 분리)
-            positions_for_target_after = sum(
-                getattr(r, "executed_qty", 0)
-                for r in reports_for_target_after
-            )
-
-            # [핵심 Assertion 1: Position 변화 없음 검증]
+            # [핵심 Assertion 1: CANCELLED 대상 주문 Position 변화 없음 검증]
             self.assertEqual(
-                positions_for_target_after,
-                positions_for_target_before,
-                f"Position for cancelled order {target_client_order_id} must not change (before: {positions_for_target_before}, after: {positions_for_target_after})"
+                positions_after,
+                positions_before,
+                f"Position for cancelled order {target_client_order_id} must remain unchanged"
             )
-            self.assertEqual(positions_for_target_after, 0)
+            self.assertEqual(positions_after, 0)
 
-            # [핵심 Assertion 2: ExecutionReport 추가 없음 검증]
+            # [핵심 Assertion 2: CANCELLED 대상 주문 Margin 증가 없음 검증]
             self.assertEqual(
-                len(reports_for_target_after),
-                len(reports_for_target_before),
+                used_margin_after,
+                used_margin_before,
+                f"Margin for cancelled order {target_client_order_id} must remain unchanged"
+            )
+            self.assertEqual(used_margin_after, 0.0)
+
+            # [핵심 Assertion 3: CANCELLED 대상 주문 ExecutionReport 추가 없음 검증]
+            self.assertEqual(
+                executions_handled_after,
+                executions_handled_before,
                 f"Execution reports for cancelled order {target_client_order_id} must not increase"
             )
             self.assertEqual(len(reports_for_target_after), 0)
 
-            # [핵심 Assertion 3: Margin 증가 없음 검증]
-            # CANCELLED 주문에 귀속되는 체결이 0건이므로 해당 주문에 의한 Margin 기여도는 정확히 0.0이어야 함
-            cancelled_order_margin_contribution = 0.0 if len(reports_for_target_after) == 0 else sum(getattr(r, "executed_qty", 0) * 1000.0 for r in reports_for_target_after)
-            self.assertEqual(cancelled_order_margin_contribution, 0.0, "Margin contribution from cancelled order must be exactly 0.0")
-
-            # [핵심 Assertion 4: Broker 재전송 없음 검증]
+            # [핵심 Assertion 4: CANCELLED 대상 주문 Broker 재전송 없음 검증]
             calls_after_subsequent = invoked_order_ids.count(target_client_order_id)
             self.assertEqual(
                 calls_after_subsequent,
@@ -130,11 +136,11 @@ class TestCancelledOrderNoReexecutionE2E(unittest.TestCase):
             )
             self.assertEqual(calls_after_subsequent, 1)
 
-            # [2번째 틱의 정상 주문과의 명확한 구분 확인]
-            # 2번째 틱에서는 신규 정상 주문이 처리되어 전체 executions_handled 및 used_margin이 증가할 수 있음을 관측
-            # 하지만 CANCELLED 주문 자체는 완벽하게 0 체결/0 포지션으로 격리됨
-            self.assertGreaterEqual(executions_handled_after, executions_handled_before)
-            self.assertGreaterEqual(used_margin_after, used_margin_before)
+            # [2번째 틱의 정상 주문과의 명확한 분리 검증]
+            # 2번째 틱에서는 신규 정상 주문이 처리되어 전체 계좌의 executions_handled 및 used_margin이 증가할 수 있음
+            # 하지만 CANCELLED 주문 자체의 position과 margin은 0.0으로 완벽하게 격리 유지됨
+            self.assertGreaterEqual(account_executions_handled_after, account_executions_handled_before)
+            self.assertGreaterEqual(account_used_margin_after, account_used_margin_before)
 
             # 최종 상태가 여전히 CANCELLED로 안전하게 고정되어 있는지 확인
             final_status = system.op_runtime.order_router.fsm.get_status(target_order_uuid)
