@@ -234,9 +234,14 @@ class TestBrokerExecutionPositionPnLConsistencyEdgeE2E(unittest.TestCase):
         self.vssf.account.apply_execution(rep_neg)
 
         pos_after = self.vssf.account.get_positions()
-        # 음수 포지션이 생성되지 않거나 잔고가 비정상 변경되지 않는지 확인
-        if self.inst_key in pos_after:
-            self.assertGreaterEqual(pos_after[self.inst_key]["qty"], 0)
+        snap_after = self.vssf.account.get_canonical_summary()
+
+        # 음수 포지션이 생성되지 않거나 잔고/손익이 비정상 변경되지 않는지 확인 (Mutation = 0)
+        self.assertEqual(len(pos_after), len(pos_before))
+        self.assertNotIn(self.inst_key, pos_after)
+        self.assertEqual(snap_before.realized_pnl, snap_after.realized_pnl)
+        self.assertEqual(snap_before.total_balance, snap_after.total_balance)
+        self.assertEqual(snap_before.free_margin, snap_after.free_margin)
 
     # =========================================================================
     # 5. TEST I: 동일 order_id + 서로 다른 execution_id 복수 체결 누적

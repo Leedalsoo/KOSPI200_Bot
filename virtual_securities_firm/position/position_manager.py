@@ -8,6 +8,9 @@ class PositionManager:
 
     def update_position(self, symbol: str, side: str, qty: int, price: float, multiplier: float = 250000.0) -> float:
         """포지션 갱신 및 실현 손익 파생액 반환"""
+        if qty <= 0:
+            return 0.0
+
         pos = self.positions.get(symbol, {"qty": 0, "avg_price": 0.0, "side": side})
         existing_qty = pos["qty"]
         existing_price = pos["avg_price"]
