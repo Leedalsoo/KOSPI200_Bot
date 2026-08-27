@@ -18,7 +18,7 @@ TICK_TARGET = 120
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from main import TradingSystem
+from main import TradingSystem  # noqa: E402
 
 
 def _http_ready(url: str) -> bool:

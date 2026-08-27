@@ -8,10 +8,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import websockets
+import websockets  # noqa: E402
 
-from main import TradingSystem
-from web_interface.server import TargetArchitectureUIServer, UIWebSocketHub
+from main import TradingSystem  # noqa: E402
+from web_interface.server import TargetArchitectureUIServer, UIWebSocketHub  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("pnl_verifier")

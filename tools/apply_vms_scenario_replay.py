@@ -382,7 +382,8 @@ def main() -> None:
             backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         path.write_text(content, encoding="utf-8")
         print(f"Applied: {relative_path}")
-        if backup.exists(): print(f"Backup : {backup.relative_to(ROOT)}")
+        if backup.exists():
+            print(f"Backup : {backup.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
