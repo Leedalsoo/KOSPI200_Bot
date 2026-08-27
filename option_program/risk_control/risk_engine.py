@@ -6,6 +6,7 @@ Provides:
 - RiskEngine: Multi-layer risk admission evaluation across Strategy Track 1~9.
 - RiskGate: Authoritative pre-trade gateway issuing cryptographic/unique RiskApprovalToken.
 """
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List, Tuple
 import uuid
@@ -46,10 +47,14 @@ class RiskSensorSnapshot:
 class RiskEvaluationResult:
     """리스크 심사 결과 DTO"""
     is_approved: bool
+    decision: str = "ALLOW"  # "ALLOW", "REDUCE", "DENY"
+    original_qty: int = 0
+    approved_qty: int = 0
     rejection_reason: Optional[str] = None
     required_margin: float = 0.0
     estimated_margin_ratio: float = 0.0
     token: Optional[RiskApprovalToken] = None
+    reduced_command: Optional[CanonicalOrderCommand] = None
 
 class RiskSensor:
     """[리스크 센서] 실시간 시장 변동성, 마진 상태, 국면 위험을 지속 감시"""
@@ -166,15 +171,20 @@ class RiskEngine:
         command: CanonicalOrderCommand,
         account: CanonicalAccountSummary,
         positions: Optional[Dict[str, Any]] = None,
-        sensor_snapshot: Optional[RiskSensorSnapshot] = None
+        sensor_snapshot: Optional[RiskSensorSnapshot] = None,
+        allow_reduction: bool = False
     ) -> RiskEvaluationResult:
         """사전 거래 리스크(Pre-Trade Risk) 전수 심사"""
         positions = positions or {}
+        original_qty = command.qty
 
         # 1. Kill Switch 검사
         if self._is_kill_switch_active:
             return RiskEvaluationResult(
                 is_approved=False,
+                decision="DENY",
+                original_qty=original_qty,
+                approved_qty=0,
                 rejection_reason="REJECTED_BY_KILL_SWITCH"
             )
 
@@ -182,11 +192,17 @@ class RiskEngine:
         if command.qty <= 0:
             return RiskEvaluationResult(
                 is_approved=False,
+                decision="DENY",
+                original_qty=original_qty,
+                approved_qty=0,
                 rejection_reason=f"INVALID_ORDER_QTY: {command.qty}"
             )
         if command.qty > self.config.max_order_qty:
             return RiskEvaluationResult(
                 is_approved=False,
+                decision="DENY",
+                original_qty=original_qty,
+                approved_qty=0,
                 rejection_reason=f"EXCEEDED_MAX_ORDER_QTY: {command.qty} > {self.config.max_order_qty}"
             )
 
@@ -195,64 +211,104 @@ class RiskEngine:
         if total_loss >= self.config.max_daily_loss_krw:
             return RiskEvaluationResult(
                 is_approved=False,
+                decision="DENY",
+                original_qty=original_qty,
+                approved_qty=0,
                 rejection_reason=f"EXCEEDED_MAX_DAILY_LOSS: {total_loss:,.0f} >= {self.config.max_daily_loss_krw:,.0f} KRW"
             )
 
-        # 4. 종목별 포지션 한도 검사 (Expected Position 기준)
-        expected_pos = self.calculate_expected_position(command, positions)
+        # 4. 종목별 포지션 한도 검사 및 Capacity 축소(REDUCE) 처리
+        effective_cmd = command
+        expected_pos = self.calculate_expected_position(effective_cmd, positions)
         if expected_pos["qty"] > self.config.max_position_per_instrument:
-            return RiskEvaluationResult(
-                is_approved=False,
-                rejection_reason=f"EXCEEDED_INSTRUMENT_LIMIT: {expected_pos['qty']} > {self.config.max_position_per_instrument}"
-            )
+            inst_key = expected_pos.get("instrument_key", "")
+            curr_pos_qty = 0
+            if inst_key in positions and isinstance(positions[inst_key], dict):
+                curr_pos_qty = positions[inst_key].get("qty", 0)
+            elif "KOSPI200_OPTION" in positions and isinstance(positions["KOSPI200_OPTION"], dict):
+                curr_pos_qty = positions["KOSPI200_OPTION"].get("qty", 0)
 
+            remaining_capacity = self.config.max_position_per_instrument - curr_pos_qty
+            if allow_reduction and 0 < remaining_capacity < effective_cmd.qty:
+                effective_cmd = dataclasses.replace(effective_cmd, qty=remaining_capacity)
+            else:
+                return RiskEvaluationResult(
+                    is_approved=False,
+                    decision="DENY",
+                    original_qty=original_qty,
+                    approved_qty=0,
+                    rejection_reason=f"EXCEEDED_INSTRUMENT_LIMIT: {expected_pos['qty']} > {self.config.max_position_per_instrument}"
+                )
 
-
-        # 5. 필요 증거금 및 가용 증거금 한도 검사
-        req_margin = self.margin_engine.calculate_order_margin(command)
+        # 5. 필요 증거금 및 가용 증거금 한도 검사 및 Margin-based 축소(REDUCE) 처리
+        req_margin = self.margin_engine.calculate_order_margin(effective_cmd)
         if account.total_balance > 0:
             est_margin_ratio = (account.used_margin + req_margin) / account.total_balance
         else:
             est_margin_ratio = 1.0
 
         if req_margin > account.free_margin:
-            return RiskEvaluationResult(
-                is_approved=False,
-                rejection_reason=f"INSUFFICIENT_FREE_MARGIN: req={req_margin:,.0f} > free={account.free_margin:,.0f} KRW",
-                required_margin=req_margin,
-                estimated_margin_ratio=est_margin_ratio
-            )
+            unit_margin = req_margin / effective_cmd.qty if effective_cmd.qty > 0 else 0.0
+            max_affordable_qty = int(account.free_margin / unit_margin) if unit_margin > 0 else 0
+            if allow_reduction and 0 < max_affordable_qty < effective_cmd.qty:
+                effective_cmd = dataclasses.replace(effective_cmd, qty=max_affordable_qty)
+                req_margin = self.margin_engine.calculate_order_margin(effective_cmd)
+                if account.total_balance > 0:
+                    est_margin_ratio = (account.used_margin + req_margin) / account.total_balance
+            else:
+                return RiskEvaluationResult(
+                    is_approved=False,
+                    decision="DENY",
+                    original_qty=original_qty,
+                    approved_qty=0,
+                    rejection_reason=f"INSUFFICIENT_FREE_MARGIN: req={req_margin:,.0f} > free={account.free_margin:,.0f} KRW",
+                    required_margin=req_margin,
+                    estimated_margin_ratio=est_margin_ratio
+                )
 
         if est_margin_ratio > self.config.max_margin_utilization_ratio:
             return RiskEvaluationResult(
                 is_approved=False,
+                decision="DENY",
+                original_qty=original_qty,
+                approved_qty=0,
                 rejection_reason=f"EXCEEDED_MAX_MARGIN_RATIO: {est_margin_ratio:.2%} > {self.config.max_margin_utilization_ratio:.2%}",
                 required_margin=req_margin,
                 estimated_margin_ratio=est_margin_ratio
             )
 
         # 6. 리스크 센서 마진 다이어트 발동 시 신규 주문 차단
-        if sensor_snapshot and sensor_snapshot.is_margin_diet_required and command.tag_id != "RISK_HEDGE":
+        if sensor_snapshot and sensor_snapshot.is_margin_diet_required and effective_cmd.tag_id != "RISK_HEDGE":
             return RiskEvaluationResult(
                 is_approved=False,
+                decision="DENY",
+                original_qty=original_qty,
+                approved_qty=0,
                 rejection_reason=f"MARGIN_DIET_ACTIVE: Blocked new entry under {sensor_snapshot.reason}",
                 required_margin=req_margin,
                 estimated_margin_ratio=est_margin_ratio
             )
 
-        # 7. 모든 리스크 게이트 통과 -> 승인 토큰 발행
+        # 7. 모든 리스크 게이트 통과 -> 승인 토큰 발행 (ALLOW / REDUCE 결정)
+        is_reduced = (effective_cmd.qty < original_qty)
+        decision_str = "REDUCE" if is_reduced else "ALLOW"
+
         order_uuid = uuid.uuid4()
         token = RiskApprovalToken(
             order_id=order_uuid,
             timestamp_ns=time.time_ns(),
-            signature=f"SIG-RISK-APPROVED-{command.track_id}-{command.client_order_id}"
+            signature=f"SIG-RISK-APPROVED-{effective_cmd.track_id}-{effective_cmd.client_order_id}"
         )
 
         return RiskEvaluationResult(
             is_approved=True,
+            decision=decision_str,
+            original_qty=original_qty,
+            approved_qty=effective_cmd.qty,
             required_margin=req_margin,
             estimated_margin_ratio=est_margin_ratio,
-            token=token
+            token=token,
+            reduced_command=effective_cmd if is_reduced else None
         )
 
 class RiskGate:
@@ -260,18 +316,23 @@ class RiskGate:
 
     def __init__(self, risk_engine: Optional[RiskEngine] = None):
         self.engine = risk_engine or RiskEngine()
+        self.last_evaluation_result: Optional[RiskEvaluationResult] = None
 
     def admit_order(
         self,
         command: CanonicalOrderCommand,
         account: CanonicalAccountSummary,
         positions: Optional[Dict[str, Any]] = None,
-        sensor_snapshot: Optional[RiskSensorSnapshot] = None
+        sensor_snapshot: Optional[RiskSensorSnapshot] = None,
+        allow_reduction: bool = False
     ) -> Tuple[bool, Optional[RiskApprovalToken], Optional[str]]:
-        """주문 승인/거부 판정 및 승인 토큰 반환"""
-        res = self.engine.evaluate_order(command, account, positions, sensor_snapshot)
+        """주문 승인/거부/축소 판정 및 승인 토큰 반환"""
+        res = self.engine.evaluate_order(command, account, positions, sensor_snapshot, allow_reduction=allow_reduction)
+        self.last_evaluation_result = res
         if res.is_approved and res.token is not None:
-            logger.debug(f"[RiskGate] Order {command.client_order_id} APPROVED -> Token {res.token.order_id}")
+            if res.decision == "REDUCE":
+                logger.info(f"[RiskGate] Order {command.client_order_id} REDUCED: {res.original_qty} -> {res.approved_qty} Qty")
+            logger.debug(f"[RiskGate] Order {command.client_order_id} APPROVED ({res.decision}) -> Token {res.token.order_id}")
             return True, res.token, None
         else:
             logger.warning(f"[RiskGate] Order {command.client_order_id} REJECTED: {res.rejection_reason}")

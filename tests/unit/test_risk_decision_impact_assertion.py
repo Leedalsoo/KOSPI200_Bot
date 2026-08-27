@@ -28,6 +28,7 @@ from shared.contracts.canonical import (
     CanonicalAccountSummary,
     CanonicalMarketTick,
 )
+from shared.core.contracts import OrderStatus
 from option_program.risk_control.risk_engine import (
     RiskConfig,
     RiskSensor,
@@ -131,12 +132,12 @@ class TestRiskDecisionImpactAssertion(unittest.TestCase):
         self.assertIn("EXCEEDED_MAX_DAILY_LOSS", rej_reason)
 
     def test_A3_deny_exceeded_instrument_position_limit(self):
-        """[A-3. DENY] 종목별 최대 포지션 한도(100) 초과 시 Expected Position 계산에 의한 차단 실측."""
+        """[A-3. DENY] 종목별 최대 포지션 한도(100) 도달 후 추가 진입 시 Expected Position 계산에 의한 차단 실측."""
         current_positions: Dict[str, Any] = {
-            "KOSPI200_OPTION_CALL_350.0": {"qty": 95, "avg_price": 3.50, "side": "BUY"}
+            "KOSPI200_OPTION_CALL_350.0": {"qty": 100, "avg_price": 3.50, "side": "BUY"}
         }
 
-        # 10계약 추가 매수 시도 (95 + 10 = 105 > 100)
+        # 10계약 추가 매수 시도 (100 + 10 = 110 > 100, 잔여 용량 0)
         cmd = CanonicalOrderCommand(
             client_order_id="ORD-DENY-INST-LIMIT-001",
             track_id="Track1",
@@ -193,37 +194,9 @@ class TestRiskDecisionImpactAssertion(unittest.TestCase):
         self.assertIsNone(token)
         self.assertIn("MARGIN_DIET_ACTIVE", rej_reason)
 
-    def test_B_risk_sizing_reduction_and_accurate_execution_mutation(self):
-        """[B. REDUCE / SIZING CAP] Risk Sizing에 의해 축소/제한된 수량 발주 -> Broker 체결 -> Position/Ledger 정합성 실측."""
-        # 1. 헷지 위험 예산에 따라 결정된 축소 수량 (3계약)
-        sized_qty = 3
-        sized_cmd = CanonicalOrderCommand(
-            client_order_id="ORD-REDUCE-SIZING-001",
-            track_id="Track8",
-            asset_type=CanonicalAssetType.OPTION,
-            side=CanonicalOrderSide.BUY,
-            qty=sized_qty,  # 위험 예산 축소 수량
-            price=2.50,
-            option_type=CanonicalOptionType.PUT,
-            strike=345.0,
-            symbol="KOSPI200",
-            tag_id="SIZED_RISK_BUDGET",
-        )
-
-        # 2. RiskGate 사전 심사
-        is_approved, token, rej_reason = self.runtime.risk_gate.admit_order(
-            command=sized_cmd,
-            account=self.account_summary,
-            positions={},
-        )
-        self.assertTrue(is_approved, "Sized order within risk budget must be approved")
-        self.assertIsNotNone(token)
-
-        # 3. OrderRouter 등록
-        routed = self.runtime.order_router.register_and_route(sized_cmd, token)
-        self.assertTrue(routed)
-
-        # 4. Broker 호가 매칭 및 체결
+    def test_B_risk_decision_reduce_causality_and_single_pipeline_execution(self):
+        """[B. REDUCE] Risk 결과가 주문수량을 실제로 축소하고 OrderRouter->Broker->Execution 단일 경로로 실행되는 인과관계 실측."""
+        # 1. 호가 데이터 사전 주입 (OrderBook 준비)
         tick = CanonicalMarketTick(
             timestamp="2026-08-23 09:00:00",
             underlying_price=350.0,
@@ -234,14 +207,66 @@ class TestRiskDecisionImpactAssertion(unittest.TestCase):
             seq_id=1,
         )
         self.vssf.process_market_data(tick)
-        report = self.broker.send_order(sized_cmd)
-        self.assertIsNotNone(report, "Broker must successfully execute sized order")
-        self.assertEqual(report.executed_qty, sized_qty, "Executed qty must exactly match sized qty (3)")
 
-        # 5. Position & Ledger 실체 반영 확인
-        pos = self.vssf.account.position_mgr.positions.get("KOSPI200_OPTION_PUT_345.0")
+        # 2. 원래 주문수량 10계약 설정 (original_qty = 10)
+        original_qty = 10
+        order_cmd = CanonicalOrderCommand(
+            client_order_id="ORD-REDUCE-DYNAMIC-001",
+            track_id="Track1",
+            asset_type=CanonicalAssetType.OPTION,
+            side=CanonicalOrderSide.BUY,
+            qty=original_qty,
+            price=2.50,
+            option_type=CanonicalOptionType.PUT,
+            strike=345.0,
+            symbol="KOSPI200",
+        )
+        inst_key = order_cmd.get_instrument_key()
+
+        # 3. 기존 포지션 97계약 설정 (종목별 최대 한도 100계약 중 잔여 허용 Capacity = 3계약)
+        existing_positions: Dict[str, Any] = {
+            inst_key: {"qty": 97, "avg_price": 2.50, "side": "BUY"}
+        }
+        self.vssf.account.position_mgr.positions[inst_key] = {"qty": 97, "avg_price": 2.50, "side": "BUY"}
+
+        # 4. RiskGate 사전 심사 통과 (실제 RiskEngine 계산에 의해 REDUCE 결정 및 축소 수량 산출)
+        is_approved, token, rej_reason = self.runtime.risk_gate.admit_order(
+            command=order_cmd,
+            account=self.account_summary,
+            positions=existing_positions,
+            allow_reduction=True,
+        )
+
+        # 5. [Assertion A] Risk Decision 및 수량 축소 인과관계 검증
+        eval_result = self.runtime.risk_gate.last_evaluation_result
+        self.assertIsNotNone(eval_result)
+        self.assertEqual(eval_result.decision, "REDUCE", "Risk Decision must strictly be REDUCE")
+        self.assertEqual(eval_result.original_qty, original_qty, "Original qty must match input 10")
+
+        reduced_cmd = eval_result.reduced_command if eval_result.reduced_command else order_cmd
+        final_order_qty = reduced_cmd.qty
+        self.assertGreater(original_qty, final_order_qty, "Original qty must be strictly greater than reduced qty")
+        self.assertGreater(final_order_qty, 0, "Reduced qty must be strictly positive")
+        self.assertEqual(final_order_qty, eval_result.approved_qty, "Command qty must be dynamically set by RiskEngine")
+        self.assertEqual(final_order_qty, 3, "Reduced qty must equal remaining capacity (100 - 97 = 3)")
+
+        # 6. [Assertion B] 실제 단일 운영 경로 통과 (OrderRouter -> Broker.send_order -> Execution)
+        # 테스트에서 별도로 broker.send_order()를 호출하지 않고, OrderRouter에 broker_adapter를 주입하여 단일 호출로 관통!
+        order_uuid = self.runtime.order_router.register_and_route(
+            command=reduced_cmd,
+            token=token,
+            broker_adapter=self.broker,
+            mode_str="PAPER"
+        )
+        self.assertIsNotNone(order_uuid)
+
+        # 7. [Assertion C] OMS FSM 완료 상태 및 Broker 전달 수량, 최종 체결 수량 일치 검증
+        self.assertEqual(self.runtime.oms_fsm.states.get(order_uuid), OrderStatus.FILLED)
+
+        # 8. [Assertion D] 최종 포지션 및 원장(Ledger) 정합성 실측
+        pos = self.vssf.account.position_mgr.positions.get(inst_key)
         self.assertIsNotNone(pos)
-        self.assertEqual(pos["qty"], sized_qty, "Position qty must exactly be 3")
+        self.assertEqual(pos["qty"], 97 + final_order_qty, "Position must increase by exactly the reduced qty (97 + 3 = 100)")
 
     def test_C_allow_normal_pathway_with_full_order_execution(self):
         """[C. ALLOW] 정상 범위 주문의 RiskGate 승인 -> Token 발급 -> Broker 체결 -> Position/Balance/Ledger 정상 반영 실측."""

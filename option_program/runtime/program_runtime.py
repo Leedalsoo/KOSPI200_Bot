@@ -346,16 +346,19 @@ class OptionProgramRuntime:
             )
 
             if is_approved and token is not None:
+                eval_res = getattr(self.risk_gate, "last_evaluation_result", None)
+                effective_cmd = eval_res.reduced_command if (eval_res and eval_res.reduced_command) else cmd
+
                 # 8. OrderRouter & OMS FSM 주문 상태 전이 등록 (NEW -> VALIDATED -> SENT)
                 order_uuid = self.order_router.register_and_route(
-                    command=cmd,
+                    command=effective_cmd,
                     token=token,
                     broker_adapter=None,
                     mode_str="PIPELINE"
                 )
-                self._order_id_to_uuid[cmd.client_order_id] = order_uuid
-                commands.append(cmd)
-                self.last_orders.append({"client_order_id": cmd.client_order_id, "track_id": cmd.track_id, "side": cmd.side.value, "qty": cmd.qty, "price": cmd.price})
+                self._order_id_to_uuid[effective_cmd.client_order_id] = order_uuid
+                commands.append(effective_cmd)
+                self.last_orders.append({"client_order_id": effective_cmd.client_order_id, "track_id": effective_cmd.track_id, "side": effective_cmd.side.value, "qty": effective_cmd.qty, "price": effective_cmd.price})
                 self.last_orders = self.last_orders[-50:]
                 if "orders_created" in m:
                     m["orders_created"] += 1
