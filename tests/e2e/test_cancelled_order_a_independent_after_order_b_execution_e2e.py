@@ -233,6 +233,12 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
             self.assertEqual(A_position_after, 0)
             self.assertEqual(B_position, executed_qty_B)
 
+            # [PositionManager order_positions 내부 격리 검증]
+            self.assertEqual(system.vssf.account.position_mgr.order_positions.get(client_order_id_A, {}).get("qty", 0), 0)
+            self.assertIn(client_order_id_B, system.vssf.account.position_mgr.order_positions)
+            self.assertEqual(system.vssf.account.position_mgr.order_positions[client_order_id_B]["qty"], executed_qty_B)
+            self.assertEqual(system.vssf.account.position_mgr.order_positions[client_order_id_B]["symbol"], effective_symbol)
+
             # [종합 독립성 성립 assertion]
             self.assertTrue(
                 symbol_A == symbol_B
@@ -248,6 +254,7 @@ class TestCancelledOrderAIndependentAfterOrderBExecutionE2E(unittest.TestCase):
             )
 
             await system.shutdown()
+
 
         asyncio.run(_run())
 
