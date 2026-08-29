@@ -1,28 +1,26 @@
-"""7단계-2: Broker 실행 책임 단일화 전용 검증 테스트
+"""7단계-2: 실제 TradingSystem.run_loop() 기반 단일 Broker 실행 Functional Assertion 전용 검증 테스트
 
-검증 범위:
-1. OptionProgramRuntime.process_tick()에서 생성된 command가 정상 반환됨.
-2. OrderRouter.register_and_route()에 broker_adapter를 전달하더라도 Broker.send_order()를 직접 호출하지 않음.
-3. 실제 실행 경로에서 Broker.send_order()가 정확히 1회만 단일 호출됨 (중복 발주 원천 차단).
-4. Broker 체결 후 ExecutionReport가 OptionProgramRuntime.consume_execution_report() -> OrderRouter.handle_execution_report()로 전달되어 FSM 상태가 FILLED로 전이됨.
-5. TradingSystem(main.py)의 실행 파이프라인에서 단일 발주 책임이 정확히 유지됨.
+검증 기준:
+A. 실제 TradingSystem.run_loop()를 직접 실행 (내부 로직 수동 복제/재현 일절 금지)
+B. 실제 주문 발생 강제 (generated_order_count > 0, 조건부 if 제거)
+C. Broker.send_order() 실행 횟수와 생성 주문 수의 엄격한 1:1 일치 및 각 주문당 정확히 1회 실행(중복 발주 0건)
+D. OptionProgramRuntime.process_tick() -> TradingSystem.run_loop() -> broker.send_order() -> consume_execution_report() -> FSM FILLED 전체 운영 경로 실측
+E. ExecutionReport 수와 system.executions_handled 정합성
+F. 모든 체결 완료된 주문의 OMS FSM 상태가 FILLED로 전이됨을 확인
 """
+import asyncio
 from unittest.mock import MagicMock
 import pytest
 
 from shared.contracts.canonical import (
     CanonicalAssetType,
-    CanonicalMarketTick,
     CanonicalOrderCommand,
     CanonicalOrderSide,
-    CanonicalExecutionReport,
 )
 from shared.core.contracts import OrderStatus, RiskApprovalToken
-from option_program.broker.broker_interface import BrokerFactory, BrokerMode, PaperBrokerAdapter
-from option_program.runtime.program_runtime import OptionProgramRuntime
+from option_program.broker.broker_interface import PaperBrokerAdapter
 from option_program.orders.order_router import OrderRouter
 from option_program.orders.oms_fsm import OmsFsm
-from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from main import TradingSystem
 
 
@@ -61,91 +59,71 @@ def test_order_router_does_not_call_broker_directly():
     assert fsm.get_status(order_id) == OrderStatus.SENT
 
 
-def test_single_broker_execution_and_fsm_lifecycle_transition():
-    """TradingSystem 및 OptionProgramRuntime 실행 경로에서 단일 발주 및 체결 통지 수명주기 검증"""
-    vssf = VirtualSecuritiesFirmRuntime(initial_capital=25_000_000.0)
-    vssf.order_book.update_bid_ask(bid_price=2.0, ask_price=2.05)
-    broker = BrokerFactory.create_broker(mode=BrokerMode.PAPER, vssf_runtime=vssf)
-    op_runtime = OptionProgramRuntime(account_summary=vssf.get_account_snapshot())
+@pytest.mark.asyncio
+async def test_actual_tradingsystem_run_loop_single_broker_execution_functional_assertion():
+    """실제 TradingSystem.run_loop() 가동을 통한 단일 Broker 발주 및 FSM 상태 전이 Functional Assertion 실측"""
+    # 1. TradingSystem 인스턴스 생성 및 초기화
+    config = {"broker_mode": "PAPER", "initial_capital": 50_000_000.0}
+    system = TradingSystem(config)
+    await system.initialize()
 
-    # Broker.send_order 호출 횟수 감시용 Mock Wrap
-    broker.send_order = MagicMock(side_effect=broker.send_order)
+    assert system.vms is not None
+    assert system.vssf is not None
+    assert system.broker is not None
+    assert system.op_runtime is not None
 
-    tick = CanonicalMarketTick(
-        timestamp="2026-08-23 09:05:00",
-        underlying_price=350.0,
-        strike_price=350.0,
-        option_type="CALL",
-        bid_price=2.0,
-        ask_price=2.05,
-        last_price=2.0,
-        volume=100,
-        seq_id=1,
+    # 2. Broker.send_order 및 consume_execution_report 호출 감시용 spy wrapping
+    real_send_order = system.broker.send_order
+    spy_broker_send = MagicMock(side_effect=real_send_order)
+    system.broker.send_order = spy_broker_send
+
+    real_consume = system.op_runtime.consume_execution_report
+    spy_consume_report = MagicMock(side_effect=real_consume)
+    system.op_runtime.consume_execution_report = spy_consume_report
+
+    # 3. [핵심 A] 실제 TradingSystem.run_loop() 직접 가동 (내부 로직 수동 복제 없음)
+    max_ticks_to_run = 10
+    await system.run_loop(max_ticks=max_ticks_to_run)
+
+    # 4. [핵심 B] 주문 발생 강제 및 검증 (조건부 if 제거, > 0 assert)
+    generated_order_count = system.orders_routed
+    assert generated_order_count > 0, "TradingSystem must generate at least 1 order during run_loop"
+    assert system.ticks_processed == max_ticks_to_run
+
+    # 5. [핵심 C] Broker 실행 횟수와 생성 주문 수 엄격 일치 및 중복 발주 0건 검증
+    assert spy_broker_send.call_count == generated_order_count, (
+        f"Broker.send_order must be called exactly once per generated order: "
+        f"expected {generated_order_count}, got {spy_broker_send.call_count}"
     )
 
-    # 1. OptionProgramRuntime 틱 평가 -> 주문 command 생성
-    commands = op_runtime.process_tick(tick)
+    # 각 주문당 send_order 정확히 1회 호출 여부 전수 검증
+    order_id_call_counts = {}
+    for call_item in spy_broker_send.call_args_list:
+        called_cmd = call_item[0][0]
+        cid = called_cmd.client_order_id
+        order_id_call_counts[cid] = order_id_call_counts.get(cid, 0) + 1
 
-    # 주문이 발생한 경우 검증
-    if commands:
-        cmd = commands[0]
-        order_uuid = op_runtime._order_id_to_uuid.get(cmd.client_order_id)
-        assert order_uuid is not None
-        assert op_runtime.oms_fsm.get_status(order_uuid) == OrderStatus.SENT
+    assert len(order_id_call_counts) == generated_order_count, "All generated orders must have unique client_order_id"
+    for cid, count in order_id_call_counts.items():
+        assert count == 1, f"Order {cid} was called {count} times (must be exactly 1, no duplicates)"
 
-        # OrderRouter 내부에서 broker 호출이 발생하지 않았는지 재확인
-        assert broker.send_order.call_count == 0
-
-        # 2. 오케스트레이터(TradingSystem/main.py)가 단일 발주 수행
-        report = broker.send_order(cmd)
-        assert report is not None
-        assert broker.send_order.call_count == 1, "Broker.send_order must be called exactly once"
-
-        # 3. 체결 보고서 통지 -> FSM FILLED 전이
-        op_runtime.consume_execution_report(report)
-        assert op_runtime.oms_fsm.get_status(order_uuid) == OrderStatus.FILLED
-        assert len(op_runtime.received_execution_reports) == 1
-        assert op_runtime.received_execution_reports[0].exec_id == report.exec_id
-
-
-def test_tradingsystem_pipeline_single_execution_guarantee():
-    """TradingSystem.run_loop 실행 시 동일 주문에 대해 Broker 발주가 정확히 1회만 일어나는지 E2E 검증"""
-    system = TradingSystem(config={"broker_mode": "PAPER", "initial_capital": 25_000_000.0})
-    vssf = VirtualSecuritiesFirmRuntime(initial_capital=25_000_000.0)
-    broker = PaperBrokerAdapter(vssf_runtime=vssf)
-    system.vssf = vssf
-    system.broker = broker
-    system.op_runtime = OptionProgramRuntime(account_summary=vssf.get_account_snapshot())
-
-    # 감시용 spy
-    spy_broker_send = MagicMock(side_effect=broker.send_order)
-    broker.send_order = spy_broker_send
-
-    # 1개 틱 수동 처리 시뮬레이션 (run_loop 내부 1회 실행 스텝)
-    tick = CanonicalMarketTick(
-        timestamp="2026-08-23 09:00:00",
-        underlying_price=350.0,
-        strike_price=350.0,
-        option_type="CALL",
-        bid_price=2.0,
-        ask_price=2.05,
-        last_price=2.0,
-        volume=10,
-        seq_id=1,
+    # 6. [핵심 D, E] ExecutionReport 생성, consume_execution_report 경로 및 정합성 검증
+    assert system.executions_handled > 0, "At least 1 execution report must be generated and handled"
+    assert spy_consume_report.call_count == system.executions_handled, (
+        f"consume_execution_report call count ({spy_consume_report.call_count}) must match executions_handled ({system.executions_handled})"
+    )
+    assert len(system.op_runtime.received_execution_reports) == system.executions_handled, (
+        "All handled execution reports must be safely stored in op_runtime.received_execution_reports"
     )
 
-    system.vssf.process_market_data(tick)
-    system.op_runtime.update_account_summary(system.vssf.get_account_snapshot())
-    commands = system.op_runtime.process_tick(tick)
+    # 7. [핵심 F] 체결된 주문의 OMS FSM 상태가 FILLED로 전이되었음을 실측 검증
+    for report in system.op_runtime.received_execution_reports:
+        order_uuid = system.op_runtime._order_id_to_uuid.get(report.client_order_id)
+        assert order_uuid is not None, f"Order UUID mapping must exist for client_order_id: {report.client_order_id}"
+        fsm_status = system.op_runtime.oms_fsm.get_status(order_uuid)
+        assert fsm_status == OrderStatus.FILLED, (
+            f"Order {report.client_order_id} (UUID: {order_uuid}) must be in FILLED state, got {fsm_status}"
+        )
 
-    for cmd in commands:
-        system.orders_routed += 1
-        rep = system.broker.send_order(cmd)
-        if rep is not None:
-            system.executions_handled += 1
-            system.op_runtime.consume_execution_report(rep)
-
-    if commands:
-        assert len(commands) == system.orders_routed
-        assert spy_broker_send.call_count == len(commands), "Every command must trigger exactly one broker send_order call"
-        assert system.executions_handled == len(commands)
+    # 8. 사후 리소스 정리
+    await system.shutdown()
