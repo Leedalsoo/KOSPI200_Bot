@@ -171,13 +171,22 @@ class TradingSystem:
                 # 3. OptionProgram 틱 평가 및 파이프라인 주문 명령 생성 (Sensor -> Track1~9 -> SignalGen -> Arbiter -> RiskGate -> FSM)
                 commands = self.op_runtime.process_tick(tick)
 
-                # 4. Broker 인터페이스를 통한 발주 및 체결 처리
+                # 4. Broker 인터페이스를 통한 주문 접수 (체결 이벤트와 명확히 분리된 접수/식별자 확보)
                 for cmd in commands:
                     self.orders_routed += 1
-                    report = self.broker.send_order(cmd)
-                    if report is not None:
+                    ack = self.broker.send_order(cmd)
+                    if ack is not None and getattr(ack, "success", False):
+                        logger.info(
+                            "TradingSystem: 주문 접수 성공 (Client: %s, Broker: %s)",
+                            getattr(ack, "client_order_id", cmd.client_order_id),
+                            getattr(ack, "broker_order_id", "N/A"),
+                        )
+
+                # 5. 별도 체결 이벤트 수신 및 처리 (주문 접수와 분리된 실제 체결 통지 경로)
+                if hasattr(self.broker, "poll_execution_reports"):
+                    exec_reports = self.broker.poll_execution_reports()
+                    for report in exec_reports:
                         self.executions_handled += 1
-                        # 5. 체결 보고서를 OptionProgram과 FSM에 통지
                         self.op_runtime.consume_execution_report(report)
 
                 self.ticks_processed += 1

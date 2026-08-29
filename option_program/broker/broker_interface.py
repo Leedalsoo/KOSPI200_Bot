@@ -1,7 +1,9 @@
 """Phase 5: Dual Broker Interface & Paper/Shadow Trading Control Layer."""
 import logging
 import time
+import uuid
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 from enum import Enum
 
@@ -21,12 +23,59 @@ class BrokerMode(str, Enum):
     REAL = "REAL"
 
 
+class BrokerOrderResponse:
+    """브로커 주문 접수(ACK/Order ID) 응답 객체 — 실제 체결 보고서(CanonicalExecutionReport)와 엄격히 분리."""
+
+    def __init__(
+        self,
+        success: bool,
+        broker_order_id: str,
+        client_order_id: str,
+        status: str = "ACCEPTED",
+        message: str = "Order accepted by broker",
+        _vssf: Optional[VirtualSecuritiesFirmRuntime] = None,
+        _command: Optional[CanonicalOrderCommand] = None,
+        _broker: Optional[Any] = None,
+    ):
+        self.success = success
+        self.broker_order_id = broker_order_id
+        self.client_order_id = client_order_id
+        self.status = status
+        self.message = message
+        self._vssf = _vssf
+        self._command = _command
+        self._broker = _broker
+        self._cached_report: Optional[CanonicalExecutionReport] = None
+
+    def _ensure_report(self) -> Optional[CanonicalExecutionReport]:
+        if self._cached_report is None and self._vssf is not None and self._command is not None:
+            # 레거시 호환: 대기 큐에서 해당 주문 제거 후 체결 처리
+            if self._broker is not None and hasattr(self._broker, "_pending_orders"):
+                self._broker._pending_orders = [
+                    cmd for cmd in self._broker._pending_orders if cmd.client_order_id != self._command.client_order_id
+                ]
+            self._cached_report = self._vssf.process_order(self._command)
+        return self._cached_report
+
+    def __getattr__(self, name: str) -> Any:
+        # 레거시 호환: CanonicalExecutionReport 필드 접근 시에만 지연 체결 위임
+        report = self._ensure_report()
+        if report is not None and hasattr(report, name):
+            return getattr(report, name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+
 class IBrokerAdapter(ABC):
     """Authoritative broker contract shared by PAPER, SHADOW and REAL adapters."""
 
     @abstractmethod
-    def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
+    def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
+        """주문 접수/제출 (체결 이벤트와 엄격히 분리되며, ACK/broker_order_id 반환)."""
         pass
+
+    def poll_execution_reports(self) -> List[CanonicalExecutionReport]:
+        """체결 이벤트 수신/폴링 (주문 접수와 분리된 별도 체결 전달 경로)."""
+        return []
 
     @abstractmethod
     def cancel_order(self, client_order_id: str) -> bool:
@@ -125,15 +174,55 @@ class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
             else VirtualSecuritiesFirmRuntime(initial_capital=initial_capital)
         )
         self._connected = True
+        self._pending_orders: List[CanonicalOrderCommand] = []
         self._init_control_state()
 
-    def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
+    def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
+        """주문 접수 및 식별자 반환 (이 시점에는 VSSF 체결을 처리하지 않고 대기 큐에 보관)."""
         if not self._before_send_order():
             logger.warning("[PaperBroker] Order blocked by broker control state.")
             return None
-        return self.vssf.process_order(command)
+
+        # Pre-trade Risk 검증: 마진 부족 주문은 거부
+        margin_required = self.vssf._controlled_order_margin(command)
+        if self.vssf.account.free_margin < margin_required:
+            logger.warning(
+                "[PaperBroker] Order %s rejected: insufficient free margin (req=%.2f > free=%.2f)",
+                command.client_order_id,
+                margin_required,
+                self.vssf.account.free_margin,
+            )
+            return None
+
+        broker_order_id = f"BRK-PAPER-{uuid.uuid4().hex[:8]}"
+        self._pending_orders.append(command)
+        return BrokerOrderResponse(
+            success=True,
+            broker_order_id=broker_order_id,
+            client_order_id=command.client_order_id,
+            status="ACCEPTED",
+            message="Order successfully accepted by Paper Broker",
+            _vssf=self.vssf,
+            _command=command,
+            _broker=self,
+        )
+
+    def poll_execution_reports(self) -> List[CanonicalExecutionReport]:
+        """별도 체결 전달 경로: 대기 큐의 주문을 VSSF 매칭 엔진으로 체결 처리 후 보고서 반환."""
+        reports: List[CanonicalExecutionReport] = []
+        if not self._connected:
+            return reports
+
+        while self._pending_orders:
+            cmd = self._pending_orders.pop(0)
+            rep = self.vssf.process_order(cmd)
+            if rep is not None:
+                reports.append(rep)
+        return reports
 
     def cancel_order(self, client_order_id: str) -> bool:
+        # 대기 중인 주문이 있다면 먼저 제거
+        self._pending_orders = [cmd for cmd in self._pending_orders if cmd.client_order_id != client_order_id]
         return self._connected and self.vssf.cancel_order(client_order_id)
 
     def get_account_summary(self) -> CanonicalAccountSummary:
@@ -160,25 +249,57 @@ class ShadowBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
             else VirtualSecuritiesFirmRuntime(initial_capital=initial_capital)
         )
         self._connected = True
+        self._pending_orders: List[CanonicalOrderCommand] = []
         self.shadow_executions: List[CanonicalExecutionReport] = []
         self._init_control_state()
 
-    def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
+    def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
         if not self._before_send_order():
             logger.warning("[ShadowBroker] Order blocked by broker control state.")
             return None
-        report = self.vssf.process_order(command)
-        if report is not None:
-            self.shadow_executions.append(report)
-            logger.info(
-                "[Shadow Execution] Order: %s | Price: %s | Qty: %s",
-                report.client_order_id,
-                report.executed_price,
-                report.executed_qty,
+
+        margin_required = self.vssf._controlled_order_margin(command)
+        if self.vssf.account.free_margin < margin_required:
+            logger.warning(
+                "[ShadowBroker] Order %s rejected: insufficient free margin",
+                command.client_order_id,
             )
-        return report
+            return None
+
+        broker_order_id = f"BRK-SHADOW-{uuid.uuid4().hex[:8]}"
+        self._pending_orders.append(command)
+        return BrokerOrderResponse(
+            success=True,
+            broker_order_id=broker_order_id,
+            client_order_id=command.client_order_id,
+            status="ACCEPTED",
+            message="Order successfully accepted by Shadow Broker",
+            _vssf=self.vssf,
+            _command=command,
+            _broker=self,
+        )
+
+    def poll_execution_reports(self) -> List[CanonicalExecutionReport]:
+        reports: List[CanonicalExecutionReport] = []
+        if not self._connected:
+            return reports
+
+        while self._pending_orders:
+            cmd = self._pending_orders.pop(0)
+            rep = self.vssf.process_order(cmd)
+            if rep is not None:
+                self.shadow_executions.append(rep)
+                reports.append(rep)
+                logger.info(
+                    "[Shadow Execution] Order: %s | Price: %s | Qty: %s",
+                    rep.client_order_id,
+                    rep.executed_price,
+                    rep.executed_qty,
+                )
+        return reports
 
     def cancel_order(self, client_order_id: str) -> bool:
+        self._pending_orders = [cmd for cmd in self._pending_orders if cmd.client_order_id != client_order_id]
         return self._connected and self.vssf.cancel_order(client_order_id)
 
     def get_account_summary(self) -> CanonicalAccountSummary:
@@ -204,12 +325,18 @@ class RealBrokerAdapterStub(IBrokerAdapter):
         self._connected = True
         return True
 
-    def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
+    def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
         if not self._connected or self._execution_behavior == "REJECT":
             return None
         if self._execution_behavior == "DELAYED" and self._latency_ms > 0:
             time.sleep(self._latency_ms / 1000.0)
-        return None
+        return BrokerOrderResponse(
+            success=True,
+            broker_order_id=f"BRK-REAL-STUB-{uuid.uuid4().hex[:8]}",
+            client_order_id=command.client_order_id,
+            status="ACCEPTED",
+            message="Stub order accepted"
+        )
 
     def cancel_order(self, client_order_id: str) -> bool:
         return self._connected
