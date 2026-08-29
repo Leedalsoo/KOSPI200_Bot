@@ -15,6 +15,7 @@
 """
 import uuid
 import time
+from typing import Optional
 import pytest
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
@@ -50,7 +51,7 @@ def make_test_token(
     order_uuid: uuid.UUID,
     client_order_id: str = "ORD-DUP-001",
     track_id: str = "Track1",
-    custom_sig: str = None
+    custom_sig: Optional[str] = None
 ) -> RiskApprovalToken:
     sig = custom_sig or f"SIG-RISK-APPROVED-{track_id}-{client_order_id}"
     return RiskApprovalToken(
@@ -113,7 +114,7 @@ def test_same_order_id_different_token_is_blocked():
     cmd = make_test_command(order_id_str="ORD-002")
     order_uuid = uuid.uuid4()
     token1 = make_test_token(order_uuid, client_order_id="ORD-002")
-    token2 = make_test_token(order_uuid, client_order_id="ORD-002", custom_sig=f"SIG-RISK-APPROVED-Track1-ORD-002-ALT")
+    token2 = make_test_token(order_uuid, client_order_id="ORD-002", custom_sig="SIG-RISK-APPROVED-Track1-ORD-002-ALT")
 
     # 1회차: 정상 등록
     res1 = router.register_and_route(command=cmd, token=token1)
