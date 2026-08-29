@@ -131,13 +131,16 @@ class TestKillSwitchComprehensive(unittest.TestCase):
         commands_p1 = self.runtime.process_tick(tick)
         self.assertGreater(len(commands_p1), 0, "Phase 1 (OFF) must produce approved orders")
 
-        # 실제 연결된 브로커로 발주
+        # 실제 연결된 브로커로 발주 (ACK 수신) 및 별도 체결 수신
         exec_count_p1 = 0
         for cmd in commands_p1:
-            report = self.broker.send_order(cmd)
-            if report is not None:
-                exec_count_p1 += 1
-                self.runtime.consume_execution_report(report)
+            ack = self.broker.send_order(cmd)
+            self.assertIsNotNone(ack)
+            self.assertTrue(ack.success)
+        reports_p1 = self.broker.poll_execution_reports()
+        for report in reports_p1:
+            exec_count_p1 += 1
+            self.runtime.consume_execution_report(report)
         self.assertGreater(exec_count_p1, 0, "Phase 1 (OFF) must execute on Broker")
 
         # -----------------------------------------------------------------
@@ -182,10 +185,13 @@ class TestKillSwitchComprehensive(unittest.TestCase):
 
         exec_count_p3 = 0
         for cmd in commands_p3:
-            report = self.broker.send_order(cmd)
-            if report is not None:
-                exec_count_p3 += 1
-                self.runtime.consume_execution_report(report)
+            ack = self.broker.send_order(cmd)
+            self.assertIsNotNone(ack)
+            self.assertTrue(ack.success)
+        reports_p3 = self.broker.poll_execution_reports()
+        for report in reports_p3:
+            exec_count_p3 += 1
+            self.runtime.consume_execution_report(report)
         self.assertGreater(exec_count_p3, 0, "Phase 3 (OFF) must resume broker executions")
 
     def test_D_in_flight_existing_order_isolation_and_fsm_integrity(self):

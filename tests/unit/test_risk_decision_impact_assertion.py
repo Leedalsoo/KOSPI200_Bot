@@ -259,9 +259,13 @@ class TestRiskDecisionImpactAssertion(unittest.TestCase):
         self.assertIsNotNone(order_uuid)
         self.assertEqual(self.runtime.oms_fsm.states.get(order_uuid), OrderStatus.SENT)
 
-        # 7. [Assertion C] 단일 Broker 발주 및 체결 보고서 수신 후 FSM 완료 상태(FILLED) 전이 검증
-        report = self.broker.send_order(reduced_cmd)
-        self.assertIsNotNone(report)
+        # 7. [Assertion C] 단일 Broker 발주(ACK 수신) 및 별도 체결 보고서 폴링/처리 후 FSM 완료 상태(FILLED) 전이 검증
+        ack = self.broker.send_order(reduced_cmd)
+        self.assertIsNotNone(ack)
+        self.assertTrue(ack.success)
+        reports = self.broker.poll_execution_reports()
+        self.assertEqual(len(reports), 1)
+        report = reports[0]
         self.assertEqual(report.executed_qty, final_order_qty)
         self.runtime.order_router.handle_execution_report(order_uuid, report)
         self.assertEqual(self.runtime.oms_fsm.states.get(order_uuid), OrderStatus.FILLED)
@@ -297,7 +301,7 @@ class TestRiskDecisionImpactAssertion(unittest.TestCase):
         self.assertIsNotNone(token)
         self.assertIn("SIG-RISK-APPROVED-Track1-ORD-ALLOW-NORMAL-001", token.signature)
 
-        # 2. Router -> Broker 체결
+        # 2. Router -> Broker 접수 및 별도 체결 수신
         tick = CanonicalMarketTick(
             timestamp="2026-08-23 09:00:00",
             underlying_price=350.0,
@@ -308,8 +312,12 @@ class TestRiskDecisionImpactAssertion(unittest.TestCase):
             seq_id=1,
         )
         self.vssf.process_market_data(tick)
-        report = self.broker.send_order(normal_cmd)
-        self.assertIsNotNone(report)
+        ack = self.broker.send_order(normal_cmd)
+        self.assertIsNotNone(ack)
+        self.assertTrue(ack.success)
+        reports = self.broker.poll_execution_reports()
+        self.assertEqual(len(reports), 1)
+        report = reports[0]
         self.assertEqual(report.executed_qty, 2)
         self.assertGreater(report.executed_price, 0.0)
         self.assertEqual(round(report.executed_price, 1), 3.5)
@@ -367,8 +375,12 @@ class TestRiskDecisionImpactAssertion(unittest.TestCase):
             seq_id=1,
         )
         self.vssf.process_market_data(tick)
-        report = self.broker.send_order(good_cmd)
-        self.assertIsNotNone(report)
+        ack = self.broker.send_order(good_cmd)
+        self.assertIsNotNone(ack)
+        self.assertTrue(ack.success)
+        reports = self.broker.poll_execution_reports()
+        self.assertEqual(len(reports), 1)
+        report = reports[0]
         self.assertEqual(report.executed_qty, 1)
 
 

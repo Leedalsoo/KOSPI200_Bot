@@ -72,16 +72,24 @@ def test_full_pipeline_end_to_end_closed_loop():
                 fsm_status = op.oms_fsm.get_status(order_uuid)
                 assert fsm_status in (OrderStatus.VALIDATED, OrderStatus.SENT)
 
-                # Step 4: Broker routing
-                rep = broker.send_order(cmd)
-                if rep is not None:
-                    total_executions_handled += 1
-                    assert rep.executed_qty > 0
-                    assert rep.exec_id.startswith("EXEC-")
-                    
-                    # Step 5: OptionProgram consumes execution report & completes FSM
-                    op.consume_execution_report(rep)
-                    final_status = op.oms_fsm.get_status(order_uuid)
+                # Step 4: Broker routing (주문 접수 ACK 확보)
+                ack = broker.send_order(cmd)
+                if ack is not None:
+                    assert ack.success is True
+                    assert ack.broker_order_id.startswith("BRK-PAPER-")
+
+            # Step 5: Separate Execution Polling & Consumption
+            exec_reports = broker.poll_execution_reports()
+            for rep in exec_reports:
+                total_executions_handled += 1
+                assert rep.executed_qty > 0
+                assert rep.exec_id.startswith("EXEC-")
+                
+                # OptionProgram consumes execution report & completes FSM
+                op.consume_execution_report(rep)
+                cmd_uuid = op._order_id_to_uuid.get(rep.client_order_id)
+                if cmd_uuid:
+                    final_status = op.oms_fsm.get_status(cmd_uuid)
                     assert final_status == OrderStatus.FILLED
 
     # Step 6: Verify VSSF Account, Position, and Ledger integrity

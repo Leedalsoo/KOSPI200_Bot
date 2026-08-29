@@ -66,11 +66,17 @@ class TestTrackPathwaysAll(unittest.TestCase):
         self.assertEqual(cmd.track_id, "Track1")
         self.assertTrue(cmd.client_order_id.startswith("ORD-T101-Track1-"))
         
-        # 2. OrderRouter -> Broker -> Execution 체결 검증
+        # 2. OrderRouter -> Broker 접수 및 별도 체결 수신 검증
         for c in commands:
-            rep = self.broker.send_order(c)
-            self.assertIsNotNone(rep)
+            ack = self.broker.send_order(c)
+            self.assertIsNotNone(ack)
+            self.assertTrue(ack.success)
+
+        reports = self.broker.poll_execution_reports()
+        for rep in reports:
             self.runtime.consume_execution_report(rep)
+
+        for c in commands:
             order_uuid = self.runtime._order_id_to_uuid[c.client_order_id]
             self.assertEqual(self.runtime.oms_fsm.get_status(order_uuid), OrderStatus.FILLED)
 
@@ -95,8 +101,15 @@ class TestTrackPathwaysAll(unittest.TestCase):
         self.assertGreater(len(commands), 0, "Track 2 must build asymmetric trap on tick")
         for c in commands:
             self.assertEqual(c.track_id, "Track2")
-            rep = self.broker.send_order(c)
+            ack = self.broker.send_order(c)
+            self.assertIsNotNone(ack)
+            self.assertTrue(ack.success)
+
+        reports = self.broker.poll_execution_reports()
+        for rep in reports:
             self.runtime.consume_execution_report(rep)
+
+        for c in commands:
             order_uuid = self.runtime._order_id_to_uuid[c.client_order_id]
             self.assertEqual(self.runtime.oms_fsm.get_status(order_uuid), OrderStatus.FILLED)
 
@@ -142,8 +155,12 @@ class TestTrackPathwaysAll(unittest.TestCase):
         self.assertEqual(len(commands), 1, "Track 4 must deploy hybrid basecamp")
         cmd = commands[0]
         self.assertEqual(cmd.track_id, "Track4")
-        rep = self.broker.send_order(cmd)
-        self.runtime.consume_execution_report(rep)
+        ack = self.broker.send_order(cmd)
+        self.assertIsNotNone(ack)
+        self.assertTrue(ack.success)
+        reports = self.broker.poll_execution_reports()
+        for rep in reports:
+            self.runtime.consume_execution_report(rep)
         self.assertEqual(self.runtime.oms_fsm.get_status(self.runtime._order_id_to_uuid[cmd.client_order_id]), OrderStatus.FILLED)
 
     def test_track5_gap_divergence_pathway(self):
@@ -193,8 +210,12 @@ class TestTrackPathwaysAll(unittest.TestCase):
         self.assertEqual(len(commands), 1, "Track 7 must trigger weekly insurance on week start")
         cmd = commands[0]
         self.assertEqual(cmd.track_id, "Track7")
-        rep = self.broker.send_order(cmd)
-        self.runtime.consume_execution_report(rep)
+        ack = self.broker.send_order(cmd)
+        self.assertIsNotNone(ack)
+        self.assertTrue(ack.success)
+        reports = self.broker.poll_execution_reports()
+        for rep in reports:
+            self.runtime.consume_execution_report(rep)
         self.assertEqual(self.runtime.oms_fsm.get_status(self.runtime._order_id_to_uuid[cmd.client_order_id]), OrderStatus.FILLED)
 
     def test_track8_monthly_wide_strangle_pathway(self):
@@ -215,8 +236,12 @@ class TestTrackPathwaysAll(unittest.TestCase):
         self.assertEqual(len(commands), 1, "Track 8 must trigger monthly wide strangle")
         cmd = commands[0]
         self.assertEqual(cmd.track_id, "Track8")
-        rep = self.broker.send_order(cmd)
-        self.runtime.consume_execution_report(rep)
+        ack = self.broker.send_order(cmd)
+        self.assertIsNotNone(ack)
+        self.assertTrue(ack.success)
+        reports = self.broker.poll_execution_reports()
+        for rep in reports:
+            self.runtime.consume_execution_report(rep)
         self.assertEqual(self.runtime.oms_fsm.get_status(self.runtime._order_id_to_uuid[cmd.client_order_id]), OrderStatus.FILLED)
 
     def test_track9_event_overnight_insurance_pathway(self):
@@ -237,8 +262,12 @@ class TestTrackPathwaysAll(unittest.TestCase):
         self.assertEqual(len(commands), 1, "Track 9 must trigger overnight hedge sizing")
         cmd = commands[0]
         self.assertEqual(cmd.track_id, "Track9")
-        rep = self.broker.send_order(cmd)
-        self.runtime.consume_execution_report(rep)
+        ack = self.broker.send_order(cmd)
+        self.assertIsNotNone(ack)
+        self.assertTrue(ack.success)
+        reports = self.broker.poll_execution_reports()
+        for rep in reports:
+            self.runtime.consume_execution_report(rep)
         self.assertEqual(self.runtime.oms_fsm.get_status(self.runtime._order_id_to_uuid[cmd.client_order_id]), OrderStatus.FILLED)
 
 
