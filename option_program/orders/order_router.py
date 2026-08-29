@@ -32,6 +32,8 @@ class OrderRouter:
         self._active_orders: Dict[uuid.UUID, Tuple[CanonicalOrderCommand, float]] = {}
         # order_id -> broker_adapter
         self._order_brokers: Dict[uuid.UUID, Any] = {}
+        # order_id -> cumulative executed quantity
+        self._cum_executed_qty: Dict[uuid.UUID, int] = {}
         # 멱등성 및 재사용 방지용 처리된 토큰/주문 식별자 추적
         self._processed_tokens: Set[str] = set()
         self._processed_order_ids: Set[uuid.UUID] = set()
@@ -77,7 +79,7 @@ class OrderRouter:
         if not is_valid:
             logger.warning(f"[OrderRouter] Rejected order {getattr(command, 'client_order_id', 'UNKNOWN')}: {reason}")
             if token is not None and hasattr(token, "order_id") and isinstance(token.order_id, uuid.UUID):
-                self.fsm.states[token.order_id] = OrderStatus.REJECTED
+                self.fsm.transition_sync(token.order_id, OrderStatus.REJECTED)
             return None
 
         order_id = token.order_id
@@ -86,11 +88,12 @@ class OrderRouter:
         self._processed_tokens.add(token_key)
         self._processed_order_ids.add(order_id)
 
-        # 2. OMS 상태 등록 (NEW -> VALIDATED -> SENT)
-        self.fsm.states[order_id] = OrderStatus.NEW
-        self.fsm.states[order_id] = OrderStatus.VALIDATED
-        self.fsm.states[order_id] = OrderStatus.SENT
+        # 2. OMS 상태 등록 (None -> NEW -> VALIDATED -> SENT)
+        self.fsm.transition_sync(order_id, OrderStatus.NEW)
+        self.fsm.transition_sync(order_id, OrderStatus.VALIDATED)
+        self.fsm.transition_sync(order_id, OrderStatus.SENT)
         self._active_orders[order_id] = (command, time.time())
+        self._cum_executed_qty[order_id] = 0
         if broker_adapter is not None:
             self._order_brokers[order_id] = broker_adapter
 
@@ -104,44 +107,54 @@ class OrderRouter:
 
         return order_id
 
-
     def handle_execution_report(
         self,
         order_id: uuid.UUID,
         report: CanonicalExecutionReport
     ) -> None:
-        """체결 보고서 수신에 따른 FSM 상태 전이"""
+        """체결 보고서 수신에 따른 FSM 상태 전이 및 누적 체결 관리"""
         cmd_info = self._active_orders.get(order_id)
         requested_qty = cmd_info[0].qty if cmd_info else None
+        prev_cum = self._cum_executed_qty.get(order_id, 0)
+        new_cum = prev_cum + report.executed_qty
 
         if report.executed_qty > 0:
-            if requested_qty is not None and report.executed_qty > requested_qty:
-                self.fsm.states[order_id] = OrderStatus.REJECTED
+            if requested_qty is not None and new_cum > requested_qty:
+                self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
                 self._active_orders.pop(order_id, None)
                 self._order_brokers.pop(order_id, None)
+                self._cum_executed_qty.pop(order_id, None)
                 logger.error(
                     f"[OrderRouter] Order {order_id} oversized execution rejected: "
-                    f"executed_qty={report.executed_qty} > requested_qty={requested_qty}"
+                    f"cumulative_qty={new_cum} > requested_qty={requested_qty}"
                 )
-            elif requested_qty is not None and report.executed_qty < requested_qty:
-                self.fsm.states[order_id] = OrderStatus.PARTIAL
-                logger.info(f"[OrderRouter] Order {order_id} PARTIAL: {report.executed_qty}/{cmd_info[0].qty}@{report.executed_price}")
-            elif requested_qty is not None and report.executed_qty == requested_qty:
-                self.fsm.states[order_id] = OrderStatus.FILLED
+            elif requested_qty is not None and new_cum < requested_qty:
+                self._cum_executed_qty[order_id] = new_cum
+                self.fsm.transition_sync(order_id, OrderStatus.PARTIAL)
+                logger.info(
+                    f"[OrderRouter] Order {order_id} PARTIAL: {new_cum}/{requested_qty}@{report.executed_price}"
+                )
+            elif requested_qty is not None and new_cum == requested_qty:
+                self._cum_executed_qty[order_id] = new_cum
+                self.fsm.transition_sync(order_id, OrderStatus.FILLED)
                 self._active_orders.pop(order_id, None)
                 self._order_brokers.pop(order_id, None)
-                logger.info(f"[OrderRouter] Order {order_id} FILLED: {report.executed_qty}@{report.executed_price}")
+                self._cum_executed_qty.pop(order_id, None)
+                logger.info(f"[OrderRouter] Order {order_id} FILLED: {new_cum}@{report.executed_price}")
             else:
-                self.fsm.states[order_id] = OrderStatus.REJECTED
+                self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
                 self._active_orders.pop(order_id, None)
                 self._order_brokers.pop(order_id, None)
-                logger.warning(f"[OrderRouter] Order {order_id} received execution report for inactive/unknown order: REJECTED.")
+                self._cum_executed_qty.pop(order_id, None)
+                logger.warning(
+                    f"[OrderRouter] Order {order_id} received execution report for inactive/unknown order: REJECTED."
+                )
         else:
-            self.fsm.states[order_id] = OrderStatus.REJECTED
+            self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
             self._active_orders.pop(order_id, None)
             self._order_brokers.pop(order_id, None)
+            self._cum_executed_qty.pop(order_id, None)
             logger.warning(f"[OrderRouter] Order {order_id} REJECTED by Broker.")
-
 
     def scan_stale_orders(self, current_time: Optional[float] = None) -> List[uuid.UUID]:
         """지정된 타임아웃(30초)을 초과한 미체결/대기 주문 감지"""
@@ -150,10 +163,13 @@ class OrderRouter:
 
         for order_id, (cmd, sub_time) in list(self._active_orders.items()):
             status = self.fsm.get_status(order_id)
-            if status in (OrderStatus.SENT, OrderStatus.ACCEPTED, OrderStatus.PENDING):
+            if status in (OrderStatus.SENT, OrderStatus.ACCEPTED, OrderStatus.PENDING, OrderStatus.PARTIAL):
                 if (now - sub_time) >= self.stale_timeout_sec:
                     stale_order_ids.append(order_id)
-                    logger.warning(f"[OrderRouter] Stale order detected: {order_id} (Elapsed: {now - sub_time:.1f}s >= {self.stale_timeout_sec}s)")
+                    logger.warning(
+                        f"[OrderRouter] Stale order detected: {order_id} "
+                        f"(Elapsed: {now - sub_time:.1f}s >= {self.stale_timeout_sec}s)"
+                    )
 
         return stale_order_ids
 
@@ -170,9 +186,10 @@ class OrderRouter:
             try:
                 cancelled = broker.cancel_order(client_order_id)
                 if cancelled:
-                    self.fsm.states[order_id] = OrderStatus.CANCELLED
+                    self.fsm.transition_sync(order_id, OrderStatus.CANCELLED)
                     self._active_orders.pop(order_id, None)
                     self._order_brokers.pop(order_id, None)
+                    self._cum_executed_qty.pop(order_id, None)
                     logger.info(f"[OrderRouter] Stale order {order_id} ({client_order_id}) CANCELLED safely via Broker.")
                     return True
                 else:
@@ -182,8 +199,9 @@ class OrderRouter:
                 logger.error(f"[OrderRouter] Exception while cancelling stale order {order_id} ({client_order_id}) via Broker: {exc}")
                 return False
         else:
-            self.fsm.states[order_id] = OrderStatus.CANCELLED
+            self.fsm.transition_sync(order_id, OrderStatus.CANCELLED)
             self._active_orders.pop(order_id, None)
             self._order_brokers.pop(order_id, None)
+            self._cum_executed_qty.pop(order_id, None)
             logger.info(f"[OrderRouter] Stale order {order_id} CANCELLED safely (no broker attached).")
             return True
