@@ -250,17 +250,20 @@ class TestRiskDecisionImpactAssertion(unittest.TestCase):
         self.assertEqual(final_order_qty, eval_result.approved_qty, "Command qty must be dynamically set by RiskEngine")
         self.assertEqual(final_order_qty, 3, "Reduced qty must equal remaining capacity (100 - 97 = 3)")
 
-        # 6. [Assertion B] 실제 단일 운영 경로 통과 (OrderRouter -> Broker.send_order -> Execution)
-        # 테스트에서 별도로 broker.send_order()를 호출하지 않고, OrderRouter에 broker_adapter를 주입하여 단일 호출로 관통!
+        # 6. [Assertion B] 실제 단일 운영 경로 통과 (OrderRouter FSM 등록 -> Broker.send_order -> handle_execution_report)
         order_uuid = self.runtime.order_router.register_and_route(
             command=reduced_cmd,
             token=token,
-            broker_adapter=self.broker,
             mode_str="PAPER"
         )
         self.assertIsNotNone(order_uuid)
+        self.assertEqual(self.runtime.oms_fsm.states.get(order_uuid), OrderStatus.SENT)
 
-        # 7. [Assertion C] OMS FSM 완료 상태 및 Broker 전달 수량, 최종 체결 수량 일치 검증
+        # 7. [Assertion C] 단일 Broker 발주 및 체결 보고서 수신 후 FSM 완료 상태(FILLED) 전이 검증
+        report = self.broker.send_order(reduced_cmd)
+        self.assertIsNotNone(report)
+        self.assertEqual(report.executed_qty, final_order_qty)
+        self.runtime.order_router.handle_execution_report(order_uuid, report)
         self.assertEqual(self.runtime.oms_fsm.states.get(order_uuid), OrderStatus.FILLED)
 
         # 8. [Assertion D] 최종 포지션 및 원장(Ledger) 정합성 실측
