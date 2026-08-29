@@ -23,46 +23,14 @@ class BrokerMode(str, Enum):
     REAL = "REAL"
 
 
+@dataclass
 class BrokerOrderResponse:
-    """브로커 주문 접수(ACK/Order ID) 응답 객체 — 실제 체결 보고서(CanonicalExecutionReport)와 엄격히 분리."""
-
-    def __init__(
-        self,
-        success: bool,
-        broker_order_id: str,
-        client_order_id: str,
-        status: str = "ACCEPTED",
-        message: str = "Order accepted by broker",
-        _vssf: Optional[VirtualSecuritiesFirmRuntime] = None,
-        _command: Optional[CanonicalOrderCommand] = None,
-        _broker: Optional[Any] = None,
-    ):
-        self.success = success
-        self.broker_order_id = broker_order_id
-        self.client_order_id = client_order_id
-        self.status = status
-        self.message = message
-        self._vssf = _vssf
-        self._command = _command
-        self._broker = _broker
-        self._cached_report: Optional[CanonicalExecutionReport] = None
-
-    def _ensure_report(self) -> Optional[CanonicalExecutionReport]:
-        if self._cached_report is None and self._vssf is not None and self._command is not None:
-            # 레거시 호환: 대기 큐에서 해당 주문 제거 후 체결 처리
-            if self._broker is not None and hasattr(self._broker, "_pending_orders"):
-                self._broker._pending_orders = [
-                    cmd for cmd in self._broker._pending_orders if cmd.client_order_id != self._command.client_order_id
-                ]
-            self._cached_report = self._vssf.process_order(self._command)
-        return self._cached_report
-
-    def __getattr__(self, name: str) -> Any:
-        # 레거시 호환: CanonicalExecutionReport 필드 접근 시에만 지연 체결 위임
-        report = self._ensure_report()
-        if report is not None and hasattr(report, name):
-            return getattr(report, name)
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+    """브로커 주문 접수(ACK/Order ID) 순수 응답 객체 — 실제 체결 보고서(CanonicalExecutionReport)와 엄격히 분리."""
+    success: bool
+    broker_order_id: str
+    client_order_id: str
+    status: str = "ACCEPTED"
+    message: str = "Order accepted by broker"
 
 
 class IBrokerAdapter(ABC):
@@ -202,9 +170,6 @@ class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
             client_order_id=command.client_order_id,
             status="ACCEPTED",
             message="Order successfully accepted by Paper Broker",
-            _vssf=self.vssf,
-            _command=command,
-            _broker=self,
         )
 
     def poll_execution_reports(self) -> List[CanonicalExecutionReport]:
@@ -274,9 +239,6 @@ class ShadowBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
             client_order_id=command.client_order_id,
             status="ACCEPTED",
             message="Order successfully accepted by Shadow Broker",
-            _vssf=self.vssf,
-            _command=command,
-            _broker=self,
         )
 
     def poll_execution_reports(self) -> List[CanonicalExecutionReport]:

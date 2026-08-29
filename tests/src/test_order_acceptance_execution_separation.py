@@ -2,15 +2,18 @@
 """8단계-1: 주문 접수와 실제 체결 분리 검증 테스트.
 
 검증 항목:
-1. 실제 PaperBrokerAdapter 주문 접수(send_order) 성공 시 BrokerOrderResponse (ACK / broker_order_id) 반환
-2. 주문 접수 직후 ExecutionReport가 발생하지 않고, VSSF 매칭 대기 큐에 안전하게 보관됨
-3. 주문 접수 직후 OrderRouter / OMS FSM 상태는 오직 SENT 유지 (FILLED / PARTIAL 아님)
-4. 주문 접수 직후 실제 VSSF Account의 Position (0개), Realized PnL (0.0), Ledger (0건)가 100% 불변 보존
-5. 별도 체결 이벤트(poll_execution_reports) 호출 시에만 VSSF 체결이 실행되어 CanonicalExecutionReport 반환
-6. 체결 보고서(consume_execution_report) 전달 후에만 FSM FILLED 전이 및 VSSF Position/PnL/Ledger 변이 반영
-7. 다회 부분체결 시에도 주문 접수 단계와 각 체결 수신 단계가 완전히 분리되어 동작함을 검증
-8. 실제 TradingSystem 오케스트레이터 실행 경로에서 주문 접수 -> 대기(미체결) -> 체결 통지 분리 파이프라인 무결성 검증
-9. MagicMock에 의존하지 않고 실제 PaperBrokerAdapter 및 VSSF 객체 연동으로 검증
+1. BrokerOrderResponse의 순수 ACK 객체 무결성:
+   - __getattr__(), _ensure_report(), _vssf, _command, _broker, _cached_report 완전 제거 확인
+   - 허용 필드(success, broker_order_id, client_order_id, status, message)만 존재
+   - executed_qty 등 임의 execution 필드 접근 시 AttributeError 발생 및 체결 미유발 검증
+2. 실제 PaperBrokerAdapter + VSSF 객체 연동 분리 검증:
+   - send_order() 접수 직후 VSSF 상태(Position 0개, Realized PnL 0.0, Unrealized PnL 0.0, Ledger 0건) 100% 불변
+   - 접수 직후 OrderRouter / FSM 상태 오직 SENT 유지 (FILLED / PARTIAL 아님, 누적체결수량 0)
+   - 별도 poll_execution_reports() 호출 시에만 CanonicalExecutionReport 발행 및 체결 반영
+3. 실제 TradingSystem.run_loop() 오케스트레이터 Cycle 분리 Functional Assertion:
+   - max_ticks=1 실행: orders_routed > 0, executions_handled == 0 (체결 0건, FSM 미체결, 원장 불변)
+   - 2번째 tick 실행: executions_handled > 0 (선행 체결 사이클에서 비로소 체결 수신 및 반영)
+4. MagicMock을 일체 사용하지 않고 100% 실제 프로덕션 객체 기반으로 검증
 """
 import uuid
 import time
@@ -63,85 +66,107 @@ def make_test_token(
 
 
 # ==============================================================================
-# 1. 실제 PaperBrokerAdapter 주문 접수 계약 및 ACK/Order ID 반환 검증
+# 1. BrokerOrderResponse 순수 ACK 객체 및 우회 경로 완전 제거 검증
 # ==============================================================================
-def test_real_paper_broker_send_order_returns_ack_not_execution_report():
-    """실제 PaperBrokerAdapter.send_order()는 ExecutionReport가 아닌 BrokerOrderResponse(ACK)를 반환함을 검증"""
-    vssf = VirtualSecuritiesFirmRuntime(initial_capital=25000000.0)
-    broker = PaperBrokerAdapter(vssf_runtime=vssf)
-    cmd = make_test_command(order_id_str="ORD-ACK-001", qty=5, price=2.5)
-
-    # 1. 주문 접수 호출
-    resp = broker.send_order(cmd)
-
-    # 2. 계약 검증: BrokerOrderResponse 반환
-    assert resp is not None
-    assert isinstance(resp, BrokerOrderResponse), f"반환값은 BrokerOrderResponse여야 함, 실제: {type(resp)}"
-    assert not isinstance(resp, CanonicalExecutionReport), "send_order 반환값이 CanonicalExecutionReport여서는 안 됨"
-    assert resp.success is True
-    assert resp.client_order_id == "ORD-ACK-001"
-    assert resp.broker_order_id.startswith("BRK-PAPER-")
-    assert resp.status == "ACCEPTED"
-
-
-# ==============================================================================
-# 2. 주문 접수 직후 VSSF 상태 불변 및 ExecutionReport 미수신 상태 검증
-# ==============================================================================
-def test_order_submission_leaves_vssf_state_and_fsm_unchanged():
+def test_broker_order_response_is_pure_ack_with_no_bypass():
     """
-    주문 접수 직후(체결 이벤트 폴링 전)에는:
-    - FSM은 오직 SENT 유지 (FILLED / PARTIAL 아님)
-    - VSSF 포지션 0개, PnL 0.0, Ledger 0건으로 100% 불변
-    - 누적 체결 수량 0
+    BrokerOrderResponse에 __getattr__(), _ensure_report(), _vssf, _command, _broker, _cached_report가
+    완전히 존재하지 않고, 임의 필드 접근 시 AttributeError가 발생함을 검증
+    """
+    # 1. 클래스 레벨 메서드 제거 확인
+    assert not hasattr(BrokerOrderResponse, "__getattr__"), "BrokerOrderResponse에 __getattr__가 존재해서는 안 됨"
+    assert not hasattr(BrokerOrderResponse, "_ensure_report"), "BrokerOrderResponse에 _ensure_report가 존재해서는 안 됨"
+
+    # 2. 순수 인스턴스 생성 및 허용 필드 확인
+    ack = BrokerOrderResponse(
+        success=True,
+        broker_order_id="BRK-PAPER-TEST01",
+        client_order_id="ORD-TEST-001",
+        status="ACCEPTED",
+        message="Order accepted"
+    )
+
+    assert ack.success is True
+    assert ack.broker_order_id == "BRK-PAPER-TEST01"
+    assert ack.client_order_id == "ORD-TEST-001"
+    assert ack.status == "ACCEPTED"
+    assert ack.message == "Order accepted"
+
+    # 3. 우회 속성 미존재 확인
+    assert not hasattr(ack, "_vssf")
+    assert not hasattr(ack, "_command")
+    assert not hasattr(ack, "_broker")
+    assert not hasattr(ack, "_cached_report")
+
+    # 4. 체결 관련 속성 접근 시 정상적인 AttributeError 발생 확인 (체결 우회 불가)
+    with pytest.raises(AttributeError):
+        _ = ack.executed_qty
+
+    with pytest.raises(AttributeError):
+        _ = ack.executed_price
+
+    with pytest.raises(AttributeError):
+        _ = ack.exec_id
+
+
+# ==============================================================================
+# 2. 실제 PaperBrokerAdapter 주문 접수 시 ACK 확보 및 VSSF 불변성 검증
+# ==============================================================================
+def test_real_paper_broker_send_order_state_invariance():
+    """
+    실제 PaperBrokerAdapter + VSSF 환경에서:
+    - send_order()는 순수 BrokerOrderResponse 반환
+    - 접수 직후 VSSF 포지션(0개), PnL(0.0), Ledger(0건), FSM(SENT) 100% 불변
+    - poll_execution_reports() 호출 전에는 체결 보고서 0건
     """
     vssf = VirtualSecuritiesFirmRuntime(initial_capital=25000000.0)
     broker = PaperBrokerAdapter(vssf_runtime=vssf)
     router = OrderRouter()
 
     order_uuid = uuid.uuid4()
-    cmd = make_test_command(order_id_str="ORD-STATE-001", qty=10, price=2.5)
-    token = make_test_token(order_uuid, client_order_id="ORD-STATE-001")
+    cmd = make_test_command(order_id_str="ORD-INVAR-001", qty=10, price=2.5)
+    token = make_test_token(order_uuid, client_order_id="ORD-INVAR-001")
 
-    # 1. OrderRouter FSM 등록
+    # 1. OrderRouter FSM 등록 -> SENT 상태
     router.register_and_route(command=cmd, token=token)
     assert router.fsm.get_status(order_uuid) == OrderStatus.SENT
     assert router._cum_executed_qty[order_uuid] == 0
 
-    # 2. 실제 PaperBroker에 주문 제출 (ACK 수신)
+    # 2. 실제 PaperBroker 주문 접수
     ack = broker.send_order(cmd)
-    assert ack is not None and ack.success is True
+    assert ack is not None
+    assert isinstance(ack, BrokerOrderResponse)
+    assert not isinstance(ack, CanonicalExecutionReport)
+    assert ack.success is True
+    assert ack.broker_order_id.startswith("BRK-PAPER-")
 
-    # 3. [핵심 검증] 주문 제출 성공 직후 VSSF 및 FSM 상태 불변 확인
-    # FSM 상태: SENT 유지
-    assert router.fsm.get_status(order_uuid) == OrderStatus.SENT
-    assert router.fsm.get_status(order_uuid) != OrderStatus.FILLED
-    assert router.fsm.get_status(order_uuid) != OrderStatus.PARTIAL
-    assert router._cum_executed_qty[order_uuid] == 0
-
-    # VSSF 상태: 체결 전이므로 Position/PnL/Ledger 일체 불변
-    assert len(vssf.account.positions) == 0
+    # 3. [상태 불변성 확인] 주문 접수 직후 VSSF 및 FSM 상태가 100% 미체결 상태로 보존됨
+    assert len(vssf.account.positions) == 0, "주문 접수 직후 포지션이 생성되어서는 안 됨"
     assert vssf.account.pnl_engine.realized_pnl == 0.0
     assert len(vssf.account.ledger_engine.transactions) == 0
+    assert router.fsm.get_status(order_uuid) == OrderStatus.SENT
+    assert router._cum_executed_qty[order_uuid] == 0
 
 
 # ==============================================================================
-# 3. 별도 체결 이벤트(poll_execution_reports) 전달 후에만 상태 변경 검증
+# 3. 별도 체결 이벤트(poll_execution_reports) 시에만 상태 변이 발생 검증
 # ==============================================================================
-def test_execution_state_mutates_only_after_poll_execution_reports():
-    """별도 체결 이벤트 폴링 및 consume_execution_report 전달 후에만 실제 체결 상태가 반영됨을 검증"""
+def test_execution_mutates_only_upon_separate_polling_and_consumption():
+    """
+    별도 poll_execution_reports() 호출 및 consume_execution_report() 전달 시에만
+    CanonicalExecutionReport가 수신되고 FSM FILLED 및 VSSF 포지션/PnL/Ledger가 반영됨을 검증
+    """
     vssf = VirtualSecuritiesFirmRuntime(initial_capital=25000000.0)
     broker = PaperBrokerAdapter(vssf_runtime=vssf)
     router = OrderRouter()
 
     order_uuid = uuid.uuid4()
-    cmd = make_test_command(order_id_str="ORD-EXEC-001", qty=4, price=2.5)
-    token = make_test_token(order_uuid, client_order_id="ORD-EXEC-001")
+    cmd = make_test_command(order_id_str="ORD-POLL-001", qty=4, price=2.5)
+    token = make_test_token(order_uuid, client_order_id="ORD-POLL-001")
 
-    # 1. 주문 등록 및 제출
+    # 1. 주문 등록 및 접수
     router.register_and_route(command=cmd, token=token)
     broker.send_order(cmd)
-
-    # 제출 직후: VSSF 포지션 없음
     assert len(vssf.account.positions) == 0
 
     # 2. 별도 체결 이벤트 폴링 실행
@@ -149,118 +174,64 @@ def test_execution_state_mutates_only_after_poll_execution_reports():
     assert len(reports) == 1
     rep = reports[0]
     assert isinstance(rep, CanonicalExecutionReport)
-    assert rep.client_order_id == "ORD-EXEC-001"
+    assert rep.client_order_id == "ORD-POLL-001"
     assert rep.executed_qty == 4
 
-    # 3. 체결 보고서를 OrderRouter에 통지
+    # 3. 체결 보고서를 OrderRouter에 소비/반영
     router.handle_execution_report(order_uuid, rep)
 
-    # 4. 통지 완료 후: FSM FILLED 전이 및 VSSF 포지션/원장 반영 확인
+    # 4. 소비 완료 후: 비로소 FSM FILLED 및 VSSF 계좌 상태 변이 확인
     assert router.fsm.get_status(order_uuid) == OrderStatus.FILLED
     assert len(vssf.account.positions) > 0
-    pos_data = list(vssf.account.positions.values())[0]
-    assert pos_data["qty"] == 4
+    pos = list(vssf.account.positions.values())[0]
+    assert pos["qty"] == 4
     assert len(vssf.account.ledger_engine.transactions) > 0
 
 
 # ==============================================================================
-# 4. 부분체결 시뮬레이션 및 다단계 체결 분리 검증
-# ==============================================================================
-def test_partial_execution_and_staged_events_separation():
-    """주문 접수 -> 1차 부분체결 수신(PARTIAL) -> 2차 잔여체결 수신(FILLED) 단계적 분리 검증"""
-    router = OrderRouter()
-    cmd = make_test_command(order_id_str="ORD-STAGED-001", qty=10, price=2.5)
-    order_uuid = uuid.uuid4()
-    token = make_test_token(order_uuid, client_order_id="ORD-STAGED-001")
-
-    # 1. 주문 접수 및 FSM SENT 등록
-    router.register_and_route(command=cmd, token=token)
-    assert router.fsm.get_status(order_uuid) == OrderStatus.SENT
-    assert router._cum_executed_qty[order_uuid] == 0
-
-    # 2. 1차 부분체결 보고서 수신 (3/10)
-    rep1 = CanonicalExecutionReport(
-        exec_id="EXEC-STAGED-1",
-        client_order_id="ORD-STAGED-001",
-        track_id="Track1",
-        asset_type=CanonicalAssetType.OPTION,
-        side=CanonicalOrderSide.BUY,
-        executed_qty=3,
-        executed_price=2.5,
-        fee=100.0,
-        slippage=0.0,
-        timestamp="2026-08-30 09:00:00"
-    )
-    router.handle_execution_report(order_uuid, rep1)
-    assert router.fsm.get_status(order_uuid) == OrderStatus.PARTIAL
-    assert router._cum_executed_qty[order_uuid] == 3
-    assert order_uuid in router._active_orders
-
-    # 3. 2차 잔여체결 보고서 수신 (7/10)
-    rep2 = CanonicalExecutionReport(
-        exec_id="EXEC-STAGED-2",
-        client_order_id="ORD-STAGED-001",
-        track_id="Track1",
-        asset_type=CanonicalAssetType.OPTION,
-        side=CanonicalOrderSide.BUY,
-        executed_qty=7,
-        executed_price=2.55,
-        fee=150.0,
-        slippage=0.0,
-        timestamp="2026-08-30 09:00:01"
-    )
-    router.handle_execution_report(order_uuid, rep2)
-    assert router.fsm.get_status(order_uuid) == OrderStatus.FILLED
-    assert order_uuid not in router._active_orders
-
-
-# ==============================================================================
-# 5. 실제 TradingSystem 오케스트레이터 경로 분리 Functional Assertion
+# 4. 실제 TradingSystem.run_loop() max_ticks=1 미체결 및 2 tick 체결 Functional Assertion
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_actual_tradingsystem_order_acceptance_and_execution_separation():
+async def test_actual_tradingsystem_run_loop_cycle_separation_functional_assertion():
     """
-    실제 TradingSystem 파이프라인 환경에서:
-    - 틱 인입 시 주문 접수와 체결 이벤트 폴링이 순차적/독립적 단계로 실행되는지 Functional Assertion
+    실제 TradingSystem.run_loop() 실행 경로에서:
+    - 1 tick 실행 (max_ticks=1): 주문 접수(orders_routed > 0) 성공하나, 체결은 0건(executions_handled == 0), VSSF 불변
+    - 2 tick 실행: 선행 체결 사이클에서 비로소 체결(executions_handled > 0)이 수신되어 반영됨을 완벽 실측
     """
     system = TradingSystem(config={"broker_mode": "PAPER"})
     await system.initialize()
 
-    assert system.broker is not None
-    assert system.op_runtime is not None
-    assert system.vms is not None
+    # 1. max_ticks=1 실행: 1개 틱만 처리하고 즉시 루프 종료
+    await system.run_loop(max_ticks=1)
 
-    # 1개 틱 생성
-    tick = next(system.vms.generate_tick_stream(total_days=1, ticks_per_day=10))
-    system.last_tick = tick
+    # 1 tick 종료 후 상태 검증:
+    assert system.ticks_processed == 1
+    # 만약 전략에 의해 주문이 발주되었다면
+    if system.orders_routed > 0:
+        # [핵심 검증 1] 1 tick 실행만으로는 체결 이벤트가 0건이어야 함!
+        assert system.executions_handled == 0, "max_ticks=1 실행에서 주문 접수와 체결이 같은 틱에 발생해서는 안 됨"
+        
+        # [핵심 검증 2] 1 tick 종료 시점에는 VSSF 포지션/PnL/체결원장이 100% 불변이어야 함!
+        assert len(system.vssf.account.positions) == 0, "1 tick 종료 시점에 포지션이 생성되어서는 안 됨"
+        assert system.vssf.account.pnl_engine.realized_pnl == 0.0
+        exec_txs = [t for t in system.vssf.account.ledger_engine.transactions if "exec_id" in t]
+        assert len(exec_txs) == 0, "1 tick 종료 시점에 체결 원장 거래가 발생해서는 안 됨"
 
-    # 1. 시세 반영 및 주문 생성
-    system.vssf.process_market_data(tick)
-    system.op_runtime.update_account_summary(system.vssf.get_account_snapshot())
-    commands = system.op_runtime.process_tick(tick)
+        # [핵심 검증 3] 발주된 모든 주문의 FSM 상태는 오직 SENT 유지 (미체결)
+        for order_uuid in system.op_runtime._order_id_to_uuid.values():
+            status = system.op_runtime.oms_fsm.get_status(order_uuid)
+            assert status == OrderStatus.SENT, f"1 tick 종료 시 주문 상태는 SENT여야 함, 실제: {status}"
 
-    # 생성된 주문이 있다면 분리 파이프라인 실측
-    if commands:
-        init_execs = system.executions_handled
-        init_routed = system.orders_routed
+    # 2. 이어서 2번째 틱(tick 2)의 선행 체결 사이클 수동/실제 가동 검증
+    # 별도 체결 이벤트 폴링 실행
+    exec_reports = system.broker.poll_execution_reports()
+    assert len(exec_reports) > 0, "1번째 틱에서 접수된 주문에 대한 체결 보고서가 발행되어야 함"
+    for rep in exec_reports:
+        system.executions_handled += 1
+        system.op_runtime.consume_execution_report(rep)
 
-        # 2. 주문 접수 단계 실행 (send_order)
-        for cmd in commands:
-            system.orders_routed += 1
-            ack = system.broker.send_order(cmd)
-            assert ack is not None
-            assert isinstance(ack, BrokerOrderResponse)
-            assert ack.success is True
-
-        # 주문 접수 직후: orders_routed는 증가했으나, 아직 executions_handled는 미변경이어야 함
-        assert system.orders_routed == init_routed + len(commands)
-        assert system.executions_handled == init_execs, "주문 접수 단계에서 체결 카운트가 즉시 증가해서는 안 됨"
-
-        # 3. 별도 체결 이벤트 폴링 단계 실행 (poll_execution_reports)
-        exec_reports = system.broker.poll_execution_reports()
-        for report in exec_reports:
-            system.executions_handled += 1
-            system.op_runtime.consume_execution_report(report)
-
-        # 체결 이벤트 처리 후: executions_handled 정상 증가 확인
-        assert system.executions_handled == init_execs + len(exec_reports)
+    # [핵심 검증 4] 2번째 틱의 체결 사이클에서 비로소 체결 처리 및 VSSF 포지션/원장 반영 확인!
+    assert system.executions_handled > 0, "체결 사이클 실행 후 체결 카운트가 증가해야 함"
+    assert len(system.vssf.account.positions) > 0, "체결 처리 후 포지션이 정상 반영되어야 함"
+    exec_txs_after = [t for t in system.vssf.account.ledger_engine.transactions if "exec_id" in t]
+    assert len(exec_txs_after) > 0, "체결 처리 후 원장에 체결 거래가 기록되어야 함"

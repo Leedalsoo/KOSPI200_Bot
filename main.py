@@ -162,16 +162,21 @@ class TradingSystem:
                 
                 self.last_tick = tick
 
-                # 1. VSSF에 최신 틱 시세 반영
-                self.vssf.process_market_data(tick)
+                # 1. [체결 사이클] 이전 틱에서 접수된 주문의 체결 이벤트 수신 및 처리 (선행 체결 처리)
+                if hasattr(self.broker, "poll_execution_reports"):
+                    exec_reports = self.broker.poll_execution_reports()
+                    for report in exec_reports:
+                        self.executions_handled += 1
+                        self.op_runtime.consume_execution_report(report)
 
-                # 2. OptionProgram에 VSSF 최신 계좌 스냅샷 동기화 (Read-Only)
+                # 2. [시세/계좌 사이클] VSSF에 최신 틱 시세 반영 및 OptionProgram 계좌 스냅샷 동기화
+                self.vssf.process_market_data(tick)
                 self.op_runtime.update_account_summary(self.vssf.get_account_snapshot())
 
-                # 3. OptionProgram 틱 평가 및 파이프라인 주문 명령 생성 (Sensor -> Track1~9 -> SignalGen -> Arbiter -> RiskGate -> FSM)
+                # 3. [전략/리스크 사이클] OptionProgram 틱 평가 및 파이프라인 주문 명령 생성
                 commands = self.op_runtime.process_tick(tick)
 
-                # 4. Broker 인터페이스를 통한 주문 접수 (체결 이벤트와 명확히 분리된 접수/식별자 확보)
+                # 4. [주문 접수 사이클] Broker 인터페이스를 통한 주문 접수 (체결 이벤트와 명확히 분리된 접수/식별자 확보)
                 for cmd in commands:
                     self.orders_routed += 1
                     ack = self.broker.send_order(cmd)
@@ -181,13 +186,6 @@ class TradingSystem:
                             getattr(ack, "client_order_id", cmd.client_order_id),
                             getattr(ack, "broker_order_id", "N/A"),
                         )
-
-                # 5. 별도 체결 이벤트 수신 및 처리 (주문 접수와 분리된 실제 체결 통지 경로)
-                if hasattr(self.broker, "poll_execution_reports"):
-                    exec_reports = self.broker.poll_execution_reports()
-                    for report in exec_reports:
-                        self.executions_handled += 1
-                        self.op_runtime.consume_execution_report(report)
 
                 self.ticks_processed += 1
                 await self.ui_ws.broadcast()
