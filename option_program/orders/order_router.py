@@ -94,39 +94,13 @@ class OrderRouter:
         if broker_adapter is not None:
             self._order_brokers[order_id] = broker_adapter
 
-        # 3. Broker Adapter 실제 호출 (broker_adapter가 제공된 경우)
-        if broker_adapter is not None:
-            try:
-                report: Optional[CanonicalExecutionReport] = broker_adapter.send_order(command)
-                if report is not None and getattr(report, "executed_qty", 0) > 0:
-                    if report.executed_qty > command.qty:
-                        self.fsm.states[order_id] = OrderStatus.REJECTED
-                        self._active_orders.pop(order_id, None)
-                        self._order_brokers.pop(order_id, None)
-                        logger.error(
-                            f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) oversized execution rejected: "
-                            f"executed_qty={report.executed_qty} > requested_qty={command.qty}"
-                        )
-                    elif report.executed_qty < command.qty:
-                        self.fsm.states[order_id] = OrderStatus.PARTIAL
-                        logger.info(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) executed via {mode_str} Broker: PARTIAL {report.executed_qty}/{command.qty}")
-                    else:
-                        self.fsm.states[order_id] = OrderStatus.FILLED
-                        self._active_orders.pop(order_id, None)
-                        self._order_brokers.pop(order_id, None)
-                        logger.info(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) executed via {mode_str} Broker: FILLED qty={report.executed_qty}")
-                else:
-                    self.fsm.states[order_id] = OrderStatus.REJECTED
-                    self._active_orders.pop(order_id, None)
-                    self._order_brokers.pop(order_id, None)
-                    logger.warning(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) rejected/failed at {mode_str} Broker.")
-            except Exception as exc:
-                self.fsm.states[order_id] = OrderStatus.REJECTED
-                self._active_orders.pop(order_id, None)
-                self._order_brokers.pop(order_id, None)
-                logger.error(f"[OrderRouter] Exception while sending order {command.client_order_id} to {mode_str} Broker: {exc}")
-        else:
-            logger.info(f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) queued/routed to {mode_str} Broker.")
+        # 3. [Broker 실행책임 단일화] OrderRouter는 Broker를 직접 발주하지 않음.
+        # 발주 실행 책임은 단일 오케스트레이터(TradingSystem in main.py)가 전담하며,
+        # 체결 결과는 handle_execution_report()를 통해 수신하여 FSM 상태를 전이한다.
+        logger.info(
+            f"[OrderRouter] Order {command.client_order_id} (UUID: {order_id}) validated & registered to FSM (SENT). "
+            f"Broker execution delegated to Orchestrator (TradingSystem)."
+        )
 
         return order_id
 
