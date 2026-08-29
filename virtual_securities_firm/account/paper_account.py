@@ -118,7 +118,7 @@ class PaperTradingAccount:
             exec_fee = float(fee) if fee is not None else 0.0
             ts = "2026-08-23 09:00:00"
             exec_id = "EXEC-001"
-            order_id = "ORD-001"
+            order_id = str(kwargs.get("client_order_id", "ORD-001"))
             slippage = 0.0
             effective_symbol = symbol
 
