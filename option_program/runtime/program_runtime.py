@@ -379,4 +379,21 @@ class OptionProgramRuntime:
         if track_id in self.enabled_strategies:
             self.enabled_strategies[track_id] = bool(enabled)
 
+    def register_broker_order_ack(self, ack: Any) -> None:
+        """[8단계-2] Broker 접수 ACK(BrokerOrderResponse)를 수신하여 OrderRouter 주문 추적 권위 저장소에 매핑 등록."""
+        if ack is None or not getattr(ack, "success", False):
+            return
+        client_id = getattr(ack, "client_order_id", None)
+        broker_id = getattr(ack, "broker_order_id", None)
+        if client_id and broker_id:
+            self.order_router.register_broker_order_id(client_id, broker_id)
+            order_uuid = self._order_id_to_uuid.get(client_id)
+            if order_uuid:
+                self.order_router.register_broker_order_id(order_uuid, broker_id)
+
+    def get_broker_order_id(self, client_order_id: str) -> Optional[str]:
+        """[8단계-2] client_order_id로부터 broker_order_id 조회."""
+        return self.order_router.get_broker_order_id(client_order_id)
+
+
 

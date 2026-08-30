@@ -39,6 +39,10 @@ class OrderRouter:
         # 멱등성 및 재사용 방지용 처리된 토큰/주문 식별자 추적
         self._processed_tokens: Set[str] = set()
         self._processed_order_ids: Set[uuid.UUID] = set()
+        # [8단계-2] 주문 추적 권위 저장소: client_order_id / order_uuid ↔ broker_order_id 매핑
+        self._order_to_broker_id: Dict[uuid.UUID, str] = {}
+        self._client_to_broker_id: Dict[str, str] = {}
+        self._broker_to_client_id: Dict[str, str] = {}
 
     def validate_token(self, command: CanonicalOrderCommand, token: Any) -> Tuple[bool, Optional[str]]:
         """RiskApprovalToken의 유효성, 위변조 여부, 일치성 및 재사용 여부 검증."""
@@ -213,3 +217,37 @@ class OrderRouter:
                 self._cum_executed_qty.pop(order_id, None)
                 logger.info(f"[OrderRouter] Stale order {order_id} CANCELLED safely (no broker attached).")
                 return True
+
+    def register_broker_order_id(self, order_identifier: Any, broker_order_id: str) -> None:
+        """[8단계-2] 주문 접수 ACK 성공 시 client_order_id 또는 order_uuid와 broker_order_id 간의 양방향 매핑 등록."""
+        with self._lock:
+            if isinstance(order_identifier, uuid.UUID):
+                order_uuid = order_identifier
+                self._order_to_broker_id[order_uuid] = broker_order_id
+                cmd_info = self._active_orders.get(order_uuid)
+                if cmd_info:
+                    client_id = cmd_info[0].client_order_id
+                    self._client_to_broker_id[client_id] = broker_order_id
+                    self._broker_to_client_id[broker_order_id] = client_id
+            elif isinstance(order_identifier, str):
+                client_id = order_identifier
+                self._client_to_broker_id[client_id] = broker_order_id
+                self._broker_to_client_id[broker_order_id] = client_id
+                # active orders에서 일치하는 UUID 탐색하여 uuid 매핑도 동시 보존
+                for u, (cmd, _) in self._active_orders.items():
+                    if getattr(cmd, "client_order_id", None) == client_id:
+                        self._order_to_broker_id[u] = broker_order_id
+                        break
+
+    def get_broker_order_id(self, order_identifier: Any) -> Optional[str]:
+        """[8단계-2] order_uuid 또는 client_order_id로부터 broker_order_id 조회."""
+        with self._lock:
+            if isinstance(order_identifier, uuid.UUID):
+                return self._order_to_broker_id.get(order_identifier)
+            return self._client_to_broker_id.get(str(order_identifier))
+
+    def get_client_order_id_by_broker_id(self, broker_order_id: str) -> Optional[str]:
+        """[8단계-2] broker_order_id로부터 client_order_id 역방향 조회."""
+        with self._lock:
+            return self._broker_to_client_id.get(broker_order_id)
+

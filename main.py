@@ -181,6 +181,7 @@ class TradingSystem:
                     self.orders_routed += 1
                     ack = self.broker.send_order(cmd)
                     if ack is not None and getattr(ack, "success", False):
+                        self.op_runtime.register_broker_order_ack(ack)
                         logger.info(
                             "TradingSystem: 주문 접수 성공 (Client: %s, Broker: %s)",
                             getattr(ack, "client_order_id", cmd.client_order_id),

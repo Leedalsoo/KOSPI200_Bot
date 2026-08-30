@@ -22,7 +22,7 @@ from shared.contracts.canonical import (
     CanonicalAssetType,
     CanonicalOptionType
 )
-from option_program.broker.broker_interface import IBrokerAdapter
+from option_program.broker.broker_interface import IBrokerAdapter, BrokerOrderResponse
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +136,7 @@ class RealBrokerAdapter(IBrokerAdapter):
         self.client = http_client or RealBrokerHttpClient(self.config)
         self._connected: bool = False
         self._orders_history: Dict[str, Dict[str, Any]] = {}
+        self._pending_executions: List[CanonicalExecutionReport] = []
 
     def connect(self) -> bool:
         """실전 증권사 세션 연결 및 토큰 인증"""
@@ -155,8 +156,8 @@ class RealBrokerAdapter(IBrokerAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
-    def send_order(self, command: CanonicalOrderCommand) -> Optional[CanonicalExecutionReport]:
-        """CanonicalOrderCommand ➔ 증권사 파생상품 주문 API 호출 ➔ CanonicalExecutionReport 변환"""
+    def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
+        """CanonicalOrderCommand ➔ 증권사 파생상품 주문 API 호출 ➔ BrokerOrderResponse (ACK) 반환"""
         if not self._connected:
             logger.warning(f"[{self.config.broker_name}] Cannot send order while disconnected.")
             return None
@@ -189,8 +190,9 @@ class RealBrokerAdapter(IBrokerAdapter):
 
         output = resp.get("output", {})
         broker_order_no = output.get("ODNO", f"ORD-{int(time.time() * 1000) % 1000000:06d}")
+        broker_order_id = f"BRK-REAL-{broker_order_no}"
         
-        # 3. 체결 보고서 생성 (실시간 접수/체결 정규화)
+        # 3. 체결 보고서 생성 및 대기 큐 적재 (별도 poll_execution_reports()를 통해 소비)
         exec_rep = CanonicalExecutionReport(
             exec_id=f"EXEC-REAL-{broker_order_no}",
             client_order_id=command.client_order_id,
@@ -203,13 +205,29 @@ class RealBrokerAdapter(IBrokerAdapter):
             slippage=0.0,
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         )
+        self._pending_executions.append(exec_rep)
         self._orders_history[command.client_order_id] = {
             "broker_order_no": broker_order_no,
+            "broker_order_id": broker_order_id,
             "command": command,
             "execution": exec_rep
         }
-        logger.info(f"[{self.config.broker_name}] Real Order Placed: {command.client_order_id} -> Broker Order #{broker_order_no}")
-        return exec_rep
+        logger.info(f"[{self.config.broker_name}] Real Order Placed: {command.client_order_id} -> Broker Order #{broker_order_id}")
+        
+        # 4. 순수 BrokerOrderResponse (ACK) 반환
+        return BrokerOrderResponse(
+            success=True,
+            broker_order_id=broker_order_id,
+            client_order_id=command.client_order_id,
+            status="ACCEPTED",
+            message="Real broker order placed successfully"
+        )
+
+    def poll_execution_reports(self) -> List[CanonicalExecutionReport]:
+        """실전 증권사 체결 이벤트 폴링 (주문 접수와 분리된 체결 전달 경로)"""
+        reps = list(self._pending_executions)
+        self._pending_executions.clear()
+        return reps
 
     def cancel_order(self, client_order_id: str) -> bool:
         """주문 취소 API 호출"""
