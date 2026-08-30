@@ -23,8 +23,8 @@ jobs:
       - name: Run Mypy (타입 스캔)
         run: mypy . --ignore-missing-imports
         continue-on-error: true
-      - name: Run Pytest (HFT 엣지 케이스 단위 테스트)
-        run: pytest tests/unit/ -v
+      - name: Run Pytest (HFT 엣지 케이스 단위 테스트 및 8단계 전용 검증)
+        run: pytest tests/unit/ tests/src/ -v
       - name: Run Chaos Monkey Test (결함 주입 내성 검증)
         run: CHAOS_MODE=1 pytest tests/chaos/ -v
       - name: Set up Node.js

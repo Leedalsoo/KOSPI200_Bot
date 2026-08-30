@@ -95,14 +95,32 @@ def test_real_broker_adapter_ack_contract_and_execution_separation():
     assert not hasattr(ack_real, "executed_price")
     assert not hasattr(ack_real, "exec_id")
 
-    # 3. 별도 poll_execution_reports()를 통한 실제 CanonicalExecutionReport 수신 확인
+    # 3. ACK 직후 체결 보고서 없음 확인 (가짜 자동 체결 생성 차단 및 엄격 분리)
+    immediate_reports = real_broker.poll_execution_reports()
+    assert len(immediate_reports) == 0, "ACK 직후에는 가짜 체결이 생성되지 않아야 함"
+
+    # 4. 외부/실제 체결 이벤트 주입 후 별도 poll_execution_reports()를 통한 수신 확인
+    injected_rep = CanonicalExecutionReport(
+        exec_id=f"EXEC-REAL-{ack_real.broker_order_id}",
+        client_order_id="ORD-TEST-REAL-01",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.FUTURES,
+        side=CanonicalOrderSide.BUY,
+        executed_qty=1,
+        executed_price=350.0,
+        fee=1000.0,
+        slippage=0.0,
+        timestamp="2026-08-30 09:00:00"
+    )
+    real_broker.inject_execution_report(injected_rep)
+
     exec_reports = real_broker.poll_execution_reports()
     assert len(exec_reports) == 1
     rep = exec_reports[0]
     assert isinstance(rep, CanonicalExecutionReport)
     assert rep.client_order_id == "ORD-TEST-REAL-01"
     assert rep.executed_qty == 1
-    assert rep.exec_id.startswith("EXEC-REAL-ORD-")
+    assert rep.exec_id.startswith("EXEC-REAL-BRK-REAL-ORD-")
 
     # 추가 폴링 시 큐가 비워져 0건 반환됨을 확인
     empty_reports = real_broker.poll_execution_reports()

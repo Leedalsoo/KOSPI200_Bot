@@ -192,25 +192,12 @@ class RealBrokerAdapter(IBrokerAdapter):
         broker_order_no = output.get("ODNO", f"ORD-{int(time.time() * 1000) % 1000000:06d}")
         broker_order_id = f"BRK-REAL-{broker_order_no}"
         
-        # 3. 체결 보고서 생성 및 대기 큐 적재 (별도 poll_execution_reports()를 통해 소비)
-        exec_rep = CanonicalExecutionReport(
-            exec_id=f"EXEC-REAL-{broker_order_no}",
-            client_order_id=command.client_order_id,
-            track_id=command.track_id,
-            asset_type=command.asset_type,
-            side=command.side,
-            executed_qty=command.qty,
-            executed_price=command.price,
-            fee=round(command.qty * command.price * 250000 * 0.00003, 2),
-            slippage=0.0,
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
-        self._pending_executions.append(exec_rep)
+        # 3. 주문 접수 이력 저장 (순수 접수/ACK 상태 보존, 임의 가짜 체결 생성 없음)
         self._orders_history[command.client_order_id] = {
             "broker_order_no": broker_order_no,
             "broker_order_id": broker_order_id,
             "command": command,
-            "execution": exec_rep
+            "status": "ACCEPTED"
         }
         logger.info(f"[{self.config.broker_name}] Real Order Placed: {command.client_order_id} -> Broker Order #{broker_order_id}")
         
@@ -223,8 +210,13 @@ class RealBrokerAdapter(IBrokerAdapter):
             message="Real broker order placed successfully"
         )
 
+    def inject_execution_report(self, report: CanonicalExecutionReport) -> None:
+        """[8단계-FAIL 보완] 실제 체결 이벤트 수신 또는 테스트 주입 경로"""
+        if report is not None:
+            self._pending_executions.append(report)
+
     def poll_execution_reports(self) -> List[CanonicalExecutionReport]:
-        """실전 증권사 체결 이벤트 폴링 (주문 접수와 분리된 체결 전달 경로)"""
+        """실전 증권사 체결 이벤트 폴링 (주문 접수와 분리된 실제 체결 전달 경로)"""
         reps = list(self._pending_executions)
         self._pending_executions.clear()
         return reps

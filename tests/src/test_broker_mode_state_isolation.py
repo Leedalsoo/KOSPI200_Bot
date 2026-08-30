@@ -119,3 +119,73 @@ def test_real_mode_safety_interlock_blocks_live_order_without_arm():
     assert real.send_order(command) is None
     assert real._orders_history == {}
     assert real._pending_executions == []
+
+
+def test_real_mode_tradingsystem_has_no_simulated_vssf():
+    """REAL 모드로 TradingSystem 초기화 시 VSSF simulated state가 생성되지 않고 None으로 격리됨을 검증."""
+    async def scenario() -> None:
+        real_system = TradingSystem(config={"broker_mode": "REAL"})
+        await real_system.initialize()
+        assert real_system.broker_mode == "REAL"
+        assert real_system.vssf is None, "REAL 모드에서는 simulated VSSF가 존재하지 않아야 함"
+        assert isinstance(real_system.broker, RealBrokerAdapter)
+        assert real_system.broker.is_connected() is False
+        await real_system.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_real_mode_send_order_ack_only_and_explicit_execution_reflection():
+    """REAL 어댑터에서 send_order() 직후 체결 0건(ACK만) 및 명시적 주입 시에만 체결 반영됨을 검증."""
+    from shared.contracts.canonical import (
+        CanonicalOrderCommand,
+        CanonicalExecutionReport,
+        CanonicalAssetType,
+        CanonicalOrderSide,
+    )
+
+    real_adapter = RealBrokerAdapter(config=RealBrokerConfig(is_simulation=True))
+    assert real_adapter.connect() is True
+
+    cmd = CanonicalOrderCommand(
+        client_order_id="ORD-REAL-ACK-ONLY-01",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.FUTURES,
+        side=CanonicalOrderSide.BUY,
+        qty=2,
+        price=350.0,
+        symbol="KOSPI200",
+    )
+
+    # 1. send_order() 호출 -> 순수 ACK 반환
+    ack = real_adapter.send_order(cmd)
+    assert ack is not None
+    assert ack.success is True
+    assert ack.client_order_id == "ORD-REAL-ACK-ONLY-01"
+    assert ack.status == "ACCEPTED"
+
+    # 2. ACK 직후 체결 보고서는 0건이어야 함 (가짜 체결 생성 차단)
+    immediate_execs = real_adapter.poll_execution_reports()
+    assert len(immediate_execs) == 0, "ACK 직후에는 체결 보고서가 0건이어야 함"
+
+    # 3. 외부/실제 체결 이벤트 주입
+    report = CanonicalExecutionReport(
+        exec_id=f"EXEC-{ack.broker_order_id}-1",
+        client_order_id=cmd.client_order_id,
+        track_id=cmd.track_id,
+        asset_type=cmd.asset_type,
+        side=cmd.side,
+        executed_qty=2,
+        executed_price=cmd.price,
+        fee=1000.0,
+        slippage=0.0,
+        timestamp="2026-08-30 09:00:00",
+    )
+    real_adapter.inject_execution_report(report)
+
+    # 4. 주입 후 비로소 poll_execution_reports()에서 체결 획득
+    polled_execs = real_adapter.poll_execution_reports()
+    assert len(polled_execs) == 1
+    assert polled_execs[0].executed_qty == 2
+    assert polled_execs[0].client_order_id == "ORD-REAL-ACK-ONLY-01"
+

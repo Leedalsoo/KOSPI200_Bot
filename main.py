@@ -60,20 +60,27 @@ class TradingSystem:
             # 🛡️ [정규장 GC 동결] 런타임 지연(Latency) 방지를 위해 GC 비활성화
             gc.disable()
 
-            # 1. Virtual Securities Firm Runtime (VSSF) 초기화
-            init_cap = float(self.config.get("initial_capital", 50_000_000.0))
-            self.vssf = VirtualSecuritiesFirmRuntime(initial_capital=init_cap)
-
-            # 2. Broker Mode 결정 및 Broker Adapter 생성 (PAPER / SHADOW / REAL)
+            # 1. Broker Mode 결정 (PAPER / SHADOW / REAL)
             mode_str = str(self.config.get("broker_mode", "PAPER")).upper()
             broker_mode = BrokerMode.PAPER if mode_str == "PAPER" else (BrokerMode.SHADOW if mode_str == "SHADOW" else BrokerMode.REAL)
+            self.broker_mode = mode_str
+
+            # 2. Virtual Securities Firm Runtime (VSSF) 초기화 (PAPER / SHADOW 전용, REAL은 상태 완전 분리)
+            if self.broker_mode in ("PAPER", "SHADOW"):
+                init_cap = float(self.config.get("initial_capital", 50_000_000.0))
+                self.vssf = VirtualSecuritiesFirmRuntime(initial_capital=init_cap)
+            else:
+                self.vssf = None  # REAL 모드에서는 simulated VSSF 상태 미생성 및 완전 분리
+
+            # 3. Broker Adapter 생성
             self.broker = BrokerFactory.create_broker(mode=broker_mode, vssf_runtime=self.vssf)
 
-            # 3. Virtual Market Simulator Runtime (VMS) 초기화
+            # 4. Virtual Market Simulator Runtime (VMS) 초기화
             self.vms = VirtualMarketSimulatorRuntime()
 
-            # 4. Option Program Runtime (전략, 신호, 리스크, FSM) 초기화
-            self.op_runtime = OptionProgramRuntime(account_summary=self.vssf.get_account_snapshot())
+            # 5. Option Program Runtime (전략, 신호, 리스크, FSM) 초기화
+            initial_summary = self.vssf.get_account_snapshot() if self.vssf is not None else None
+            self.op_runtime = OptionProgramRuntime(account_summary=initial_summary)
 
             self.is_running = False
             logger.info(f"TradingSystem: 전체 파이프라인 컴포넌트 초기화 완료 (Broker Mode: {broker_mode.value})")
@@ -146,12 +153,14 @@ class TradingSystem:
 
     async def run_loop(self, max_ticks: Optional[int] = None) -> None:
         """[전체 통합 파이프라인 가동] VMS 틱 스트림 -> OptionProgram -> RiskGate -> Broker -> VSSF -> Ledger"""
-        if self.vms is None or self.vssf is None or self.broker is None or self.op_runtime is None:
+        if self.vms is None or self.broker is None or self.op_runtime is None:
             raise RuntimeError("TradingSystem must be initialized before run_loop.")
+        if self.broker_mode in ("PAPER", "SHADOW") and self.vssf is None:
+            raise RuntimeError(f"TradingSystem in {self.broker_mode} mode must have vssf initialized.")
 
         self.is_running = True
         self._shutdown_event = asyncio.Event()
-        logger.info("TradingSystem: 메인 실시간 파이프라인 루프 가동")
+        logger.info(f"TradingSystem: 메인 실시간 파이프라인 루프 가동 (Mode: {self.broker_mode})")
 
         try:
             tick_generator = self.vms.generate_tick_stream(total_days=1, ticks_per_day=max_ticks or 1000)
@@ -169,9 +178,10 @@ class TradingSystem:
                         self.executions_handled += 1
                         self.op_runtime.consume_execution_report(report)
 
-                # 2. [시세/계좌 사이클] VSSF에 최신 틱 시세 반영 및 OptionProgram 계좌 스냅샷 동기화
-                self.vssf.process_market_data(tick)
-                self.op_runtime.update_account_summary(self.vssf.get_account_snapshot())
+                # 2. [시세/계좌 사이클] PAPER/SHADOW의 경우 VSSF에 최신 틱 시세 반영 및 OptionProgram 계좌 스냅샷 동기화
+                if self.vssf is not None:
+                    self.vssf.process_market_data(tick)
+                    self.op_runtime.update_account_summary(self.vssf.get_account_snapshot())
 
                 # 3. [전략/리스크 사이클] OptionProgram 틱 평가 및 파이프라인 주문 명령 생성
                 commands = self.op_runtime.process_tick(tick)
@@ -198,10 +208,13 @@ class TradingSystem:
                 if self.ticks_processed % 100 == 0:
                     await asyncio.sleep(0)
 
-            # EOD 일일 정산 및 대조(Reconciliation) 수행
-            self.vssf.run_settlement(final_settlement_price=self.op_runtime.last_price)
-            rec = self.vssf.run_reconciliation()
-            logger.info(f"TradingSystem: 파이프라인 실행 완료 (Ticks: {self.ticks_processed}, Orders: {self.orders_routed}, Execs: {self.executions_handled}, Reconcil: {rec.get('is_healthy')})")
+            # EOD 일일 정산 및 대조(Reconciliation) 수행 (PAPER / SHADOW 전용)
+            if self.vssf is not None:
+                self.vssf.run_settlement(final_settlement_price=self.op_runtime.last_price)
+                rec = self.vssf.run_reconciliation()
+                logger.info(f"TradingSystem: 파이프라인 실행 완료 (Ticks: {self.ticks_processed}, Orders: {self.orders_routed}, Execs: {self.executions_handled}, Reconcil: {rec.get('is_healthy')})")
+            else:
+                logger.info(f"TradingSystem: REAL 파이프라인 실행 완료 (Ticks: {self.ticks_processed}, Orders: {self.orders_routed}, Execs: {self.executions_handled})")
 
         except asyncio.CancelledError:
             logger.info("TradingSystem: 메인 루프 취소됨")
