@@ -46,6 +46,8 @@ class OrderRouter:
         # [8단계-3] 주문별 실제 체결수량 권위 저장소 (미체결/부분체결/완료체결 전수 보존)
         self._executed_qty_history: Dict[uuid.UUID, int] = {}
         self._client_to_executed_qty: Dict[str, int] = {}
+        # [8단계-5] Execution ID 중복수신 방어용 멱등성 저장소
+        self._processed_exec_ids: Set[str] = set()
 
     def validate_token(self, command: CanonicalOrderCommand, token: Any) -> Tuple[bool, Optional[str]]:
         """RiskApprovalToken의 유효성, 위변조 여부, 일치성 및 재사용 여부 검증."""
@@ -126,6 +128,17 @@ class OrderRouter:
     ) -> None:
         """체결 보고서 수신에 따른 FSM 상태 전이 및 누적 체결 관리"""
         with self._lock:
+            # [8단계-5] Execution ID 중복수신 방어 (멱등성 보장)
+            exec_id = getattr(report, "exec_id", None)
+            if exec_id:
+                if exec_id in self._processed_exec_ids:
+                    logger.warning(
+                        f"[OrderRouter] Duplicate execution report ignored (Idempotency): "
+                        f"exec_id={exec_id}, order_id={order_id}"
+                    )
+                    return
+                self._processed_exec_ids.add(exec_id)
+
             cmd_info = self._active_orders.get(order_id)
             requested_qty = cmd_info[0].qty if cmd_info else None
             client_id = cmd_info[0].client_order_id if cmd_info else getattr(report, "client_order_id", None)
@@ -175,6 +188,11 @@ class OrderRouter:
                 self._order_brokers.pop(order_id, None)
                 self._cum_executed_qty.pop(order_id, None)
                 logger.warning(f"[OrderRouter] Order {order_id} REJECTED by Broker.")
+
+    def is_execution_processed(self, exec_id: str) -> bool:
+        """[8단계-5] exec_id 중복 처리 완료 여부 조회."""
+        with self._lock:
+            return exec_id in self._processed_exec_ids
 
     def get_executed_qty(self, order_identifier: Any) -> int:
         """[8단계-3] order_uuid 또는 client_order_id로부터 실제 체결수량 조회 (미체결/부분체결/완료체결 전수 지원)."""
