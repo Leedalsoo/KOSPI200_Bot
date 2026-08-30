@@ -43,6 +43,9 @@ class OrderRouter:
         self._order_to_broker_id: Dict[uuid.UUID, str] = {}
         self._client_to_broker_id: Dict[str, str] = {}
         self._broker_to_client_id: Dict[str, str] = {}
+        # [8단계-3] 주문별 실제 체결수량 권위 저장소 (미체결/부분체결/완료체결 전수 보존)
+        self._executed_qty_history: Dict[uuid.UUID, int] = {}
+        self._client_to_executed_qty: Dict[str, int] = {}
 
     def validate_token(self, command: CanonicalOrderCommand, token: Any) -> Tuple[bool, Optional[str]]:
         """RiskApprovalToken의 유효성, 위변조 여부, 일치성 및 재사용 여부 검증."""
@@ -125,6 +128,7 @@ class OrderRouter:
         with self._lock:
             cmd_info = self._active_orders.get(order_id)
             requested_qty = cmd_info[0].qty if cmd_info else None
+            client_id = cmd_info[0].client_order_id if cmd_info else getattr(report, "client_order_id", None)
             prev_cum = self._cum_executed_qty.get(order_id, 0)
             new_cum = prev_cum + report.executed_qty
 
@@ -140,12 +144,18 @@ class OrderRouter:
                     )
                 elif requested_qty is not None and new_cum < requested_qty:
                     self._cum_executed_qty[order_id] = new_cum
+                    self._executed_qty_history[order_id] = new_cum
+                    if client_id:
+                        self._client_to_executed_qty[client_id] = new_cum
                     self.fsm.transition_sync(order_id, OrderStatus.PARTIAL)
                     logger.info(
                         f"[OrderRouter] Order {order_id} PARTIAL: {new_cum}/{requested_qty}@{report.executed_price}"
                     )
                 elif requested_qty is not None and new_cum == requested_qty:
                     self._cum_executed_qty[order_id] = new_cum
+                    self._executed_qty_history[order_id] = new_cum
+                    if client_id:
+                        self._client_to_executed_qty[client_id] = new_cum
                     self.fsm.transition_sync(order_id, OrderStatus.FILLED)
                     self._active_orders.pop(order_id, None)
                     self._order_brokers.pop(order_id, None)
@@ -165,6 +175,14 @@ class OrderRouter:
                 self._order_brokers.pop(order_id, None)
                 self._cum_executed_qty.pop(order_id, None)
                 logger.warning(f"[OrderRouter] Order {order_id} REJECTED by Broker.")
+
+    def get_executed_qty(self, order_identifier: Any) -> int:
+        """[8단계-3] order_uuid 또는 client_order_id로부터 실제 체결수량 조회 (미체결/부분체결/완료체결 전수 지원)."""
+        with self._lock:
+            if isinstance(order_identifier, uuid.UUID):
+                return self._executed_qty_history.get(order_identifier, self._cum_executed_qty.get(order_identifier, 0))
+            client_id = str(order_identifier)
+            return self._client_to_executed_qty.get(client_id, 0)
 
     def scan_stale_orders(self, current_time: Optional[float] = None) -> List[uuid.UUID]:
         """지정된 타임아웃(30초)을 초과한 미체결/대기 주문 감지"""

@@ -370,10 +370,22 @@ class OptionProgramRuntime:
     def consume_execution_report(self, report: CanonicalExecutionReport) -> None:
         """[VSSF 체결 증명서 수신 및 OrderRouter / OMS FSM 수명주기 완료 전이]"""
         self.received_execution_reports.append(report)
-        order_uuid = self._order_id_to_uuid.get(report.client_order_id)
+        client_id = getattr(report, "client_order_id", None)
+        order_uuid = self._order_id_to_uuid.get(client_id) if client_id else None
+
+        # [8단계-3] 체결 이벤트가 broker_order_id만 제공하는 경우 8단계-2 매핑을 통해 내부 주문 역추적
+        if order_uuid is None and hasattr(report, "broker_order_id") and report.broker_order_id:
+            mapped_client_id = self.order_router.get_client_order_id_by_broker_id(report.broker_order_id)
+            if mapped_client_id:
+                order_uuid = self._order_id_to_uuid.get(mapped_client_id)
+
         if order_uuid is not None:
             self.order_router.handle_execution_report(order_uuid, report)
             self.oms_fsm.clear_completed_locks()
+
+    def get_order_executed_qty(self, client_order_id: str) -> int:
+        """[8단계-3] client_order_id로부터 실제 체결수량 조회."""
+        return self.order_router.get_executed_qty(client_order_id)
 
     def set_strategy_enabled(self, track_id: str, enabled: bool) -> None:
         if track_id in self.enabled_strategies:
@@ -394,6 +406,7 @@ class OptionProgramRuntime:
     def get_broker_order_id(self, client_order_id: str) -> Optional[str]:
         """[8단계-2] client_order_id로부터 broker_order_id 조회."""
         return self.order_router.get_broker_order_id(client_order_id)
+
 
 
 
