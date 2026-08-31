@@ -140,6 +140,18 @@ class OptionProgramRuntime:
         """[D-15] Broker API 전송 직전 BROKER_SEND_STARTED WAL 영속화"""
         return self.order_router.persist_broker_send_started(command)
 
+    def mark_order_unknown(self, order_identifier: Any, reason: str = "TIMEOUT_UNKNOWN") -> bool:
+        """[D-16] Broker 타임아웃 주문을 UNKNOWN 상태로 전환 및 WAL 영속화"""
+        return self.order_router.mark_order_unknown(order_identifier, reason)
+
+    def has_unresolved_unknown_orders(self) -> bool:
+        """[D-16] 미해결 UNKNOWN 상태의 주문이 존재하는지 확인"""
+        return self.order_router.has_unresolved_unknown_orders()
+
+    def recover_unknown_orders(self, broker_adapter: Any) -> Dict[str, Any]:
+        """[D-16] UNKNOWN 주문에 대해 Broker 조회를 통한 확정 상태 복구"""
+        return self.order_router.recover_unknown_orders(broker_adapter)
+
     def process_tick(self, tick: CanonicalMarketTick) -> List[CanonicalOrderCommand]:
         """[틱 수신 ➔ Sensor / Regime ➔ Track 1~9 ➔ SignalGen ➔ Arbiter ➔ RiskGate ➔ FSM 파이프라인]"""
         self.tick_counter += 1

@@ -14,13 +14,14 @@ from shared.core.contracts import OrderStatus, RiskApprovalToken
 
 logger = logging.getLogger(__name__)
 
-# 10개 OrderStatus의 합법적 허용 전이 규칙표 (순방향 전이, 취소 요청 분리 및 종료 상태 격리)
+# 11개 OrderStatus의 합법적 허용 전이 규칙표 (순방향 전이, 취소 요청 분리, 타임아웃 UNKNOWN 격리 및 복구)
 ALLOWED_TRANSITIONS: Dict[Optional[OrderStatus], Set[OrderStatus]] = {
     None: {
         OrderStatus.NEW,
         OrderStatus.VALIDATED,
         OrderStatus.SENT,
         OrderStatus.REJECTED,
+        OrderStatus.UNKNOWN,
     },
     OrderStatus.NEW: {
         OrderStatus.VALIDATED,
@@ -31,6 +32,7 @@ ALLOWED_TRANSITIONS: Dict[Optional[OrderStatus], Set[OrderStatus]] = {
         OrderStatus.FILLED,
         OrderStatus.REJECTED,
         OrderStatus.CANCEL_REQUESTED,
+        OrderStatus.UNKNOWN,
     },
     OrderStatus.VALIDATED: {
         OrderStatus.SENT,
@@ -40,6 +42,7 @@ ALLOWED_TRANSITIONS: Dict[Optional[OrderStatus], Set[OrderStatus]] = {
         OrderStatus.FILLED,
         OrderStatus.REJECTED,
         OrderStatus.CANCEL_REQUESTED,
+        OrderStatus.UNKNOWN,
     },
     OrderStatus.SENT: {
         OrderStatus.ACCEPTED,
@@ -48,6 +51,7 @@ ALLOWED_TRANSITIONS: Dict[Optional[OrderStatus], Set[OrderStatus]] = {
         OrderStatus.FILLED,
         OrderStatus.REJECTED,
         OrderStatus.CANCEL_REQUESTED,
+        OrderStatus.UNKNOWN,
     },
     OrderStatus.ACCEPTED: {
         OrderStatus.PENDING,
@@ -55,23 +59,36 @@ ALLOWED_TRANSITIONS: Dict[Optional[OrderStatus], Set[OrderStatus]] = {
         OrderStatus.FILLED,
         OrderStatus.REJECTED,
         OrderStatus.CANCEL_REQUESTED,
+        OrderStatus.UNKNOWN,
     },
     OrderStatus.PENDING: {
         OrderStatus.PARTIAL,
         OrderStatus.FILLED,
         OrderStatus.REJECTED,
         OrderStatus.CANCEL_REQUESTED,
+        OrderStatus.UNKNOWN,
     },
     OrderStatus.PARTIAL: {
         OrderStatus.PARTIAL,
         OrderStatus.FILLED,
         OrderStatus.REJECTED,
         OrderStatus.CANCEL_REQUESTED,
+        OrderStatus.UNKNOWN,
     },
     OrderStatus.CANCEL_REQUESTED: {
         OrderStatus.CANCELLED,
         OrderStatus.PARTIAL,
         OrderStatus.FILLED,
+        OrderStatus.REJECTED,
+        OrderStatus.UNKNOWN,
+    },
+    OrderStatus.UNKNOWN: {
+        OrderStatus.ACCEPTED,
+        OrderStatus.SENT,
+        OrderStatus.PENDING,
+        OrderStatus.PARTIAL,
+        OrderStatus.FILLED,
+        OrderStatus.CANCELLED,
         OrderStatus.REJECTED,
     },
     OrderStatus.FILLED: set(),      # 종료 상태 (전이 불가)

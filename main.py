@@ -228,6 +228,14 @@ class TradingSystem:
 
                 # 4. [주문 접수 사이클] Broker 인터페이스를 통한 주문 접수 (체결 이벤트와 명확히 분리된 접수/식별자 확보)
                 for cmd in commands:
+                    # [D-16] 미해결 UNKNOWN 주문이 존재할 경우 신규 실주문 전송 안전 차단
+                    if self.op_runtime.has_unresolved_unknown_orders():
+                        logger.critical(
+                            "TradingSystem: [SAFETY BLOCK] 미해결 UNKNOWN 주문이 존재하여 신규 주문 발주 차단 (Client: %s)",
+                            cmd.client_order_id,
+                        )
+                        continue
+
                     self.orders_routed += 1
 
                     # [D-15] Broker 전송 직전 BROKER_SEND_STARTED WAL 영속화 (실패 시 발주 차단)
@@ -250,12 +258,27 @@ class TradingSystem:
                     else:
                         status = getattr(ack, "status", "UNKNOWN") if ack else "NO_RESPONSE"
                         msg = getattr(ack, "message", "No response") if ack else "send_order returned None"
-                        logger.warning(
-                            "TradingSystem: 주문 발주 실패 (Client: %s, Status: %s, Msg: %s)",
-                            cmd.client_order_id,
-                            status,
-                            msg,
-                        )
+
+                        # [D-16] TIMEOUT_UNKNOWN 시 일반 실패와 분리하여 UNKNOWN 전환 및 Recovery 시도
+                        if status == "TIMEOUT_UNKNOWN":
+                            logger.warning(
+                                "TradingSystem: 주문 응답 타임아웃 발생 -> UNKNOWN 상태 격리 (Client: %s)",
+                                cmd.client_order_id,
+                            )
+                            self.op_runtime.mark_order_unknown(cmd.client_order_id, reason="TIMEOUT_UNKNOWN")
+                            # Broker Recovery 즉시 시도
+                            rec_result = self.op_runtime.recover_unknown_orders(self.broker)
+                            logger.info(
+                                "TradingSystem: Timeout 주문 Broker Recovery 결과: %s",
+                                rec_result,
+                            )
+                        else:
+                            logger.warning(
+                                "TradingSystem: 주문 발주 실패 (Client: %s, Status: %s, Msg: %s)",
+                                cmd.client_order_id,
+                                status,
+                                msg,
+                            )
 
                 self.ticks_processed += 1
                 await self.ui_ws.broadcast()

@@ -54,6 +54,8 @@ class OrderRouter:
         self._client_to_executed_qty: Dict[str, int] = {}
         # [8단계-5] Execution ID 중복수신 방어용 멱등성 저장소
         self._processed_exec_ids: Set[str] = set()
+        # [D-16] 타임아웃 UNKNOWN 주문 격리 및 복구 저장소 (order_id -> (cmd, timestamp, reason))
+        self._unknown_orders: Dict[uuid.UUID, Tuple[CanonicalOrderCommand, float, str]] = {}
 
     def validate_token(self, command: CanonicalOrderCommand, token: Any) -> Tuple[bool, Optional[str]]:
         """RiskApprovalToken의 유효성, 위변조 여부, 일치성 및 재사용 여부 검증."""
@@ -563,4 +565,179 @@ class OrderRouter:
                             reconcile_summary["synced_orders"] += 1
 
             return reconcile_summary
+
+    def mark_order_unknown(self, order_identifier: Any, reason: str = "TIMEOUT_UNKNOWN") -> bool:
+        """[D-16] Broker 타임아웃 주문을 UNKNOWN 상태로 전환 및 BROKER_UNKNOWN WAL 영속화"""
+        with self._lock:
+            order_id = order_identifier if isinstance(order_identifier, uuid.UUID) else self.get_order_uuid_by_client_id(str(order_identifier))
+            if order_id is None:
+                for u, (c, _) in self._active_orders.items():
+                    if getattr(c, "client_order_id", None) == str(order_identifier):
+                        order_id = u
+                        break
+
+            cmd_info = self._active_orders.get(order_id) if order_id else None
+            cmd = cmd_info[0] if cmd_info else None
+            client_id = getattr(cmd, "client_order_id", str(order_identifier))
+
+            if order_id:
+                self.fsm.transition_sync(order_id, OrderStatus.UNKNOWN)
+                if cmd:
+                    self._unknown_orders[order_id] = (cmd, time.time(), reason)
+                else:
+                    dummy_cmd = CanonicalOrderCommand(
+                        client_order_id=client_id,
+                        track_id="UNKNOWN",
+                        asset_type=CanonicalAssetType.OPTION,
+                        side=CanonicalOrderSide.BUY,
+                        qty=0,
+                        price=0.0,
+                        symbol="UNKNOWN",
+                    )
+                    self._unknown_orders[order_id] = (dummy_cmd, time.time(), reason)
+
+            # BROKER_UNKNOWN WAL 영속화
+            if self.wal_store is not None:
+                try:
+                    side_val = getattr(cmd, "side", CanonicalOrderSide.BUY) if cmd else "BUY"
+                    side_str = side_val.value if hasattr(side_val, "value") else str(side_val)
+                    event_data = {
+                        "order_id": str(order_id) if order_id else None,
+                        "client_order_id": client_id,
+                        "track_id": getattr(cmd, "track_id", "") if cmd else "",
+                        "symbol": getattr(cmd, "symbol", "") if cmd else "",
+                        "side": side_str,
+                        "qty": getattr(cmd, "qty", 0) if cmd else 0,
+                        "price": float(getattr(cmd, "price", 0.0) or 0.0) if cmd else 0.0,
+                        "reason": reason,
+                        "status": OrderStatus.UNKNOWN.value,
+                        "timestamp": str(time.time()),
+                    }
+                    if hasattr(self.wal_store, "save_event_sync"):
+                        self.wal_store.save_event_sync("BROKER_UNKNOWN", event_data)
+                except Exception as exc:
+                    logger.error(f"[OrderRouter] Failed to persist BROKER_UNKNOWN to WAL: {exc}")
+
+            logger.warning(f"[OrderRouter] Order {client_id} (UUID: {order_id}) marked as UNKNOWN (Reason: {reason})")
+            return True
+
+    def has_unresolved_unknown_orders(self) -> bool:
+        """[D-16] 미해결 UNKNOWN 상태의 주문이 남아있는지 확인"""
+        with self._lock:
+            return len(self._unknown_orders) > 0
+
+    def recover_unknown_orders(self, broker_adapter: Any) -> Dict[str, Any]:
+        """[D-16] UNKNOWN 주문에 대해 Broker 조회(get_order_status / get_open_orders)를 통한 확정 상태 복구 및 WAL 영속화"""
+        with self._lock:
+            summary = {
+                "unknown_checked": len(self._unknown_orders),
+                "recovered": 0,
+                "remained_unknown": 0,
+            }
+            if not self._unknown_orders:
+                return summary
+
+            if broker_adapter is None:
+                summary["remained_unknown"] = len(self._unknown_orders)
+                return summary
+
+            for order_id, (cmd, ts, reason) in list(self._unknown_orders.items()):
+                client_id = getattr(cmd, "client_order_id", str(order_id))
+                broker_order_id = self._order_to_broker_id.get(order_id) or self._client_to_broker_id.get(client_id)
+
+                status_resp = None
+                if hasattr(broker_adapter, "get_order_status"):
+                    try:
+                        status_resp = broker_adapter.get_order_status(client_order_id=client_id, broker_order_id=broker_order_id)
+                    except Exception as exc:
+                        logger.warning(f"[OrderRouter] Exception querying get_order_status for {client_id}: {exc}")
+
+                # 보조 조회: get_open_orders
+                if status_resp is None and hasattr(broker_adapter, "get_open_orders"):
+                    try:
+                        open_orders = broker_adapter.get_open_orders()
+                        for item in open_orders:
+                            if isinstance(item, dict) and (item.get("client_order_id") == client_id or (broker_order_id and item.get("broker_order_id") == broker_order_id)):
+                                status_resp = item
+                                break
+                    except Exception as exc:
+                        logger.warning(f"[OrderRouter] Exception querying get_open_orders for {client_id}: {exc}")
+
+                # 조회 실패 또는 결과가 불명확한 경우 -> UNKNOWN 유지!
+                if status_resp is None or not isinstance(status_resp, dict):
+                    summary["remained_unknown"] += 1
+                    continue
+
+                b_status = status_resp.get("status")
+                if not b_status:
+                    summary["remained_unknown"] += 1
+                    continue
+
+                # status 문자열 정규화
+                status_str = b_status.value if hasattr(b_status, "value") else str(b_status).upper()
+                recovered_status: Optional[OrderStatus] = None
+                b_exec_qty = int(status_resp.get("executed_qty", 0))
+
+                if status_str in ("OPEN", "ACCEPTED", "PENDING", "SENT"):
+                    recovered_status = OrderStatus.ACCEPTED
+                    self.fsm.transition_sync(order_id, OrderStatus.ACCEPTED)
+                    self._unknown_orders.pop(order_id, None)
+                    summary["recovered"] += 1
+
+                elif status_str == "PARTIAL":
+                    recovered_status = OrderStatus.PARTIAL
+                    self.fsm.transition_sync(order_id, OrderStatus.PARTIAL)
+                    self._cum_executed_qty[order_id] = b_exec_qty
+                    self._unknown_orders.pop(order_id, None)
+                    summary["recovered"] += 1
+
+                elif status_str == "FILLED":
+                    recovered_status = OrderStatus.FILLED
+                    self.fsm.transition_sync(order_id, OrderStatus.FILLED)
+                    self._cum_executed_qty[order_id] = getattr(cmd, "qty", b_exec_qty)
+                    self._active_orders.pop(order_id, None)
+                    self._order_brokers.pop(order_id, None)
+                    self._unknown_orders.pop(order_id, None)
+                    summary["recovered"] += 1
+
+                elif status_str == "CANCELLED":
+                    recovered_status = OrderStatus.CANCELLED
+                    self.fsm.transition_sync(order_id, OrderStatus.CANCELLED)
+                    self._active_orders.pop(order_id, None)
+                    self._order_brokers.pop(order_id, None)
+                    self._unknown_orders.pop(order_id, None)
+                    summary["recovered"] += 1
+
+                elif status_str == "REJECTED":
+                    recovered_status = OrderStatus.REJECTED
+                    self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
+                    self._active_orders.pop(order_id, None)
+                    self._order_brokers.pop(order_id, None)
+                    self._unknown_orders.pop(order_id, None)
+                    summary["recovered"] += 1
+
+                else:
+                    # 지원되지 않는 불명확 상태 -> UNKNOWN 유지
+                    summary["remained_unknown"] += 1
+                    continue
+
+                # WAL UNKNOWN_RECOVERED 영속화
+                if self.wal_store is not None and recovered_status is not None:
+                    try:
+                        rec_event_data = {
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "broker_status": status_str,
+                            "recovered_status": recovered_status.value,
+                            "executed_qty": b_exec_qty,
+                            "timestamp": str(time.time()),
+                        }
+                        if hasattr(self.wal_store, "save_event_sync"):
+                            self.wal_store.save_event_sync("UNKNOWN_RECOVERED", rec_event_data)
+                    except Exception as exc:
+                        logger.error(f"[OrderRouter] Failed to persist UNKNOWN_RECOVERED to WAL: {exc}")
+
+                logger.info(f"[OrderRouter] UNKNOWN order {client_id} successfully recovered to {recovered_status.value}")
+
+            return summary
 
