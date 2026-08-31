@@ -136,6 +136,12 @@ class TradingSystem:
         except Exception as exc:
             logger.warning("TradingSystem: Broker get_positions 동기화 실패 (기존 성공 타임스탬프 유지): %s", exc)
 
+    def reconcile_orders(self) -> Dict[str, Any]:
+        """[D-13] Broker 주문 상태와 내부 OMS 간의 실시간 Reconciliation 실행."""
+        if self.broker is None or self.op_runtime is None:
+            return {}
+        return self.op_runtime.reconcile_with_broker(self.broker)
+
     def _lockdown_os(self) -> None:
         """메모리 스와핑 잠금 및 리얼타임 스케줄러 설정 (HFT 헌법 4부 강제)"""
         try:

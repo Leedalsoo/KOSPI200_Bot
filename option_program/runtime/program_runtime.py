@@ -503,21 +503,24 @@ class OptionProgramRuntime:
         self._order_id_to_uuid.update(getattr(self.order_router, "_client_to_order_id", {}))
 
         # 2. Broker 실제 주문 조회 및 대사 (UNKNOWN 및 활성 주문 복구)
-        broker_rec_summary = {"unknown_checked": 0, "recovered": 0, "remained_unknown": 0}
+        reconciliation_summary: Dict[str, Any] = {}
         if broker_adapter is not None:
-            broker_rec_summary = self.order_router.recover_unknown_orders(broker_adapter)
             if hasattr(self.order_router, "reconcile_with_broker"):
                 try:
-                    self.order_router.reconcile_with_broker(broker_adapter)
+                    reconciliation_summary = self.order_router.reconcile_with_broker(broker_adapter)
                 except Exception as exc:
                     logger.warning(f"[OptionProgramRuntime] reconcile_with_broker warning: {exc}")
+                    reconciliation_summary = {"status": "FAILED", "error": str(exc)}
+            elif hasattr(self.order_router, "recover_unknown_orders"):
+                reconciliation_summary = self.order_router.recover_unknown_orders(broker_adapter)
 
         self.recovery_completed = True
 
         summary = {
             "wal_events_count": len(wal_events),
             "wal_recovered_count": wal_recovered_count,
-            "broker_recovery_summary": broker_rec_summary,
+            "reconciliation_summary": reconciliation_summary,
+            "broker_recovery_summary": reconciliation_summary,
             "unresolved_unknown_count": len(self.order_router._unknown_orders),
             "has_unresolved_unknown": self.order_router.has_unresolved_unknown_orders(),
             "active_orders_count": len(self.order_router._active_orders),
@@ -525,6 +528,10 @@ class OptionProgramRuntime:
         }
         logger.info(f"[OptionProgramRuntime] Startup recovery completed: {summary}")
         return summary
+
+    def reconcile_with_broker(self, broker_adapter: Any) -> Dict[str, Any]:
+        """[D-13] Broker ↔ 내부 OMS Reconciliation 수동/주기적 실행 진입점"""
+        return self.order_router.reconcile_with_broker(broker_adapter)
 
 
 

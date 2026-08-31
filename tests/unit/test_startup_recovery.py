@@ -135,6 +135,11 @@ async def test_startup_wal_recovery_restores_state_and_exec_ids(tmp_path):
     # 2. 2차 세션 (프로세스 재시작): OptionProgramRuntime의 startup_recovery 실행
     runtime2 = OptionProgramRuntime(wal_store=wal_store)
     broker = MockBrokerAdapter()
+    broker.open_orders_list = [{
+        "client_order_id": "ORD-STARTUP-1",
+        "status": "PARTIAL",
+        "executed_qty": 7,
+    }]
     summary = runtime2.startup_recovery(broker_adapter=broker)
 
     assert summary["wal_events_count"] == 3  # ORDER_INTENT (1) + PARTIAL_EXECUTION (2)

@@ -603,71 +603,346 @@ class OrderRouter:
         with self._lock:
             return self._broker_to_client_id.get(broker_order_id)
 
+    def _persist_reconciliation_wal(self, event_type: str, data: Dict[str, Any]) -> bool:
+        """Reconciliation WAL 이벤트 기록 헬퍼"""
+        if self.wal_store is None:
+            return True
+        try:
+            if hasattr(self.wal_store, "save_event_sync"):
+                self.wal_store.save_event_sync(event_type, data)
+            return True
+        except Exception as exc:
+            logger.error(f"[OrderRouter] Failed to persist {event_type} to WAL: {exc}")
+            return False
+
     def reconcile_with_broker(self, broker_adapter: Any) -> Dict[str, Any]:
-        """[D-12] 브로커의 공식 Recovery 조회 계약(get_open_orders, get_order_status)을 통해 활성 주문 상태 대사 및 안전 동기화"""
+        """[D-13] Broker 실제 주문 상태와 내부 OMS 간의 종합 Reconciliation (대사, 불일치 감지, 확정 상태 보정, WAL 영속화)"""
         with self._lock:
-            reconcile_summary = {
+            recon_id = f"RECON-{uuid.uuid4().hex[:8]}"
+            start_time = time.time()
+            mismatches: List[Dict[str, Any]] = []
+            corrections: List[Dict[str, Any]] = []
+            uncertain_orders: List[Dict[str, Any]] = []
+
+            summary: Dict[str, Any] = {
+                "reconciliation_id": recon_id,
+                "started_at": start_time,
+                "completed_at": 0.0,
                 "active_orders_checked": len(self._active_orders),
+                "broker_open_orders_count": 0,
                 "open_orders_broker_count": 0,
                 "confirmed_cancelled": 0,
                 "synced_orders": 0,
-            }
-            if broker_adapter is None or not hasattr(broker_adapter, "get_open_orders"):
-                return reconcile_summary
-
-            try:
-                open_orders = broker_adapter.get_open_orders()
-                reconcile_summary["open_orders_broker_count"] = len(open_orders)
-            except Exception as exc:
-                logger.error(f"[OrderRouter] Failed to fetch open orders during broker reconcile: {exc}")
-                return reconcile_summary
-
-            broker_open_client_ids = {
-                str(item.get("client_order_id", "")) for item in open_orders if isinstance(item, dict)
-            }
-            broker_open_ids = {
-                str(item.get("broker_order_id", "")) for item in open_orders if isinstance(item, dict)
+                "recovered": 0,
+                "remained_unknown": 0,
+                "mismatches": mismatches,
+                "corrections": corrections,
+                "uncertain_orders": uncertain_orders,
+                "status": "COMPLETED",
+                "wal_persisted": True,
             }
 
-            for order_id, (cmd, _) in list(self._active_orders.items()):
+            wal_ok = self._persist_reconciliation_wal(
+                "RECONCILIATION_STARTED",
+                {
+                    "reconciliation_id": recon_id,
+                    "active_orders_count": len(self._active_orders),
+                    "timestamp": str(start_time),
+                },
+            )
+            if not wal_ok:
+                summary["wal_persisted"] = False
+
+            if broker_adapter is None:
+                summary["status"] = "FAILED"
+                summary["completed_at"] = time.time()
+                return summary
+
+            # 1. Broker Open Orders 조회
+            open_orders: List[Any] = []
+            if hasattr(broker_adapter, "get_open_orders"):
+                try:
+                    raw_open = broker_adapter.get_open_orders()
+                    if isinstance(raw_open, list):
+                        open_orders = raw_open
+                    summary["broker_open_orders_count"] = len(open_orders)
+                    summary["open_orders_broker_count"] = len(open_orders)
+                except Exception as exc:
+                    logger.error(f"[OrderRouter] Failed to fetch open orders from broker during reconcile: {exc}")
+                    summary["status"] = "FAILED"
+                    summary["completed_at"] = time.time()
+                    return summary
+
+            broker_open_by_client: Dict[str, Dict[str, Any]] = {}
+            broker_open_by_broker_id: Dict[str, Dict[str, Any]] = {}
+            for item in open_orders:
+                if isinstance(item, dict):
+                    cid = str(item.get("client_order_id", "")).strip()
+                    bid = str(item.get("broker_order_id", "")).strip()
+                    if cid:
+                        broker_open_by_client[cid] = item
+                    if bid:
+                        broker_open_by_broker_id[bid] = item
+
+            # 2. 내부 활성 주문 대사 순회
+            for order_id, (cmd, sub_time) in list(self._active_orders.items()):
                 client_id = getattr(cmd, "client_order_id", str(order_id))
-                broker_order_id = self._order_to_broker_id.get(order_id) or ""
+                broker_order_id = self._order_to_broker_id.get(order_id) or self._client_to_broker_id.get(client_id, "")
                 current_status = self.fsm.get_status(order_id)
+                oms_cum_qty = self.get_executed_qty(order_id)
 
-                is_open_in_broker = (client_id in broker_open_client_ids) or (
-                    bool(broker_order_id) and broker_order_id in broker_open_ids
+                # Case A: Broker Open Orders 목록에 존재하는 경우
+                broker_info = broker_open_by_client.get(client_id) or (
+                    broker_open_by_broker_id.get(broker_order_id) if broker_order_id else None
                 )
 
-                if not is_open_in_broker:
-                    order_status_info = None
+                if broker_info is not None:
+                    # 상태 비교
+                    b_status_raw = broker_info.get("status", "OPEN")
+                    b_qty = int(broker_info.get("executed_qty", 0))
+
+                    # 1) 상태 불일치 (STATUS_MISMATCH: Broker가 명시적으로 ACCEPTED를 보고한 경우)
+                    if current_status == OrderStatus.SENT and str(b_status_raw).upper() == "ACCEPTED":
+                        mismatch_entry = {
+                            "type": "STATUS_MISMATCH",
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "oms_status": current_status.value if current_status else "NONE",
+                            "broker_status": "ACCEPTED",
+                        }
+                        mismatches.append(mismatch_entry)
+                        self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", mismatch_entry)
+
+                        # 확정 보정
+                        self.fsm.transition_sync(order_id, OrderStatus.ACCEPTED)
+                        corr_entry = {
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "prev_status": current_status.value if current_status else "NONE",
+                            "new_status": OrderStatus.ACCEPTED.value,
+                        }
+                        corrections.append(corr_entry)
+                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+
+                    # 2) 체결 수량 불일치 (EXECUTION_MISMATCH)
+                    if b_qty != oms_cum_qty:
+                        exec_mismatch = {
+                            "type": "EXECUTION_MISMATCH",
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "oms_executed_qty": oms_cum_qty,
+                            "broker_executed_qty": b_qty,
+                        }
+                        mismatches.append(exec_mismatch)
+                        self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", exec_mismatch)
+
+                        # 확정 보정 (Broker 체결수량 반영)
+                        self._cum_executed_qty[order_id] = b_qty
+                        self._executed_qty_history[order_id] = b_qty
+                        self._client_to_executed_qty[client_id] = b_qty
+                        if b_qty > 0 and self.fsm.get_status(order_id) not in (OrderStatus.PARTIAL, OrderStatus.FILLED):
+                            self.fsm.transition_sync(order_id, OrderStatus.PARTIAL)
+
+                        corr_entry = {
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "prev_executed_qty": oms_cum_qty,
+                            "new_executed_qty": b_qty,
+                        }
+                        corrections.append(corr_entry)
+                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+
+                # Case B: Broker Open Orders 목록에 없는 경우 -> get_order_status로 종결 상태 확인
+                else:
+                    target_id = broker_order_id if broker_order_id else client_id
+                    status_info: Optional[Dict[str, Any]] = None
                     if hasattr(broker_adapter, "get_order_status"):
                         try:
-                            order_status_info = broker_adapter.get_order_status(client_id)
+                            status_info = broker_adapter.get_order_status(target_id)
                         except Exception as exc:
-                            logger.warning(f"[OrderRouter] Failed to query order status for {client_id}: {exc}")
+                            logger.warning(f"[OrderRouter] Exception querying get_order_status for {target_id}: {exc}")
+                            status_info = None
 
-                    # 1. CANCEL_REQUESTED 상태에서 브로커 미체결에 없는 경우 (취소 확정 또는 체결 완료)
-                    if current_status == OrderStatus.CANCEL_REQUESTED:
-                        if order_status_info and order_status_info.get("status") == "FILLED":
-                            self.fsm.transition_sync(order_id, OrderStatus.FILLED)
-                            self._active_orders.pop(order_id, None)
-                            self._order_brokers.pop(order_id, None)
-                            self._cum_executed_qty.pop(order_id, None)
-                            reconcile_summary["synced_orders"] += 1
-                        elif order_status_info is None or order_status_info.get("status") == "CANCELLED":
+                    # 조회 실패 / None / 불명확 -> 불확실 불일치로 안전 격리 (임의 추정 금지)
+                    if status_info is None or not isinstance(status_info, dict):
+                        mismatch_entry = {
+                            "type": "ORDER_MISMATCH",
+                            "subtype": "NOT_FOUND_IN_BROKER_OPEN_AND_STATUS_UNCERTAIN",
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "oms_status": current_status.value if current_status else "NONE",
+                        }
+                        mismatches.append(mismatch_entry)
+                        self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", mismatch_entry)
+
+                        # UNKNOWN으로 격리하여 신규 주문 안전 차단 발동
+                        self.mark_order_unknown(order_id, reason="RECONCILIATION_UNCERTAIN")
+                        uncertain_orders.append({
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "reason": "NOT_FOUND_IN_BROKER_STATUS_UNCERTAIN",
+                        })
+                        continue
+
+                    # 정상 확정 응답 수신 시 보정
+                    b_status = str(status_info.get("status", "")).upper()
+                    b_qty = int(status_info.get("executed_qty", 0))
+
+                    # 1) Broker FILLED 확정
+                    if b_status == "FILLED":
+                        mismatch_entry = {
+                            "type": "STATUS_MISMATCH",
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "oms_status": current_status.value if current_status else "NONE",
+                            "broker_status": "FILLED",
+                        }
+                        mismatches.append(mismatch_entry)
+                        self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", mismatch_entry)
+
+                        # 상태 및 수량 보정 후 active 정리
+                        self.fsm.transition_sync(order_id, OrderStatus.FILLED)
+                        req_qty = getattr(cmd, "qty", b_qty)
+                        final_qty = b_qty if b_qty > 0 else req_qty
+                        self._executed_qty_history[order_id] = final_qty
+                        self._client_to_executed_qty[client_id] = final_qty
+                        self._active_orders.pop(order_id, None)
+                        self._order_brokers.pop(order_id, None)
+                        self._cum_executed_qty.pop(order_id, None)
+
+                        corr_entry = {
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "prev_status": current_status.value if current_status else "NONE",
+                            "new_status": OrderStatus.FILLED.value,
+                            "executed_qty": final_qty,
+                        }
+                        corrections.append(corr_entry)
+                        summary["synced_orders"] += 1
+                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+
+                    # 2) Broker CANCELLED 확정
+                    elif b_status == "CANCELLED":
+                        mismatch_entry = {
+                            "type": "STATUS_MISMATCH",
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "oms_status": current_status.value if current_status else "NONE",
+                            "broker_status": "CANCELLED",
+                        }
+                        mismatches.append(mismatch_entry)
+                        self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", mismatch_entry)
+
+                        if current_status == OrderStatus.CANCEL_REQUESTED:
                             self.confirm_cancel(order_id)
-                            reconcile_summary["confirmed_cancelled"] += 1
-
-                    # 2. SENT / ACCEPTED / PARTIAL 상태에서 브로커 체결이 완료(FILLED)된 경우 안전 동기화
-                    elif order_status_info and order_status_info.get("status") == "FILLED":
-                        if current_status in (OrderStatus.SENT, OrderStatus.ACCEPTED, OrderStatus.PARTIAL):
-                            self.fsm.transition_sync(order_id, OrderStatus.FILLED)
+                        else:
+                            self.fsm.transition_sync(order_id, OrderStatus.CANCEL_REQUESTED)
+                            self.fsm.transition_sync(order_id, OrderStatus.CANCELLED)
                             self._active_orders.pop(order_id, None)
                             self._order_brokers.pop(order_id, None)
                             self._cum_executed_qty.pop(order_id, None)
-                            reconcile_summary["synced_orders"] += 1
 
-            return reconcile_summary
+                        corr_entry = {
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "prev_status": current_status.value if current_status else "NONE",
+                            "new_status": OrderStatus.CANCELLED.value,
+                        }
+                        corrections.append(corr_entry)
+                        summary["confirmed_cancelled"] += 1
+                        summary["synced_orders"] += 1
+                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+
+                    # 3) Broker REJECTED 확정
+                    elif b_status == "REJECTED":
+                        mismatch_entry = {
+                            "type": "STATUS_MISMATCH",
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "oms_status": current_status.value if current_status else "NONE",
+                            "broker_status": "REJECTED",
+                        }
+                        mismatches.append(mismatch_entry)
+                        self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", mismatch_entry)
+
+                        self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
+                        self._active_orders.pop(order_id, None)
+                        self._order_brokers.pop(order_id, None)
+                        self._cum_executed_qty.pop(order_id, None)
+
+                        corr_entry = {
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "prev_status": current_status.value if current_status else "NONE",
+                            "new_status": OrderStatus.REJECTED.value,
+                        }
+                        corrections.append(corr_entry)
+                        summary["synced_orders"] += 1
+                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+
+                    else:
+                        # 알 수 없는 기타 응답 상태 -> 안전 격리
+                        self.mark_order_unknown(order_id, reason=f"BROKER_UNEXPECTED_STATUS_{b_status}")
+                        uncertain_orders.append({
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "reason": f"UNEXPECTED_STATUS_{b_status}",
+                        })
+
+            # 3. Broker에만 열려있고 OMS에는 없는 주문 감지 (ORDER_MISMATCH)
+            active_client_ids = {
+                getattr(cmd, "client_order_id", str(u)) for u, (cmd, _) in self._active_orders.items()
+            }
+            for item in open_orders:
+                if isinstance(item, dict):
+                    cid = str(item.get("client_order_id", "")).strip()
+                    bid = str(item.get("broker_order_id", "")).strip()
+                    if cid and cid not in active_client_ids and cid not in self._client_to_order_id:
+                        broker_only_mismatch = {
+                            "type": "ORDER_MISMATCH",
+                            "subtype": "BROKER_ONLY_OPEN_ORDER",
+                            "client_order_id": cid,
+                            "broker_order_id": bid,
+                            "broker_status": item.get("status", "OPEN"),
+                            "broker_executed_qty": item.get("executed_qty", 0),
+                        }
+                        mismatches.append(broker_only_mismatch)
+                        self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", broker_only_mismatch)
+                        logger.warning(
+                            f"[OrderRouter] Detected Broker-only open order (Client: {cid}, BrokerID: {bid})"
+                        )
+
+            # 4. UNKNOWN 주문 복구도 동시 연계
+            if self._unknown_orders:
+                unk_res = self.recover_unknown_orders(broker_adapter)
+                summary["unknown_recovery_summary"] = unk_res
+                summary["recovered"] = unk_res.get("recovered", 0)
+                summary["remained_unknown"] = unk_res.get("remained_unknown", 0)
+
+            end_time = time.time()
+            summary["completed_at"] = end_time
+            if uncertain_orders or self.has_unresolved_unknown_orders():
+                summary["status"] = "UNCERTAIN_REMAINED"
+
+            comp_wal_ok = self._persist_reconciliation_wal(
+                "RECONCILIATION_COMPLETED",
+                {
+                    "reconciliation_id": recon_id,
+                    "mismatches_count": len(mismatches),
+                    "corrections_count": len(corrections),
+                    "uncertain_count": len(uncertain_orders),
+                    "status": summary["status"],
+                    "timestamp": str(end_time),
+                },
+            )
+            if not comp_wal_ok:
+                summary["wal_persisted"] = False
+
+            logger.info(
+                f"[OrderRouter] Reconciliation {recon_id} completed (Mismatches: {len(mismatches)}, "
+                f"Corrections: {len(corrections)}, Uncertain: {len(uncertain_orders)}, Status: {summary['status']})"
+            )
+            return summary
 
     def mark_order_unknown(self, order_identifier: Any, reason: str = "TIMEOUT_UNKNOWN") -> bool:
         """[D-16] Broker 타임아웃 주문을 UNKNOWN 상태로 전환 및 BROKER_UNKNOWN WAL 영속화"""
