@@ -30,6 +30,7 @@ from option_program.orders.oms_fsm import OmsFsm
 from option_program.orders.order_router import OrderRouter
 from option_program.market_analysis.market_condition_analyzer import MarketConditionAnalyzer
 from option_program.market_analysis.market_condition_models import MarketConditionSnapshot
+from infra.wal_store import WalStore
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,13 @@ class OptionProgramRuntime:
         self.risk_engine = RiskEngine(config=self.risk_config, risk_sensor=self.risk_sensor)
         self.risk_gate = RiskGate(self.risk_engine)
         self.oms_fsm = OmsFsm()
-        self.wal_store = wal_store
+        # [D-15 보완] 기본 Runtime 생성 시 WalStore 자동 연결 (None 방어)
+        if wal_store is None:
+            import os
+            default_wal_path = os.path.join("data", "wal", "orders.wal")
+            self.wal_store: Any = WalStore(log_path=default_wal_path)
+        else:
+            self.wal_store = wal_store
         self.order_router = OrderRouter(fsm=self.oms_fsm, wal_store=self.wal_store)
         self.market_analyzer = MarketConditionAnalyzer()
         self.market_condition: Optional[MarketConditionSnapshot] = None

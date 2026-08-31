@@ -92,10 +92,12 @@ class TradingSystem:
             else:
                 initial_summary = None
 
-            wal_log_path = self.config.get("wal_log_path")
             wal_store = self.config.get("wal_store")
-            if wal_store is None and wal_log_path:
-                wal_store = WalStore(log_path=str(wal_log_path))
+            wal_log_path = self.config.get("wal_log_path")
+            if wal_store is None:
+                import os
+                default_path = str(wal_log_path) if wal_log_path else os.path.join("data", "wal", "orders.wal")
+                wal_store = WalStore(log_path=default_path)
 
             self.op_runtime = OptionProgramRuntime(account_summary=initial_summary, wal_store=wal_store)
 

@@ -14,6 +14,7 @@ import pytest
 from infra.wal_store import WalStore
 from option_program.runtime.program_runtime import OptionProgramRuntime
 from option_program.orders.oms_fsm import OrderStatus
+from option_program.orders.order_router import OrderRouter
 from shared.core.contracts import RiskApprovalToken
 from shared.contracts.canonical import (
     CanonicalAssetType,
@@ -155,22 +156,24 @@ async def test_recover_from_wal_preserves_accumulated_state(tmp_path):
     assert new_runtime.order_router._client_to_executed_qty.get("ORD-RECOVER-01") == 3
 
 
-def test_runtime_operates_normally_without_wal_store():
-    """테스트 5: wal_store=None 인 기본 환경에서도 기존 동작이 100% 정상 작동하는지 검증."""
-    runtime = OptionProgramRuntime(wal_store=None)
-    assert runtime.wal_store is None
-    assert runtime.order_router.wal_store is None
+def test_default_runtime_has_wal_store_connected():
+    """테스트 5: 기본 OptionProgramRuntime() 생성 시 WalStore가 자동으로 연결되고 OrderRouter와 동일 인스턴스를 공유하는지 검증."""
+    runtime = OptionProgramRuntime()
+    assert runtime.wal_store is not None
+    assert runtime.order_router.wal_store is runtime.wal_store
+    assert hasattr(runtime.wal_store, "save_event_sync")
 
+    # OrderRouter 단독 wal_store=None 환경에서도 Null-Object 안전 동작 검증
+    router_none = OrderRouter(wal_store=None)
     cmd = make_command("ORD-NOWAL-01", qty=5)
     order_uuid = uuid.uuid4()
     token = make_token(order_uuid, "ORD-NOWAL-01")
-    assigned_id = runtime.order_router.register_and_route(command=cmd, token=token)
+    assigned_id = router_none.register_and_route(command=cmd, token=token)
     assert assigned_id == order_uuid
 
     rep = make_exec_report("ORD-NOWAL-01", "EXEC-NOWAL-01", executed_qty=5)
-    # wal_store가 없어도 예외 없이 FILLED로 정상 전이되어야 함
-    runtime.order_router.handle_execution_report(order_uuid, rep)
-    assert runtime.order_router.fsm.get_status(order_uuid) == OrderStatus.FILLED
+    router_none.handle_execution_report(order_uuid, rep)
+    assert router_none.fsm.get_status(order_uuid) == OrderStatus.FILLED
 
 
 @pytest.mark.asyncio
@@ -190,6 +193,27 @@ async def test_trading_system_initialization_with_wal_path(tmp_path):
         assert system.op_runtime.wal_store is not None
         assert system.op_runtime.order_router.wal_store is not None
         assert system.op_runtime.wal_store.log_path == wal_file
+    finally:
+        if system.broker:
+            system.broker.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_trading_system_initialization_with_default_wal_path():
+    """테스트 7: TradingSystem.initialize() 설정에 wal_log_path가 없어도 기본 WalStore가 생성 및 주입되는지 검증."""
+    config = {
+        "broker_mode": "PAPER",
+        "initial_capital": 50_000_000.0,
+    }
+    system = TradingSystem(config=config)
+    await system.initialize()
+
+    try:
+        assert system.op_runtime is not None
+        assert system.op_runtime.wal_store is not None
+        assert system.op_runtime.order_router.wal_store is not None
+        assert system.op_runtime.wal_store is system.op_runtime.order_router.wal_store
+        assert "orders.wal" in system.op_runtime.wal_store.log_path
     finally:
         if system.broker:
             system.broker.disconnect()

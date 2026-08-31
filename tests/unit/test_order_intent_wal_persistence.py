@@ -198,3 +198,39 @@ def test_wal_store_none_null_object_safety():
 
     ok = router.persist_broker_send_started(cmd)
     assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_default_runtime_persists_order_intent_and_send_started_to_wal(tmp_path):
+    """테스트 7: 실제 런타임 경로(OptionProgramRuntime ➔ OrderRouter)에서 ORDER_INTENT ➔ BROKER_SEND_STARTED 순서 기록 검증."""
+    wal_file = str(tmp_path / "runtime_path_test.wal")
+    wal_store = WalStore(log_path=wal_file)
+    runtime = OptionProgramRuntime(wal_store=wal_store)
+
+    assert runtime.wal_store is wal_store
+    assert runtime.order_router.wal_store is wal_store
+
+    # 1. 전략 주문 등록 ➔ ORDER_INTENT 영속화
+    cmd = make_cmd("ORD-RT-01", qty=7, price=4.2)
+    order_uuid = uuid.uuid4()
+    token = make_token(order_uuid, "ORD-RT-01")
+    assigned_id = runtime.order_router.register_and_route(command=cmd, token=token)
+    assert assigned_id == order_uuid
+
+    # 2. 브로커 전송 직전 ➔ BROKER_SEND_STARTED 영속화
+    send_ok = runtime.persist_broker_send_started(cmd)
+    assert send_ok is True
+
+    # 3. WAL 파일 기록 검증
+    history = await wal_store.load_history()
+    assert len(history) == 2
+    assert history[0]["event_type"] == "ORDER_INTENT"
+    assert history[0]["data"]["client_order_id"] == "ORD-RT-01"
+    assert history[0]["data"]["order_id"] == str(order_uuid)
+    assert history[0]["data"]["qty"] == 7
+    assert history[0]["data"]["price"] == 4.2
+
+    assert history[1]["event_type"] == "BROKER_SEND_STARTED"
+    assert history[1]["data"]["client_order_id"] == "ORD-RT-01"
+    assert history[1]["data"]["order_id"] == str(order_uuid)
+    assert history[1]["data"]["qty"] == 7

@@ -26,6 +26,9 @@ class WalStore:
     
     def __init__(self, log_path: str) -> None:
         self.log_path: str = log_path
+        parent = os.path.dirname(self.log_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         # 동시성 충돌 방지 및 순차적 쓰기를 보장하기 위해 단일 워커 사용
         self._executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
 
