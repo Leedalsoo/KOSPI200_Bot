@@ -72,8 +72,10 @@ class TradingSystem:
             else:
                 self.vssf = None  # REAL 모드에서는 simulated VSSF 상태 미생성 및 완전 분리
 
-            # 3. Broker Adapter 생성
+            # 3. Broker Adapter 생성 및 라이프사이클 연결
             self.broker = BrokerFactory.create_broker(mode=broker_mode, vssf_runtime=self.vssf)
+            if not self.broker.connect():
+                raise RuntimeError(f"Broker connection failed for mode: {broker_mode.value}")
 
             # 4. Virtual Market Simulator Runtime (VMS) 초기화
             self.vms = VirtualMarketSimulatorRuntime()

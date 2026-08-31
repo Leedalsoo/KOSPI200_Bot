@@ -129,7 +129,7 @@ def test_real_mode_tradingsystem_has_no_simulated_vssf():
         assert real_system.broker_mode == "REAL"
         assert real_system.vssf is None, "REAL 모드에서는 simulated VSSF가 존재하지 않아야 함"
         assert isinstance(real_system.broker, RealBrokerAdapter)
-        assert real_system.broker.is_connected() is False
+        assert real_system.broker.is_connected() is True
         await real_system.shutdown()
 
     asyncio.run(scenario())
