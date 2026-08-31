@@ -101,6 +101,14 @@ class TradingSystem:
 
             self.op_runtime = OptionProgramRuntime(account_summary=initial_summary, wal_store=wal_store)
 
+            # 6. [D-13] Startup Recovery 실행 (WAL 로드 -> 상태 복원 -> Broker 대사)
+            try:
+                recovery_summary = self.op_runtime.startup_recovery(broker_adapter=self.broker)
+                logger.info("TradingSystem: [STARTUP RECOVERY] 완료: %s", recovery_summary)
+            except Exception as rec_exc:
+                logger.critical("TradingSystem: [STARTUP RECOVERY] 실패 — 부팅 차단: %s", rec_exc, exc_info=True)
+                sys.exit(1)
+
             self.is_running = False
             logger.info(f"TradingSystem: 전체 파이프라인 컴포넌트 초기화 완료 (Broker Mode: {broker_mode.value})")
         except Exception as exc:
@@ -195,6 +203,8 @@ class TradingSystem:
         """[전체 통합 파이프라인 가동] VMS 틱 스트림 -> OptionProgram -> RiskGate -> Broker -> VSSF -> Ledger"""
         if self.vms is None or self.broker is None or self.op_runtime is None:
             raise RuntimeError("TradingSystem must be initialized before run_loop.")
+        if not getattr(self.op_runtime, "recovery_completed", False):
+            raise RuntimeError("TradingSystem: startup recovery must be completed before starting run_loop.")
         if self.broker_mode in ("PAPER", "SHADOW") and self.vssf is None:
             raise RuntimeError(f"TradingSystem in {self.broker_mode} mode must have vssf initialized.")
 

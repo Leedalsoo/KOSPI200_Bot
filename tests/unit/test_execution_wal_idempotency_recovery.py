@@ -163,7 +163,7 @@ async def test_recover_from_wal_restores_processed_exec_ids_and_state(tmp_path):
     router2 = OrderRouter(wal_store=wal_store)
     recovered = router2.recover_from_wal(history)
 
-    assert recovered == 2  # 2개 체결 이벤트 복원
+    assert recovered == len(history)  # ORDER_INTENT + 체결 이벤트 전수 복원
     assert "EXEC-R1" in router2._processed_exec_ids
     assert "EXEC-R2" in router2._processed_exec_ids
     assert router2.get_executed_qty(oid) == 7
@@ -368,5 +368,5 @@ async def test_option_program_runtime_execution_and_recovery_path(tmp_path):
     # 새 Runtime 인스턴스 복원 검증
     new_runtime = OptionProgramRuntime(wal_store=wal_store)
     recovered = new_runtime.recover_from_wal(history)
-    assert recovered == 1
+    assert recovered == len(history)
     assert new_runtime.get_order_executed_qty("ORD-RT-01") == 6

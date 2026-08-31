@@ -97,7 +97,7 @@ async def test_partial_execution_wal_persistence_and_recovery_progression(tmp_pa
 
     # WAL로부터 복원 실행
     recovered_count = router2.recover_from_wal(history)
-    assert recovered_count == 1
+    assert recovered_count == len(history)
     assert router2.fsm.get_status(oid) == OrderStatus.PARTIAL
     assert router2._cum_executed_qty[oid] == 4
     assert router2.get_executed_qty(oid) == 4
@@ -163,7 +163,7 @@ async def test_filled_order_recovery_state_integrity(tmp_path):
     # 복원
     router2 = OrderRouter(wal_store=wal_store)
     recovered = router2.recover_from_wal(history)
-    assert recovered == 1
+    assert recovered == len(history)
     assert router2.fsm.get_status(oid) == OrderStatus.FILLED
     assert router2.get_executed_qty(oid) == 5
     assert router2.get_executed_qty("ORD-FILL-001") == 5
@@ -205,7 +205,7 @@ async def test_multi_order_mixed_state_wal_recovery(tmp_path):
     # 신규 Router 인스턴스에서 복원
     router2 = OrderRouter(wal_store=wal_store)
     count = router2.recover_from_wal(history)
-    assert count == 2
+    assert count == len(history)
 
     # 주문 A 검증 (PARTIAL, 3/10)
     assert router2.fsm.get_status(oid_a) == OrderStatus.PARTIAL

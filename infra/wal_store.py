@@ -62,8 +62,8 @@ class WalStore:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(self._executor, self._sync_save, payload)
 
-    async def load_history(self) -> List[Dict[str, Any]]:
-        """[목표 C] 파일 순회 파싱 및 오염된 라인(Corrupted Data) 회복 로직"""
+    def load_history_sync(self) -> List[Dict[str, Any]]:
+        """[목표 C] 파일 순회 파싱 및 오염된 라인(Corrupted Data) 회복 로직 (동기 방식)"""
         if not os.path.exists(self.log_path):
             return []
 
@@ -85,3 +85,7 @@ class WalStore:
                     )
                     continue
         return history
+
+    async def load_history(self) -> List[Dict[str, Any]]:
+        """[목표 C] 파일 순회 파싱 및 오염된 라인(Corrupted Data) 회복 로직 (비동기 방식)"""
+        return self.load_history_sync()

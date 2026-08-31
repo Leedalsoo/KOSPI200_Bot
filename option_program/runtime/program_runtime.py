@@ -110,6 +110,9 @@ class OptionProgramRuntime:
             } for st in self.strategies
         }
 
+        # [D-13] Startup Recovery 완료 여부 플래그
+        self.recovery_completed: bool = False
+
     def update_account_summary(self, summary: CanonicalAccountSummary, sync_time: Optional[float] = None) -> None:
         """VSSF / Broker로부터 최신 계좌 현황 동기화 (성공 시각 갱신)"""
         self.account_summary = summary
@@ -471,6 +474,57 @@ class OptionProgramRuntime:
     def recover_from_wal(self, events: List[Dict[str, Any]]) -> int:
         """[D-10 / D-17] WAL 이벤트 로그로부터 누적 체결 상태, 멱등성 exec_id, FSM 상태 복원"""
         return self.order_router.recover_from_wal(events)
+
+    def startup_recovery(self, broker_adapter: Any = None) -> Dict[str, Any]:
+        """[D-13] 프로그램 시작 시 WAL 로드 -> OMS/FSM 복원 -> Broker 실제 주문 대사 -> Recovery 완료 오케스트레이션"""
+        wal_events: List[Dict[str, Any]] = []
+        if self.wal_store is not None:
+            try:
+                if hasattr(self.wal_store, "load_history_sync"):
+                    wal_events = self.wal_store.load_history_sync()
+                elif hasattr(self.wal_store, "load_history"):
+                    import asyncio
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # 이미 비동기 루프가 실행 중인 경우
+                            wal_events = self.wal_store.load_history_sync() if hasattr(self.wal_store, "load_history_sync") else []
+                        else:
+                            wal_events = loop.run_until_complete(self.wal_store.load_history())
+                    except Exception:
+                        if hasattr(self.wal_store, "load_history_sync"):
+                            wal_events = self.wal_store.load_history_sync()
+            except Exception as exc:
+                logger.error(f"[OptionProgramRuntime] Failed to load WAL history: {exc}", exc_info=True)
+                raise RuntimeError(f"Startup WAL load failed: {exc}") from exc
+
+        # 1. WAL 이벤트 재생 (ORDER_INTENT, BROKER_UNKNOWN, EXECUTION 등)
+        wal_recovered_count = self.order_router.recover_from_wal(wal_events)
+        self._order_id_to_uuid.update(getattr(self.order_router, "_client_to_order_id", {}))
+
+        # 2. Broker 실제 주문 조회 및 대사 (UNKNOWN 및 활성 주문 복구)
+        broker_rec_summary = {"unknown_checked": 0, "recovered": 0, "remained_unknown": 0}
+        if broker_adapter is not None:
+            broker_rec_summary = self.order_router.recover_unknown_orders(broker_adapter)
+            if hasattr(self.order_router, "reconcile_with_broker"):
+                try:
+                    self.order_router.reconcile_with_broker(broker_adapter)
+                except Exception as exc:
+                    logger.warning(f"[OptionProgramRuntime] reconcile_with_broker warning: {exc}")
+
+        self.recovery_completed = True
+
+        summary = {
+            "wal_events_count": len(wal_events),
+            "wal_recovered_count": wal_recovered_count,
+            "broker_recovery_summary": broker_rec_summary,
+            "unresolved_unknown_count": len(self.order_router._unknown_orders),
+            "has_unresolved_unknown": self.order_router.has_unresolved_unknown_orders(),
+            "active_orders_count": len(self.order_router._active_orders),
+            "recovery_completed": self.recovery_completed,
+        }
+        logger.info(f"[OptionProgramRuntime] Startup recovery completed: {summary}")
+        return summary
 
 
 

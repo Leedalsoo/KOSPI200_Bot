@@ -16,7 +16,8 @@ from shared.contracts.canonical import (
     CanonicalOrderCommand,
     CanonicalExecutionReport,
     CanonicalAssetType,
-    CanonicalOrderSide
+    CanonicalOrderSide,
+    CanonicalOptionType,
 )
 from shared.core.contracts import OrderStatus, RiskApprovalToken
 from option_program.orders.oms_fsm import OmsFsm
@@ -49,6 +50,7 @@ class OrderRouter:
         self._order_to_broker_id: Dict[uuid.UUID, str] = {}
         self._client_to_broker_id: Dict[str, str] = {}
         self._broker_to_client_id: Dict[str, str] = {}
+        self._client_to_order_id: Dict[str, uuid.UUID] = {}
         # [8단계-3] 주문별 실제 체결수량 권위 저장소 (미체결/부분체결/완료체결 전수 보존)
         self._executed_qty_history: Dict[uuid.UUID, int] = {}
         self._client_to_executed_qty: Dict[str, int] = {}
@@ -116,6 +118,8 @@ class OrderRouter:
             self.fsm.transition_sync(order_id, OrderStatus.SENT)
             self._active_orders[order_id] = (command, time.time())
             self._cum_executed_qty[order_id] = 0
+            if getattr(command, "client_order_id", None):
+                self._client_to_order_id[command.client_order_id] = order_id
             if broker_adapter is not None:
                 self._order_brokers[order_id] = broker_adapter
 
@@ -348,47 +352,124 @@ class OrderRouter:
             return False
 
     def recover_from_wal(self, events: List[Dict[str, Any]]) -> int:
-        """[D-10] WAL 이벤트 로그로부터 누적 체결 상태, 멱등성 exec_id, FSM 상태 복원"""
+        """[D-10 / D-13 / D-17] WAL 이벤트 로그로부터 주문 의도, UNKNOWN 상태, 누적 체결, 멱등성 exec_id, FSM 상태 복원"""
         with self._lock:
             recovered_count = 0
             for entry in events:
                 if not isinstance(entry, dict):
                     continue
                 event_type = entry.get("event_type")
-                if event_type not in ("EXECUTION_REPORT", "PARTIAL_EXECUTION", "FILLED_EXECUTION"):
-                    continue
-
                 data = entry.get("data", {})
-                exec_id = data.get("exec_id")
-                if exec_id:
-                    self._processed_exec_ids.add(str(exec_id))
+                if not isinstance(data, dict):
+                    continue
 
                 order_id_raw = data.get("order_id")
                 client_id = data.get("client_order_id")
-                cum_qty = int(data.get("cum_executed_qty", 0))
-                status_str = data.get("status")
-
+                order_id: Optional[uuid.UUID] = None
                 if order_id_raw:
                     try:
                         order_id = uuid.UUID(str(order_id_raw))
-                        self._executed_qty_history[order_id] = cum_qty
-                        if status_str:
-                            status_enum = OrderStatus(status_str)
-                            self.fsm.states[order_id] = status_enum
-                            if status_enum not in (OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED):
-                                self._cum_executed_qty[order_id] = cum_qty
-                            else:
-                                self._cum_executed_qty.pop(order_id, None)
-                                self._active_orders.pop(order_id, None)
-                    except Exception as e:
-                        logger.warning(f"[OrderRouter] Failed to recover order {order_id_raw}: {e}")
+                    except Exception:
+                        order_id = None
 
-                if client_id:
-                    self._client_to_executed_qty[str(client_id)] = cum_qty
+                # 1. ORDER_INTENT 복원
+                if event_type == "ORDER_INTENT":
+                    if order_id:
+                        try:
+                            side_str = data.get("side", "BUY")
+                            side_enum = CanonicalOrderSide.BUY if side_str == "BUY" else CanonicalOrderSide.SELL
+                            opt_str = data.get("option_type")
+                            opt_enum = CanonicalOptionType(opt_str) if opt_str in ("CALL", "PUT") else None
+                            cmd = CanonicalOrderCommand(
+                                client_order_id=str(client_id) if client_id else str(order_id),
+                                track_id=str(data.get("track_id", "Track1")),
+                                asset_type=CanonicalAssetType.OPTION,
+                                side=side_enum,
+                                qty=int(data.get("qty", 0)),
+                                price=float(data.get("price", 0.0)),
+                                symbol=str(data.get("symbol", "KOSPI200")),
+                                option_type=opt_enum,
+                                strike=float(data.get("strike", 0.0)),
+                            )
+                            ts = float(data.get("timestamp", time.time()) or time.time())
+                            self._active_orders[order_id] = (cmd, ts)
+                            self.fsm.states[order_id] = OrderStatus.SENT
+                            if client_id:
+                                self._client_to_order_id[str(client_id)] = order_id
+                            recovered_count += 1
+                        except Exception as exc:
+                            logger.warning(f"[OrderRouter] Failed to recover ORDER_INTENT {order_id_raw}: {exc}")
 
-                recovered_count += 1
+                # 2. BROKER_SEND_STARTED 복원
+                elif event_type == "BROKER_SEND_STARTED":
+                    if order_id and order_id in self.fsm.states:
+                        self.fsm.states[order_id] = OrderStatus.SENT
+                    recovered_count += 1
 
-            logger.info(f"[OrderRouter] Successfully recovered {recovered_count} execution events from WAL.")
+                # 3. BROKER_UNKNOWN 복원
+                elif event_type == "BROKER_UNKNOWN":
+                    if order_id:
+                        self.fsm.states[order_id] = OrderStatus.UNKNOWN
+                        cmd_info = self._active_orders.get(order_id)
+                        cmd = cmd_info[0] if cmd_info else CanonicalOrderCommand(
+                            client_order_id=str(client_id) if client_id else str(order_id),
+                            track_id=str(data.get("track_id", "Track1")),
+                            asset_type=CanonicalAssetType.OPTION,
+                            side=CanonicalOrderSide.BUY,
+                            qty=int(data.get("qty", 0)),
+                            price=float(data.get("price", 0.0)),
+                        )
+                        ts = float(data.get("timestamp", time.time()) or time.time())
+                        reason = str(data.get("reason", "TIMEOUT_UNKNOWN"))
+                        self._unknown_orders[order_id] = (cmd, ts, reason)
+                        recovered_count += 1
+
+                # 4. UNKNOWN_RECOVERED 복원
+                elif event_type == "UNKNOWN_RECOVERED":
+                    if order_id:
+                        self._unknown_orders.pop(order_id, None)
+                        rec_status_str = data.get("recovered_status")
+                        if rec_status_str:
+                            try:
+                                status_enum = OrderStatus(rec_status_str)
+                                self.fsm.states[order_id] = status_enum
+                                if status_enum in (OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED):
+                                    self._cum_executed_qty.pop(order_id, None)
+                                    self._active_orders.pop(order_id, None)
+                            except Exception as exc:
+                                logger.warning(f"[OrderRouter] Invalid recovered_status {rec_status_str}: {exc}")
+                        recovered_count += 1
+
+                # 5. 체결 이벤트 복원 (EXECUTION_REPORT, PARTIAL_EXECUTION, FILLED_EXECUTION)
+                elif event_type in ("EXECUTION_REPORT", "PARTIAL_EXECUTION", "FILLED_EXECUTION"):
+                    exec_id = data.get("exec_id")
+                    if exec_id:
+                        self._processed_exec_ids.add(str(exec_id))
+
+                    cum_qty = int(data.get("cum_executed_qty", 0))
+                    status_str = data.get("status")
+
+                    if order_id:
+                        try:
+                            self._executed_qty_history[order_id] = cum_qty
+                            if status_str:
+                                status_enum = OrderStatus(status_str)
+                                self.fsm.states[order_id] = status_enum
+                                if status_enum not in (OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED):
+                                    self._cum_executed_qty[order_id] = cum_qty
+                                else:
+                                    self._cum_executed_qty.pop(order_id, None)
+                                    self._active_orders.pop(order_id, None)
+                                    self._unknown_orders.pop(order_id, None)
+                        except Exception as e:
+                            logger.warning(f"[OrderRouter] Failed to recover execution order {order_id_raw}: {e}")
+
+                    if client_id:
+                        self._client_to_executed_qty[str(client_id)] = cum_qty
+
+                    recovered_count += 1
+
+            logger.info(f"[OrderRouter] Successfully recovered {recovered_count} events from WAL.")
             return recovered_count
 
     def is_execution_processed(self, exec_id: str) -> bool:
