@@ -37,6 +37,16 @@ class IBrokerAdapter(ABC):
     """Authoritative broker contract shared by PAPER, SHADOW and REAL adapters."""
 
     @abstractmethod
+    def connect(self) -> bool:
+        """브로커 세션 연결/인증 및 주문 가능 상태 전환."""
+        pass
+
+    @abstractmethod
+    def disconnect(self) -> None:
+        """브로커 세션 연결 해제."""
+        pass
+
+    @abstractmethod
     def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
         """주문 접수/제출 (체결 이벤트와 엄격히 분리되며, ACK/broker_order_id 반환)."""
         pass
@@ -199,6 +209,13 @@ class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
+    def connect(self) -> bool:
+        self._connected = True
+        return True
+
+    def disconnect(self) -> None:
+        self._connected = False
+
 
 class ShadowBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
     """Shadow adapter: mirrors orders into VSSF and never sends them to a real broker."""
@@ -273,6 +290,13 @@ class ShadowBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
+    def connect(self) -> bool:
+        self._connected = True
+        return True
+
+    def disconnect(self) -> None:
+        self._connected = False
+
 
 class RealBrokerAdapterStub(IBrokerAdapter):
     """Compatibility stub retained for legacy imports; it never sends real orders."""
@@ -286,6 +310,9 @@ class RealBrokerAdapterStub(IBrokerAdapter):
     def connect(self) -> bool:
         self._connected = True
         return True
+
+    def disconnect(self) -> None:
+        self._connected = False
 
     def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
         if not self._connected or self._execution_behavior == "REJECT":
