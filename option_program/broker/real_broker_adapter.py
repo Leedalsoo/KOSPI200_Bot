@@ -246,22 +246,26 @@ class RealBrokerAdapter(IBrokerAdapter):
     def get_account_summary(self) -> CanonicalAccountSummary:
         """실시간 증권사 계좌 잔고 및 증거금 조회"""
         if not self._connected:
-            return CanonicalAccountSummary(
-                account_id=self.config.account_no,
-                total_balance=0.0,
-                used_margin=0.0,
-                free_margin=0.0,
-                realized_pnl=0.0,
-                unrealized_pnl=0.0,
-                timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            )
+            raise RuntimeError(f"[{self.config.broker_name}] Broker is disconnected: cannot query account summary")
 
         resp = self.client.request("GET", "/uapi/domestic-futureoption/v1/trading/inquire-balance", tr_id="TTTO1104R")
-        out1 = resp.get("output1", {})
-        total_balance = float(out1.get("dnca_tot_amt", "50000000"))
-        used_margin = float(out1.get("tot_evlu_amt", "0")) - total_balance if float(out1.get("tot_evlu_amt", "0")) > total_balance else 0.0
-        free_margin = max(0.0, total_balance - used_margin)
-        unrealized = float(out1.get("evlu_pfls_smtl_amt", "0"))
+        if not isinstance(resp, dict) or resp.get("rt_cd") != "0":
+            msg_cd = resp.get("msg_cd", "UNKNOWN") if isinstance(resp, dict) else "NO_RESP"
+            msg1 = resp.get("msg1", "Account balance query failed") if isinstance(resp, dict) else "No response"
+            raise RuntimeError(f"[{self.config.broker_name}] Account query failed: [{msg_cd}] {msg1}")
+
+        out1 = resp.get("output1")
+        if not isinstance(out1, dict) or "dnca_tot_amt" not in out1:
+            raise RuntimeError(f"[{self.config.broker_name}] Invalid account response: missing required field 'output1.dnca_tot_amt'")
+
+        try:
+            total_balance = float(out1["dnca_tot_amt"])
+            tot_evlu_amt = float(out1.get("tot_evlu_amt", "0") or "0")
+            used_margin = tot_evlu_amt - total_balance if tot_evlu_amt > total_balance else 0.0
+            free_margin = max(0.0, total_balance - used_margin)
+            unrealized = float(out1.get("evlu_pfls_smtl_amt", "0") or "0")
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(f"[{self.config.broker_name}] Invalid account numeric data in 'output1': {exc}") from exc
 
         return CanonicalAccountSummary(
             account_id=self.config.account_no,
