@@ -227,6 +227,16 @@ class TradingSystem:
                 # 4. [주문 접수 사이클] Broker 인터페이스를 통한 주문 접수 (체결 이벤트와 명확히 분리된 접수/식별자 확보)
                 for cmd in commands:
                     self.orders_routed += 1
+
+                    # [D-15] Broker 전송 직전 BROKER_SEND_STARTED WAL 영속화 (실패 시 발주 차단)
+                    wal_ok = self.op_runtime.persist_broker_send_started(cmd)
+                    if not wal_ok:
+                        logger.error(
+                            "TradingSystem: WAL 저장 실패로 인해 주문 전송 차단 (Client: %s)",
+                            cmd.client_order_id,
+                        )
+                        continue
+
                     ack = self.broker.send_order(cmd)
                     if ack is not None and getattr(ack, "success", False):
                         self.op_runtime.register_broker_order_ack(ack)

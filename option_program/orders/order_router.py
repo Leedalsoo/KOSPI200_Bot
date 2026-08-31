@@ -117,6 +117,19 @@ class OrderRouter:
             if broker_adapter is not None:
                 self._order_brokers[order_id] = broker_adapter
 
+            # [D-15] Broker 전송 전 ORDER_INTENT WAL 영속화
+            wal_success = self._persist_order_intent_wal(order_id, command)
+            if not wal_success:
+                logger.error(
+                    f"[OrderRouter] Failed to persist ORDER_INTENT for {command.client_order_id}. "
+                    f"Aborting order to prevent unrecoverable state."
+                )
+                self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
+                self._active_orders.pop(order_id, None)
+                self._order_brokers.pop(order_id, None)
+                self._cum_executed_qty.pop(order_id, None)
+                return None
+
             # 3. [Broker 실행책임 단일화] OrderRouter는 Broker를 직접 발주하지 않음.
             # 발주 실행 책임은 단일 오케스트레이터(TradingSystem in main.py)가 전담하며,
             # 체결 결과는 handle_execution_report()를 통해 수신하여 FSM 상태를 전이한다.
@@ -198,6 +211,73 @@ class OrderRouter:
                 self._order_brokers.pop(order_id, None)
                 self._cum_executed_qty.pop(order_id, None)
                 logger.warning(f"[OrderRouter] Order {order_id} REJECTED by Broker.")
+
+    def _persist_order_intent_wal(self, order_id: uuid.UUID, command: CanonicalOrderCommand) -> bool:
+        """[D-15] 주문 생성 및 FSM 등록 시점에 ORDER_INTENT WAL 영속화"""
+        if self.wal_store is None:
+            return True
+
+        try:
+            side_val = getattr(command, "side", CanonicalOrderSide.BUY)
+            side_str = side_val.value if hasattr(side_val, "value") else str(side_val)
+            opt_val = getattr(command, "option_type", None)
+            opt_str = opt_val.value if opt_val and hasattr(opt_val, "value") else (str(opt_val) if opt_val else None)
+
+            event_data = {
+                "order_id": str(order_id),
+                "client_order_id": getattr(command, "client_order_id", ""),
+                "track_id": getattr(command, "track_id", ""),
+                "symbol": getattr(command, "symbol", ""),
+                "side": side_str,
+                "qty": getattr(command, "qty", 0),
+                "price": float(getattr(command, "price", 0.0) or 0.0),
+                "option_type": opt_str,
+                "strike": float(getattr(command, "strike", 0.0) or 0.0),
+                "timestamp": str(time.time()),
+                "status": OrderStatus.SENT.value,
+            }
+            if hasattr(self.wal_store, "save_event_sync"):
+                self.wal_store.save_event_sync("ORDER_INTENT", event_data)
+            return True
+        except Exception as exc:
+            logger.error(f"[OrderRouter] Failed to persist ORDER_INTENT to WAL: {exc}")
+            return False
+
+    def persist_broker_send_started(self, command: CanonicalOrderCommand) -> bool:
+        """[D-15] Broker API 전송 직전 BROKER_SEND_STARTED WAL 영속화"""
+        if self.wal_store is None:
+            return True
+
+        try:
+            client_id = getattr(command, "client_order_id", "")
+            order_id = self.get_order_uuid_by_client_id(client_id)
+            side_val = getattr(command, "side", CanonicalOrderSide.BUY)
+            side_str = side_val.value if hasattr(side_val, "value") else str(side_val)
+
+            event_data = {
+                "client_order_id": client_id,
+                "order_id": str(order_id) if order_id else None,
+                "track_id": getattr(command, "track_id", ""),
+                "symbol": getattr(command, "symbol", ""),
+                "side": side_str,
+                "qty": getattr(command, "qty", 0),
+                "price": float(getattr(command, "price", 0.0) or 0.0),
+                "timestamp": str(time.time()),
+            }
+            if hasattr(self.wal_store, "save_event_sync"):
+                self.wal_store.save_event_sync("BROKER_SEND_STARTED", event_data)
+            return True
+        except Exception as exc:
+            logger.error(f"[OrderRouter] Failed to persist BROKER_SEND_STARTED to WAL: {exc}")
+            return False
+
+    def get_order_uuid_by_client_id(self, client_order_id: str) -> Optional[uuid.UUID]:
+        """[D-15] client_order_id로부터 active_orders 내의 order_uuid 조회"""
+        with self._lock:
+            for u, (cmd, _) in self._active_orders.items():
+                if getattr(cmd, "client_order_id", None) == client_order_id:
+                    return u
+            return None
 
     def _persist_execution_wal(
         self,

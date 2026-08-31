@@ -78,18 +78,20 @@ class TestKISAuthToken:
         assert mock_token.is_valid() is False
 
     def test_token_from_response_parsing(self):
+        from datetime import datetime
         now = time.time()
+        expired_str = datetime.fromtimestamp(now + 86400).strftime("%Y-%m-%d %H:%M:%S")
         resp_data = {
             "access_token": "actual_issued_access_token_jwt",
             "token_type": "Bearer",
             "expires_in": 86400,
-            "access_token_token_expired": "2026-08-31 23:59:59",
+            "access_token_token_expired": expired_str,
         }
         token = KISAuthToken.from_response(resp_data, issued_at=now)
         assert token.access_token == "actual_issued_access_token_jwt"
         assert token.token_type == "Bearer"
         assert token.expires_in == 86400
-        assert token.expired_at_str == "2026-08-31 23:59:59"
+        assert token.expired_at_str == expired_str
         assert token.token_expired_at > now
         assert token.is_valid() is True
 

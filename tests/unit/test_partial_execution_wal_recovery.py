@@ -81,12 +81,13 @@ async def test_partial_execution_wal_persistence_and_recovery_progression(tmp_pa
     assert router1.fsm.get_status(oid) == OrderStatus.PARTIAL
     assert router1._cum_executed_qty[oid] == 4
 
-    # WAL 파일에 이벤트가 기록되었는지 확인
+    # WAL 파일에 이벤트가 기록되었는지 확인 (ORDER_INTENT + PARTIAL_EXECUTION)
     history = await wal_store.load_history()
-    assert len(history) == 1
-    assert history[0]["event_type"] == "PARTIAL_EXECUTION"
-    assert history[0]["data"]["cum_executed_qty"] == 4
-    assert history[0]["data"]["exec_id"] == "EXEC-001"
+    assert len(history) == 2
+    assert history[0]["event_type"] == "ORDER_INTENT"
+    assert history[1]["event_type"] == "PARTIAL_EXECUTION"
+    assert history[1]["data"]["cum_executed_qty"] == 4
+    assert history[1]["data"]["exec_id"] == "EXEC-001"
 
     # 3. 프로세스 재시작 시뮬레이션: 신규 Router 인스턴스 생성 및 WAL 복원
     router2 = OrderRouter(wal_store=wal_store)
@@ -126,13 +127,15 @@ async def test_partial_execution_wal_persistence_and_recovery_progression(tmp_pa
     assert router2.get_executed_qty(oid) == 10
     assert router2.get_executed_qty("ORD-REC-001") == 10
 
-    # WAL 전체 이벤트 검증 (총 3개 이벤트)
+    # WAL 전체 이벤트 검증 (ORDER_INTENT + 3개 체결 = 총 4개 이벤트)
     final_history = await wal_store.load_history()
-    assert len(final_history) == 3
+    assert len(final_history) == 4
+    assert final_history[0]["event_type"] == "ORDER_INTENT"
     assert final_history[1]["event_type"] == "PARTIAL_EXECUTION"
-    assert final_history[1]["data"]["cum_executed_qty"] == 7
-    assert final_history[2]["event_type"] == "FILLED_EXECUTION"
-    assert final_history[2]["data"]["cum_executed_qty"] == 10
+    assert final_history[2]["event_type"] == "PARTIAL_EXECUTION"
+    assert final_history[2]["data"]["cum_executed_qty"] == 7
+    assert final_history[3]["event_type"] == "FILLED_EXECUTION"
+    assert final_history[3]["data"]["cum_executed_qty"] == 10
 
 
 @pytest.mark.asyncio
@@ -153,8 +156,9 @@ async def test_filled_order_recovery_state_integrity(tmp_path):
     assert router1.fsm.get_status(oid) == OrderStatus.FILLED
 
     history = await wal_store.load_history()
-    assert len(history) == 1
-    assert history[0]["event_type"] == "FILLED_EXECUTION"
+    assert len(history) == 2
+    assert history[0]["event_type"] == "ORDER_INTENT"
+    assert history[1]["event_type"] == "FILLED_EXECUTION"
 
     # 복원
     router2 = OrderRouter(wal_store=wal_store)
@@ -190,7 +194,13 @@ async def test_multi_order_mixed_state_wal_recovery(tmp_path):
     router1.handle_execution_report(oid_b, make_report("ORD-MIX-B", "EXEC-B1", executed_qty=5))
 
     history = await wal_store.load_history()
-    assert len(history) == 2
+    assert len(history) == 4
+    assert [h["event_type"] for h in history] == [
+        "ORDER_INTENT",
+        "PARTIAL_EXECUTION",
+        "ORDER_INTENT",
+        "FILLED_EXECUTION",
+    ]
 
     # 신규 Router 인스턴스에서 복원
     router2 = OrderRouter(wal_store=wal_store)

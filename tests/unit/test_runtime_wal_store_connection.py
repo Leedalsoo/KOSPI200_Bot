@@ -104,21 +104,26 @@ async def test_execution_report_persists_to_wal_via_runtime_path(tmp_path):
     rep2 = make_exec_report("ORD-D14-01", "EXEC-D14-102", executed_qty=6)
     runtime.order_router.handle_execution_report(order_uuid, rep2)
 
-    # WAL 파일에 이벤트가 기록되었는지 확인
+    # WAL 파일에 이벤트가 기록되었는지 확인 (ORDER_INTENT, PARTIAL_EXECUTION, FILLED_EXECUTION)
     history = await wal_store.load_history()
-    assert len(history) == 2
+    assert len(history) == 3
 
-    # 1차 이벤트: PARTIAL_EXECUTION
-    assert history[0]["event_type"] == "PARTIAL_EXECUTION"
+    # 1차 이벤트: ORDER_INTENT
+    assert history[0]["event_type"] == "ORDER_INTENT"
     assert history[0]["data"]["client_order_id"] == "ORD-D14-01"
-    assert history[0]["data"]["cum_executed_qty"] == 4
-    assert history[0]["data"]["exec_id"] == "EXEC-D14-101"
+    assert history[0]["data"]["qty"] == 10
 
-    # 2차 이벤트: FILLED_EXECUTION
-    assert history[1]["event_type"] == "FILLED_EXECUTION"
+    # 2차 이벤트: PARTIAL_EXECUTION
+    assert history[1]["event_type"] == "PARTIAL_EXECUTION"
     assert history[1]["data"]["client_order_id"] == "ORD-D14-01"
-    assert history[1]["data"]["cum_executed_qty"] == 10
-    assert history[1]["data"]["exec_id"] == "EXEC-D14-102"
+    assert history[1]["data"]["cum_executed_qty"] == 4
+    assert history[1]["data"]["exec_id"] == "EXEC-D14-101"
+
+    # 3차 이벤트: FILLED_EXECUTION
+    assert history[2]["event_type"] == "FILLED_EXECUTION"
+    assert history[2]["data"]["client_order_id"] == "ORD-D14-01"
+    assert history[2]["data"]["cum_executed_qty"] == 10
+    assert history[2]["data"]["exec_id"] == "EXEC-D14-102"
 
 
 @pytest.mark.asyncio

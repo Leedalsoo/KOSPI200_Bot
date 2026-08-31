@@ -129,6 +129,10 @@ class OptionProgramRuntime:
         timeout = timeout_sec if timeout_sec is not None else self.risk_config.position_stale_timeout_sec
         return (now - self.last_position_sync_time) > timeout
 
+    def persist_broker_send_started(self, command: CanonicalOrderCommand) -> bool:
+        """[D-15] Broker API 전송 직전 BROKER_SEND_STARTED WAL 영속화"""
+        return self.order_router.persist_broker_send_started(command)
+
     def process_tick(self, tick: CanonicalMarketTick) -> List[CanonicalOrderCommand]:
         """[틱 수신 ➔ Sensor / Regime ➔ Track 1~9 ➔ SignalGen ➔ Arbiter ➔ RiskGate ➔ FSM 파이프라인]"""
         self.tick_counter += 1
