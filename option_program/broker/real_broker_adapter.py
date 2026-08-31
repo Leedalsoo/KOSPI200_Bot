@@ -491,9 +491,18 @@ class RealBrokerAdapter(IBrokerAdapter):
         if not self._connected:
             raise RuntimeError(f"[{self.config.broker_name}] Broker is disconnected: cannot query open orders")
 
+        cano = self.config.account_no.split("-")[0] if self.config.account_no else ""
+        acnt_prdt_cd = self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01"
+        body = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
+            "FK100": "",
+            "NK100": "",
+        }
         resp = self.client.request(
             "GET",
             "/uapi/domestic-futureoption/v1/trading/inquire-nccs",
+            body=body,
             tr_id="TTTO1102R"
         )
         if not isinstance(resp, dict) or resp.get("rt_cd") != "0":
@@ -564,9 +573,16 @@ class RealBrokerAdapter(IBrokerAdapter):
                 return o
 
         # 2. 체결 내역(inquire-ccld) 조회하여 체결 완료 확인
+        cano = self.config.account_no.split("-")[0] if self.config.account_no else ""
+        acnt_prdt_cd = self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01"
+        body = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
+        }
         resp = self.client.request(
             "GET",
             "/uapi/domestic-futureoption/v1/trading/inquire-ccld",
+            body=body,
             tr_id="TTTO1101R"
         )
         if isinstance(resp, dict) and resp.get("rt_cd") == "0":

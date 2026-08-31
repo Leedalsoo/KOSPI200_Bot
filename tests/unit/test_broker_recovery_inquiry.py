@@ -439,3 +439,38 @@ class TestBrokerRecoveryInquiry:
         reports = adapter.poll_execution_reports()
         assert len(reports) == 1
         assert reports[0].exec_id == "EXEC-TEST-D12"
+
+    def test_order_router_reconcile_active_sent_filled_sync(self):
+        """12. SENT 상태 주문이 브로커에서 체결 완료(FILLED)된 경우 안전 동기화 검증."""
+        order_router = OrderRouter()
+        cmd = CanonicalOrderCommand(
+            client_order_id="ORD-SENT-FILL-SYNC",
+            track_id="Track1",
+            asset_type=CanonicalAssetType.OPTION,
+            side=CanonicalOrderSide.BUY,
+            qty=2,
+            price=2.0,
+            symbol="201V3350",
+            option_type=CanonicalOptionType.CALL,
+            strike=350.0,
+        )
+        token = RiskApprovalToken(
+            order_id=uuid.uuid4(),
+            timestamp_ns=4000000,
+            signature="SIG-RISK-APPROVED-Track1-ORD-SENT-FILL-SYNC",
+        )
+        order_uuid = order_router.register_and_route(command=cmd, token=token)
+        assert order_uuid is not None
+        assert order_router.fsm.get_status(order_uuid) == OrderStatus.SENT
+
+        class MockFilledBroker:
+            def get_open_orders(self):
+                return []
+
+            def get_order_status(self, order_id):
+                return {"status": "FILLED", "executed_qty": 2}
+
+        summary = order_router.reconcile_with_broker(MockFilledBroker())
+        assert summary["synced_orders"] == 1
+        assert order_router.fsm.get_status(order_uuid) == OrderStatus.FILLED
+        assert order_uuid not in order_router._active_orders

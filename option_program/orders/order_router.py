@@ -453,7 +453,7 @@ class OrderRouter:
                     bool(broker_order_id) and broker_order_id in broker_open_ids
                 )
 
-                if current_status == OrderStatus.CANCEL_REQUESTED and not is_open_in_broker:
+                if not is_open_in_broker:
                     order_status_info = None
                     if hasattr(broker_adapter, "get_order_status"):
                         try:
@@ -461,16 +461,26 @@ class OrderRouter:
                         except Exception as exc:
                             logger.warning(f"[OrderRouter] Failed to query order status for {client_id}: {exc}")
 
-                    if order_status_info is None or order_status_info.get("status") in ("CANCELLED", "FILLED"):
+                    # 1. CANCEL_REQUESTED 상태에서 브로커 미체결에 없는 경우 (취소 확정 또는 체결 완료)
+                    if current_status == OrderStatus.CANCEL_REQUESTED:
                         if order_status_info and order_status_info.get("status") == "FILLED":
                             self.fsm.transition_sync(order_id, OrderStatus.FILLED)
                             self._active_orders.pop(order_id, None)
                             self._order_brokers.pop(order_id, None)
                             self._cum_executed_qty.pop(order_id, None)
                             reconcile_summary["synced_orders"] += 1
-                        else:
+                        elif order_status_info is None or order_status_info.get("status") == "CANCELLED":
                             self.confirm_cancel(order_id)
                             reconcile_summary["confirmed_cancelled"] += 1
+
+                    # 2. SENT / ACCEPTED / PARTIAL 상태에서 브로커 체결이 완료(FILLED)된 경우 안전 동기화
+                    elif order_status_info and order_status_info.get("status") == "FILLED":
+                        if current_status in (OrderStatus.SENT, OrderStatus.ACCEPTED, OrderStatus.PARTIAL):
+                            self.fsm.transition_sync(order_id, OrderStatus.FILLED)
+                            self._active_orders.pop(order_id, None)
+                            self._order_brokers.pop(order_id, None)
+                            self._cum_executed_qty.pop(order_id, None)
+                            reconcile_summary["synced_orders"] += 1
 
             return reconcile_summary
 
