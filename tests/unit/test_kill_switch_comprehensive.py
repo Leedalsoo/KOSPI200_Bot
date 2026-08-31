@@ -306,9 +306,10 @@ class TestKillSwitchComprehensive(unittest.TestCase):
         self.assertFalse(is_approved)
         self.assertEqual(rej_reason, "REJECTED_BY_KILL_SWITCH")
 
-        # 2. Broker로 직접 주문 전송 시도 시에도 Disconnect로 인해 None 반환
+        # 2. Broker로 직접 주문 전송 시도 시에도 Disconnect로 인해 실패 응답 반환
         report = self.broker.send_order(order_cmd)
-        self.assertIsNone(report)
+        self.assertFalse(report.success)
+        self.assertEqual(report.status, "DISCONNECTED")
 
         # 3. 회계 변이 불변성 (Mutation = 0)
         self.assertEqual(self.account_summary.total_balance, 2_000_000_000.0)

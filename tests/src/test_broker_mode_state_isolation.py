@@ -116,7 +116,9 @@ def test_real_mode_safety_interlock_blocks_live_order_without_arm():
         price=350.0,
         symbol="KOSPI200",
     )
-    assert real.send_order(command) is None
+    resp = real.send_order(command)
+    assert resp.success is False
+    assert resp.status == "SAFETY_BLOCKED"
     assert real._orders_history == {}
     assert real._pending_executions == []
 

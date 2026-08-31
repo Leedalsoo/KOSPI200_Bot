@@ -51,6 +51,7 @@ def test_chaos_monkey_fault_injection_disconnect() -> None:
         symbol="KOSPI200"
     )
     report = adapter.send_order(cmd)
-    assert report is None
+    assert report.success is False
+    assert report.status == "DISCONNECTED"
 
 

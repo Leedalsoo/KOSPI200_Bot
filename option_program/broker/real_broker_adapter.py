@@ -51,12 +51,20 @@ class RealBrokerHttpClient:
         if not self.config.is_simulation and self.config.app_key and self.config.app_secret:
             try:
                 import urllib.request
+                import urllib.error
+                import socket
                 import orjson as json
                 url = f"{self.config.base_url}{path}"
                 data_bytes = json.dumps(body) if body else None
                 req = urllib.request.Request(url, data=data_bytes, headers=headers, method=method)
                 with urllib.request.urlopen(req, timeout=5.0) as resp:
                     return json.loads(resp.read().decode("utf-8"))
+            except (TimeoutError, socket.timeout, urllib.error.URLError) as e:
+                if isinstance(e, (TimeoutError, socket.timeout)) or "timed out" in str(e).lower():
+                    logger.error(f"[RealBrokerHttpClient] Request timed out: {e}")
+                    return {"rt_cd": "1", "msg_cd": "ERR_TIMEOUT", "msg1": f"Request timed out: {e}"}
+                logger.error(f"[RealBrokerHttpClient] Network transport failed: {e}")
+                return {"rt_cd": "1", "msg_cd": "ERR_NET", "msg1": str(e)}
             except Exception as e:
                 logger.error(f"[RealBrokerHttpClient] Network transport failed: {e}")
                 return {"rt_cd": "1", "msg_cd": "ERR_NET", "msg1": str(e)}
@@ -115,7 +123,7 @@ class RealBrokerHttpClient:
     def request(self, method: str, path: str, body: Optional[Dict[str, Any]] = None, tr_id: str = "") -> Dict[str, Any]:
         if not self.is_token_valid():
             if not self.authenticate():
-                return {"rt_cd": "1", "msg1": "Authentication token expired/invalid"}
+                return {"rt_cd": "1", "msg_cd": "ERR_AUTH", "msg1": "Authentication token expired/invalid"}
 
         headers = {
             "Content-Type": "application/json",
@@ -156,16 +164,28 @@ class RealBrokerAdapter(IBrokerAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
-    def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
-        """CanonicalOrderCommand ➔ 증권사 파생상품 주문 API 호출 ➔ BrokerOrderResponse (ACK) 반환"""
+    def send_order(self, command: CanonicalOrderCommand) -> BrokerOrderResponse:
+        """CanonicalOrderCommand ➔ 증권사 파생상품 주문 API 호출 ➔ BrokerOrderResponse (ACK/실패분류) 반환"""
         if not self._connected:
             logger.warning(f"[{self.config.broker_name}] Cannot send order while disconnected.")
-            return None
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="DISCONNECTED",
+                message=f"[{self.config.broker_name}] Broker is disconnected",
+            )
 
         # 🛡️ [2중 안전 핀] 실거래 환경에서 명시적 안전 무장 플래그가 없으면 실주문 차단
         if not self.config.is_simulation and self.config.safety_arm_key != "I_CONFIRM_LIVE_TRADING":
             logger.critical(f"[{self.config.broker_name}] [SAFETY INTERLOCK BLOCKED] Live order blocked! ARM_REAL_TRADING_ORDERS is not set to 'I_CONFIRM_LIVE_TRADING'")
-            return None
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="SAFETY_BLOCKED",
+                message=f"[{self.config.broker_name}] Live order blocked by safety interlock key",
+            )
 
         # 1. 증권사 종목코드 및 주문 파라미터 매핑
         order_side_cd = "02" if command.side == CanonicalOrderSide.BUY else "01"  # 01: 매도, 02: 매수
@@ -182,11 +202,40 @@ class RealBrokerAdapter(IBrokerAdapter):
 
         # 2. 증권사 주문 TR 호출
         tr_id = "TTTO1101U" if command.side == CanonicalOrderSide.BUY else "TTTO1102U"
-        resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order", body=body, tr_id=tr_id)
+        try:
+            resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order", body=body, tr_id=tr_id)
+        except Exception as exc:
+            logger.error(f"[{self.config.broker_name}] Exception during send_order: {exc}")
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="NETWORK_ERROR",
+                message=f"Network transport exception: {exc}",
+            )
 
-        if resp.get("rt_cd") != "0":
-            logger.error(f"[{self.config.broker_name}] Order rejected by broker: {resp.get('msg1')}")
-            return None
+        if not isinstance(resp, dict) or resp.get("rt_cd") != "0":
+            msg_cd = resp.get("msg_cd", "UNKNOWN") if isinstance(resp, dict) else "NO_RESP"
+            msg1 = resp.get("msg1", "Order rejected by broker") if isinstance(resp, dict) else "No response"
+
+            # 실패 원인 세분화 분류
+            if msg_cd == "ERR_TIMEOUT" or "timeout" in msg1.lower() or "timed out" in msg1.lower():
+                failure_status = "TIMEOUT_UNKNOWN"
+            elif msg_cd == "ERR_AUTH" or "auth" in msg1.lower() or "token" in msg1.lower():
+                failure_status = "AUTH_FAILED"
+            elif msg_cd == "ERR_NET" or "network" in msg1.lower() or "transport" in msg1.lower():
+                failure_status = "NETWORK_ERROR"
+            else:
+                failure_status = "REJECTED"
+
+            logger.error(f"[{self.config.broker_name}] Order failed [{failure_status}]: [{msg_cd}] {msg1}")
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status=failure_status,
+                message=f"[{msg_cd}] {msg1}",
+            )
 
         output = resp.get("output", {})
         broker_order_no = output.get("ODNO", f"ORD-{int(time.time() * 1000) % 1000000:06d}")

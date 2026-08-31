@@ -27,7 +27,7 @@ class BrokerMode(str, Enum):
 class BrokerOrderResponse:
     """브로커 주문 접수(ACK/Order ID) 순수 응답 객체 — 실제 체결 보고서(CanonicalExecutionReport)와 엄격히 분리."""
     success: bool
-    broker_order_id: str
+    broker_order_id: Optional[str]
     client_order_id: str
     status: str = "ACCEPTED"
     message: str = "Order accepted by broker"
@@ -47,8 +47,8 @@ class IBrokerAdapter(ABC):
         pass
 
     @abstractmethod
-    def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
-        """주문 접수/제출 (체결 이벤트와 엄격히 분리되며, ACK/broker_order_id 반환)."""
+    def send_order(self, command: CanonicalOrderCommand) -> BrokerOrderResponse:
+        """주문 접수/제출 (체결 이벤트와 엄격히 분리되며, ACK/broker_order_id 또는 실패 상세 반환)."""
         pass
 
     def poll_execution_reports(self) -> List[CanonicalExecutionReport]:
@@ -155,11 +155,29 @@ class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
         self._pending_orders: List[CanonicalOrderCommand] = []
         self._init_control_state()
 
-    def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
+    def send_order(self, command: CanonicalOrderCommand) -> BrokerOrderResponse:
         """주문 접수 및 식별자 반환 (이 시점에는 VSSF 체결을 처리하지 않고 대기 큐에 보관)."""
-        if not self._before_send_order():
-            logger.warning("[PaperBroker] Order blocked by broker control state.")
-            return None
+        if not self._connected:
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="DISCONNECTED",
+                message="[PaperBroker] Broker is disconnected",
+            )
+
+        if self._execution_behavior == "REJECT":
+            logger.info("[PaperBroker] execution behavior REJECT blocked order")
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="SAFETY_BLOCKED",
+                message="[PaperBroker] Order blocked by execution behavior REJECT",
+            )
+
+        if self._execution_behavior == "DELAYED" and self._latency_ms > 0:
+            time.sleep(self._latency_ms / 1000.0)
 
         # Pre-trade Risk 검증: 마진 부족 주문은 거부
         margin_required = self.vssf._controlled_order_margin(command)
@@ -170,7 +188,13 @@ class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
                 margin_required,
                 self.vssf.account.free_margin,
             )
-            return None
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="REJECTED",
+                message=f"[PaperBroker] Insufficient free margin: req={margin_required} > free={self.vssf.account.free_margin}",
+            )
 
         broker_order_id = f"BRK-PAPER-{uuid.uuid4().hex[:8]}"
         self._pending_orders.append(command)
@@ -235,10 +259,28 @@ class ShadowBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
         self.shadow_executions: List[CanonicalExecutionReport] = []
         self._init_control_state()
 
-    def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
-        if not self._before_send_order():
-            logger.warning("[ShadowBroker] Order blocked by broker control state.")
-            return None
+    def send_order(self, command: CanonicalOrderCommand) -> BrokerOrderResponse:
+        if not self._connected:
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="DISCONNECTED",
+                message="[ShadowBroker] Broker is disconnected",
+            )
+
+        if self._execution_behavior == "REJECT":
+            logger.info("[ShadowBroker] execution behavior REJECT blocked order")
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="SAFETY_BLOCKED",
+                message="[ShadowBroker] Order blocked by execution behavior REJECT",
+            )
+
+        if self._execution_behavior == "DELAYED" and self._latency_ms > 0:
+            time.sleep(self._latency_ms / 1000.0)
 
         margin_required = self.vssf._controlled_order_margin(command)
         if self.vssf.account.free_margin < margin_required:
@@ -246,7 +288,13 @@ class ShadowBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
                 "[ShadowBroker] Order %s rejected: insufficient free margin",
                 command.client_order_id,
             )
-            return None
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="REJECTED",
+                message="[ShadowBroker] Insufficient free margin",
+            )
 
         broker_order_id = f"BRK-SHADOW-{uuid.uuid4().hex[:8]}"
         self._pending_orders.append(command)
@@ -314,9 +362,23 @@ class RealBrokerAdapterStub(IBrokerAdapter):
     def disconnect(self) -> None:
         self._connected = False
 
-    def send_order(self, command: CanonicalOrderCommand) -> Optional[BrokerOrderResponse]:
-        if not self._connected or self._execution_behavior == "REJECT":
-            return None
+    def send_order(self, command: CanonicalOrderCommand) -> BrokerOrderResponse:
+        if not self._connected:
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="DISCONNECTED",
+                message="[RealBrokerStub] Broker is disconnected",
+            )
+        if self._execution_behavior == "REJECT":
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="SAFETY_BLOCKED",
+                message="[RealBrokerStub] Execution behavior REJECT",
+            )
         if self._execution_behavior == "DELAYED" and self._latency_ms > 0:
             time.sleep(self._latency_ms / 1000.0)
         return BrokerOrderResponse(

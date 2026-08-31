@@ -229,6 +229,15 @@ class TradingSystem:
                             getattr(ack, "client_order_id", cmd.client_order_id),
                             getattr(ack, "broker_order_id", "N/A"),
                         )
+                    else:
+                        status = getattr(ack, "status", "UNKNOWN") if ack else "NO_RESPONSE"
+                        msg = getattr(ack, "message", "No response") if ack else "send_order returned None"
+                        logger.warning(
+                            "TradingSystem: 주문 발주 실패 (Client: %s, Status: %s, Msg: %s)",
+                            cmd.client_order_id,
+                            status,
+                            msg,
+                        )
 
                 self.ticks_processed += 1
                 await self.ui_ws.broadcast()

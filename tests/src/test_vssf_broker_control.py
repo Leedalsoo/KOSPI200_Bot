@@ -63,16 +63,21 @@ class TestVSSFBrokerControl(unittest.TestCase):
 
         broker.set_connection(False)
         self.assertFalse(broker.is_connected())
-        self.assertIsNone(broker.send_order(make_order("CTRL-DISCONNECTED")))
+        resp_disc = broker.send_order(make_order("CTRL-DISCONNECTED"))
+        self.assertFalse(resp_disc.success)
+        self.assertEqual(resp_disc.status, "DISCONNECTED")
 
         broker.set_connection(True)
         broker.set_execution_behavior("REJECT")
-        self.assertIsNone(broker.send_order(make_order("CTRL-REJECT")))
+        resp_rej = broker.send_order(make_order("CTRL-REJECT"))
+        self.assertFalse(resp_rej.success)
+        self.assertEqual(resp_rej.status, "SAFETY_BLOCKED")
 
         broker.set_execution_behavior("NORMAL")
         broker.set_latency(0)
         report = broker.send_order(make_order("CTRL-NORMAL"))
-        self.assertIsNotNone(report)
+        self.assertTrue(report.success)
+        self.assertEqual(report.status, "ACCEPTED")
 
         state = broker.control_snapshot()
         self.assertTrue(state["connected"])
