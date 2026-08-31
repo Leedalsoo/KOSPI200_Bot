@@ -14,6 +14,7 @@ from virtual_market_simulator.runtime.simulator_runtime import VirtualMarketSimu
 from virtual_securities_firm.runtime.firm_runtime import VirtualSecuritiesFirmRuntime
 from option_program.broker.broker_interface import BrokerFactory, BrokerMode, IBrokerAdapter
 from option_program.runtime.program_runtime import OptionProgramRuntime
+from infra.wal_store import WalStore
 from web_interface.server import TargetArchitectureUIServer, UIWebSocketHub
 
 # Windows 환경 대응을 위한 uvloop 임포트 예외 처리
@@ -80,7 +81,7 @@ class TradingSystem:
             # 4. Virtual Market Simulator Runtime (VMS) 초기화
             self.vms = VirtualMarketSimulatorRuntime()
 
-            # 5. Option Program Runtime (전략, 신호, 리스크, FSM) 초기화
+            # 5. Option Program Runtime (전략, 신호, 리스크, FSM) 및 WalStore 연결
             if self.vssf is not None:
                 initial_summary = self.vssf.get_account_snapshot()
             elif self.broker is not None:
@@ -91,7 +92,12 @@ class TradingSystem:
             else:
                 initial_summary = None
 
-            self.op_runtime = OptionProgramRuntime(account_summary=initial_summary)
+            wal_log_path = self.config.get("wal_log_path")
+            wal_store = self.config.get("wal_store")
+            if wal_store is None and wal_log_path:
+                wal_store = WalStore(log_path=str(wal_log_path))
+
+            self.op_runtime = OptionProgramRuntime(account_summary=initial_summary, wal_store=wal_store)
 
             self.is_running = False
             logger.info(f"TradingSystem: 전체 파이프라인 컴포넌트 초기화 완료 (Broker Mode: {broker_mode.value})")

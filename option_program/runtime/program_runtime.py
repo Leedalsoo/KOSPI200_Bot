@@ -35,9 +35,14 @@ logger = logging.getLogger(__name__)
 
 class OptionProgramRuntime:
     """[OptionProgram 런타임: 순수 전략 알고리즘 -> SignalGenerator -> DecisionArbiter -> RiskGate -> OrderRouter FSM 오케스트레이터]"""
-    def __init__(self, risk_config: Optional[RiskConfig] = None, account_summary: Optional[CanonicalAccountSummary] = None):
+    def __init__(
+        self,
+        risk_config: Optional[RiskConfig] = None,
+        account_summary: Optional[CanonicalAccountSummary] = None,
+        wal_store: Optional[Any] = None,
+    ):
         self.regime_detector = RegimeDetector()
-        self.strategies = [
+        self.strategies: List[Any] = [
             Track1(config={}),
             Track2(config={}),
             Track3(config={}),
@@ -57,12 +62,13 @@ class OptionProgramRuntime:
         self.risk_engine = RiskEngine(config=self.risk_config, risk_sensor=self.risk_sensor)
         self.risk_gate = RiskGate(self.risk_engine)
         self.oms_fsm = OmsFsm()
-        self.order_router = OrderRouter(fsm=self.oms_fsm)
+        self.wal_store = wal_store
+        self.order_router = OrderRouter(fsm=self.oms_fsm, wal_store=self.wal_store)
         self.market_analyzer = MarketConditionAnalyzer()
         self.market_condition: Optional[MarketConditionSnapshot] = None
         self.last_risk_snapshot = None
         self.last_orders: List[Dict[str, Any]] = []
-        self.last_signals: List[Dict[str, Any]] = []
+        self.last_signals: List[Any] = []
         self.enabled_strategies: Dict[str, bool] = {f"Track{i}": True for i in range(1, 10)}
         
         self.account_summary: CanonicalAccountSummary = account_summary or CanonicalAccountSummary(
@@ -349,21 +355,21 @@ class OptionProgramRuntime:
         commands: List[CanonicalOrderCommand] = []
 
         # 6. SignalGenerator 변환 -> RiskGate 사전 심사 -> OrderRouter FSM 등록
-        for sig in approved_signals:
-            st_name = sig.track_id
+        for approved_sig in approved_signals:
+            st_name = approved_sig.track_id
             m = self.strategy_metrics.get(st_name, {})
             
             # CanonicalOrderCommand 생성
             cmd = CanonicalOrderCommand(
-                client_order_id=f"ORD-T{tick.seq_id if tick.seq_id > 0 else self.tick_counter}-{sig.track_id}-{sig.signal_id.split('-')[-1]}",
-                track_id=sig.track_id,
-                asset_type=sig.asset_type,
-                side=sig.side,
-                qty=sig.qty,
-                price=sig.price,
-                option_type=sig.option_type,
-                strike=sig.strike,
-                tag_id=sig.tag_id
+                client_order_id=f"ORD-T{tick.seq_id if tick.seq_id > 0 else self.tick_counter}-{approved_sig.track_id}-{approved_sig.signal_id.split('-')[-1]}",
+                track_id=approved_sig.track_id,
+                asset_type=approved_sig.asset_type,
+                side=approved_sig.side,
+                qty=approved_sig.qty,
+                price=approved_sig.price,
+                option_type=approved_sig.option_type,
+                strike=approved_sig.strike,
+                tag_id=approved_sig.tag_id
             )
 
             # 7. RiskGate 사전 거래 리스크 심사 및 RiskApprovalToken 획득
