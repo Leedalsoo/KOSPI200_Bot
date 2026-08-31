@@ -465,6 +465,10 @@ class OptionProgramRuntime:
         """[8단계-2] client_order_id로부터 broker_order_id 조회."""
         return self.order_router.get_broker_order_id(client_order_id)
 
+    def recover_from_wal(self, events: List[Dict[str, Any]]) -> int:
+        """[D-10 / D-17] WAL 이벤트 로그로부터 누적 체결 상태, 멱등성 exec_id, FSM 상태 복원"""
+        return self.order_router.recover_from_wal(events)
+
 
 
 

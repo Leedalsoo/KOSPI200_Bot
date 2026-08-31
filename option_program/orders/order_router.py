@@ -149,16 +149,16 @@ class OrderRouter:
     ) -> None:
         """체결 보고서 수신에 따른 FSM 상태 전이 및 누적 체결 관리"""
         with self._lock:
-            # [8단계-5] Execution ID 중복수신 방어 (멱등성 보장)
+            # [8단계-5 / D-17] Execution ID 중복수신 방어 (멱등성 보장)
             exec_id = getattr(report, "exec_id", None)
-            if exec_id:
-                if exec_id in self._processed_exec_ids:
+            exec_id_str = str(exec_id) if exec_id is not None and str(exec_id).strip() != "" else None
+            if exec_id_str:
+                if exec_id_str in self._processed_exec_ids:
                     logger.warning(
                         f"[OrderRouter] Duplicate execution report ignored (Idempotency): "
-                        f"exec_id={exec_id}, order_id={order_id}"
+                        f"exec_id={exec_id_str}, order_id={order_id}"
                     )
                     return
-                self._processed_exec_ids.add(exec_id)
 
             cmd_info = self._active_orders.get(order_id)
             requested_qty = cmd_info[0].qty if cmd_info else None
@@ -168,6 +168,10 @@ class OrderRouter:
 
             if report.executed_qty > 0:
                 if requested_qty is not None and new_cum > requested_qty:
+                    # [D-17] 초과 체결 거부 및 WAL 기록
+                    wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.REJECTED, client_id)
+                    if wal_ok and exec_id_str:
+                        self._processed_exec_ids.add(exec_id_str)
                     self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
                     self._active_orders.pop(order_id, None)
                     self._order_brokers.pop(order_id, None)
@@ -177,29 +181,37 @@ class OrderRouter:
                         f"cumulative_qty={new_cum} > requested_qty={requested_qty}"
                     )
                 elif requested_qty is not None and new_cum < requested_qty:
+                    # [D-17] 부분 체결 (PARTIAL) WAL 영속화
+                    wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.PARTIAL, client_id)
+                    if wal_ok and exec_id_str:
+                        self._processed_exec_ids.add(exec_id_str)
                     self._cum_executed_qty[order_id] = new_cum
                     self._executed_qty_history[order_id] = new_cum
                     if client_id:
                         self._client_to_executed_qty[client_id] = new_cum
                     self.fsm.transition_sync(order_id, OrderStatus.PARTIAL)
-                    self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.PARTIAL, client_id)
                     logger.info(
                         f"[OrderRouter] Order {order_id} PARTIAL: {new_cum}/{requested_qty}@{report.executed_price}"
                     )
                 elif requested_qty is not None and new_cum == requested_qty:
+                    # [D-17] 전량 체결 (FILLED) WAL 영속화
+                    wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.FILLED, client_id)
+                    if wal_ok and exec_id_str:
+                        self._processed_exec_ids.add(exec_id_str)
                     self._cum_executed_qty[order_id] = new_cum
                     self._executed_qty_history[order_id] = new_cum
                     if client_id:
                         self._client_to_executed_qty[client_id] = new_cum
                     self.fsm.transition_sync(order_id, OrderStatus.FILLED)
-                    self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.FILLED, client_id)
                     self._active_orders.pop(order_id, None)
                     self._order_brokers.pop(order_id, None)
                     self._cum_executed_qty.pop(order_id, None)
                     logger.info(f"[OrderRouter] Order {order_id} FILLED: {new_cum}@{report.executed_price}")
                 else:
+                    wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.REJECTED, client_id)
+                    if wal_ok and exec_id_str:
+                        self._processed_exec_ids.add(exec_id_str)
                     self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
-                    self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.REJECTED, client_id)
                     self._active_orders.pop(order_id, None)
                     self._order_brokers.pop(order_id, None)
                     self._cum_executed_qty.pop(order_id, None)
@@ -207,8 +219,10 @@ class OrderRouter:
                         f"[OrderRouter] Order {order_id} received execution report for inactive/unknown order: REJECTED."
                     )
             else:
+                wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.REJECTED, client_id)
+                if wal_ok and exec_id_str:
+                    self._processed_exec_ids.add(exec_id_str)
                 self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
-                self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.REJECTED, client_id)
                 self._active_orders.pop(order_id, None)
                 self._order_brokers.pop(order_id, None)
                 self._cum_executed_qty.pop(order_id, None)
@@ -289,10 +303,10 @@ class OrderRouter:
         requested_qty: Optional[int],
         status: OrderStatus,
         client_id: Optional[str],
-    ) -> None:
-        """[D-10] 체결 이벤트 및 누적 체결 상태를 WAL 영속 저장소에 즉시 기록"""
+    ) -> bool:
+        """[D-10 / D-17] 체결 이벤트 및 누적 체결 상태를 WAL 영속 저장소에 즉시 기록"""
         if self.wal_store is None:
-            return
+            return True
 
         try:
             event_type = (
@@ -307,7 +321,7 @@ class OrderRouter:
                 "executed_qty": getattr(report, "executed_qty", 0),
                 "cum_executed_qty": cum_qty,
                 "requested_qty": requested_qty,
-                "executed_price": getattr(report, "executed_price", 0.0),
+                "executed_price": float(getattr(report, "executed_price", 0.0) or 0.0),
                 "status": status.value,
                 "timestamp": getattr(report, "timestamp", str(time.time())),
             }
@@ -322,8 +336,10 @@ class OrderRouter:
                     option=orjson.OPT_APPEND_NEWLINE,
                 )
                 self.wal_store._sync_save(payload)
+            return True
         except Exception as exc:
             logger.error(f"[OrderRouter] Failed to persist execution to WAL: {exc}")
+            return False
 
     def recover_from_wal(self, events: List[Dict[str, Any]]) -> int:
         """[D-10] WAL 이벤트 로그로부터 누적 체결 상태, 멱등성 exec_id, FSM 상태 복원"""
