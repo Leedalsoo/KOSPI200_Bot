@@ -425,7 +425,7 @@ class OptionProgramRuntime:
 
         return commands
 
-    def consume_execution_report(self, report: CanonicalExecutionReport) -> None:
+    def consume_execution_report(self, report: CanonicalExecutionReport) -> bool:
         """[VSSF 체결 증명서 수신 및 OrderRouter / OMS FSM 수명주기 완료 전이]"""
         self.received_execution_reports.append(report)
         client_id = getattr(report, "client_order_id", None)
@@ -438,8 +438,11 @@ class OptionProgramRuntime:
                 order_uuid = self._order_id_to_uuid.get(mapped_client_id)
 
         if order_uuid is not None:
-            self.order_router.handle_execution_report(order_uuid, report)
-            self.oms_fsm.clear_completed_locks()
+            ok = self.order_router.handle_execution_report(order_uuid, report)
+            if ok:
+                self.oms_fsm.clear_completed_locks()
+            return ok
+        return False
 
     def get_order_executed_qty(self, client_order_id: str) -> int:
         """[8단계-3] client_order_id로부터 실제 체결수량 조회."""

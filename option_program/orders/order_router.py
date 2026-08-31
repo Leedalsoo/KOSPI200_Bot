@@ -146,8 +146,8 @@ class OrderRouter:
         self,
         order_id: uuid.UUID,
         report: CanonicalExecutionReport
-    ) -> None:
-        """체결 보고서 수신에 따른 FSM 상태 전이 및 누적 체결 관리"""
+    ) -> bool:
+        """체결 보고서 수신에 따른 FSM 상태 전이 및 누적 체결 관리 (WAL 성공 선행 보장)"""
         with self._lock:
             # [8단계-5 / D-17] Execution ID 중복수신 방어 (멱등성 보장)
             exec_id = getattr(report, "exec_id", None)
@@ -158,7 +158,7 @@ class OrderRouter:
                         f"[OrderRouter] Duplicate execution report ignored (Idempotency): "
                         f"exec_id={exec_id_str}, order_id={order_id}"
                     )
-                    return
+                    return True
 
             cmd_info = self._active_orders.get(order_id)
             requested_qty = cmd_info[0].qty if cmd_info else None
@@ -166,67 +166,73 @@ class OrderRouter:
             prev_cum = self._cum_executed_qty.get(order_id, 0)
             new_cum = prev_cum + report.executed_qty
 
+            # 목표 상태 및 체결 유형 사전 판정
             if report.executed_qty > 0:
                 if requested_qty is not None and new_cum > requested_qty:
-                    # [D-17] 초과 체결 거부 및 WAL 기록
-                    wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.REJECTED, client_id)
-                    if wal_ok and exec_id_str:
-                        self._processed_exec_ids.add(exec_id_str)
-                    self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
-                    self._active_orders.pop(order_id, None)
-                    self._order_brokers.pop(order_id, None)
-                    self._cum_executed_qty.pop(order_id, None)
-                    logger.error(
-                        f"[OrderRouter] Order {order_id} oversized execution rejected: "
-                        f"cumulative_qty={new_cum} > requested_qty={requested_qty}"
-                    )
+                    target_status = OrderStatus.REJECTED
+                    is_oversized = True
                 elif requested_qty is not None and new_cum < requested_qty:
-                    # [D-17] 부분 체결 (PARTIAL) WAL 영속화
-                    wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.PARTIAL, client_id)
-                    if wal_ok and exec_id_str:
-                        self._processed_exec_ids.add(exec_id_str)
-                    self._cum_executed_qty[order_id] = new_cum
-                    self._executed_qty_history[order_id] = new_cum
-                    if client_id:
-                        self._client_to_executed_qty[client_id] = new_cum
-                    self.fsm.transition_sync(order_id, OrderStatus.PARTIAL)
-                    logger.info(
-                        f"[OrderRouter] Order {order_id} PARTIAL: {new_cum}/{requested_qty}@{report.executed_price}"
-                    )
+                    target_status = OrderStatus.PARTIAL
+                    is_oversized = False
                 elif requested_qty is not None and new_cum == requested_qty:
-                    # [D-17] 전량 체결 (FILLED) WAL 영속화
-                    wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.FILLED, client_id)
-                    if wal_ok and exec_id_str:
-                        self._processed_exec_ids.add(exec_id_str)
-                    self._cum_executed_qty[order_id] = new_cum
-                    self._executed_qty_history[order_id] = new_cum
-                    if client_id:
-                        self._client_to_executed_qty[client_id] = new_cum
-                    self.fsm.transition_sync(order_id, OrderStatus.FILLED)
-                    self._active_orders.pop(order_id, None)
-                    self._order_brokers.pop(order_id, None)
-                    self._cum_executed_qty.pop(order_id, None)
-                    logger.info(f"[OrderRouter] Order {order_id} FILLED: {new_cum}@{report.executed_price}")
+                    target_status = OrderStatus.FILLED
+                    is_oversized = False
                 else:
-                    wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.REJECTED, client_id)
-                    if wal_ok and exec_id_str:
-                        self._processed_exec_ids.add(exec_id_str)
-                    self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
-                    self._active_orders.pop(order_id, None)
-                    self._order_brokers.pop(order_id, None)
-                    self._cum_executed_qty.pop(order_id, None)
-                    logger.warning(
-                        f"[OrderRouter] Order {order_id} received execution report for inactive/unknown order: REJECTED."
-                    )
+                    target_status = OrderStatus.REJECTED
+                    is_oversized = False
             else:
-                wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.REJECTED, client_id)
-                if wal_ok and exec_id_str:
-                    self._processed_exec_ids.add(exec_id_str)
+                target_status = OrderStatus.REJECTED
+                is_oversized = False
+
+            # [D-17] WAL 영속화 선행 - WAL 저장 실패 시 메모리 체결 상태 변경 절대 금지
+            wal_ok = self._persist_execution_wal(order_id, report, new_cum, requested_qty, target_status, client_id)
+            if not wal_ok:
+                logger.error(
+                    f"[OrderRouter] WAL persistence failed for order {order_id} (Client: {client_id}, Exec: {exec_id_str}). "
+                    f"Aborting execution state transition to maintain consistency."
+                )
+                return False
+
+            # WAL 영속화 성공 후 멱등성 exec_id 및 메모리 체결 상태 반영
+            if exec_id_str:
+                self._processed_exec_ids.add(exec_id_str)
+
+            if target_status == OrderStatus.PARTIAL:
+                self._cum_executed_qty[order_id] = new_cum
+                self._executed_qty_history[order_id] = new_cum
+                if client_id:
+                    self._client_to_executed_qty[client_id] = new_cum
+                self.fsm.transition_sync(order_id, OrderStatus.PARTIAL)
+                logger.info(
+                    f"[OrderRouter] Order {order_id} PARTIAL: {new_cum}/{requested_qty}@{report.executed_price}"
+                )
+            elif target_status == OrderStatus.FILLED:
+                self._cum_executed_qty[order_id] = new_cum
+                self._executed_qty_history[order_id] = new_cum
+                if client_id:
+                    self._client_to_executed_qty[client_id] = new_cum
+                self.fsm.transition_sync(order_id, OrderStatus.FILLED)
+                self._active_orders.pop(order_id, None)
+                self._order_brokers.pop(order_id, None)
+                self._cum_executed_qty.pop(order_id, None)
+                logger.info(f"[OrderRouter] Order {order_id} FILLED: {new_cum}@{report.executed_price}")
+            else:  # REJECTED
                 self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
                 self._active_orders.pop(order_id, None)
                 self._order_brokers.pop(order_id, None)
                 self._cum_executed_qty.pop(order_id, None)
-                logger.warning(f"[OrderRouter] Order {order_id} REJECTED by Broker.")
+                if is_oversized:
+                    logger.error(
+                        f"[OrderRouter] Order {order_id} oversized execution rejected: "
+                        f"cumulative_qty={new_cum} > requested_qty={requested_qty}"
+                    )
+                elif report.executed_qty <= 0:
+                    logger.warning(f"[OrderRouter] Order {order_id} REJECTED by Broker.")
+                else:
+                    logger.warning(
+                        f"[OrderRouter] Order {order_id} received execution report for inactive/unknown order: REJECTED."
+                    )
+            return True
 
     def _persist_order_intent_wal(self, order_id: uuid.UUID, command: CanonicalOrderCommand) -> bool:
         """[D-15] 주문 생성 및 FSM 등록 시점에 ORDER_INTENT WAL 영속화"""

@@ -7,12 +7,13 @@
 - 테스트 4: 프로세스 재시작(새 OrderRouter 인스턴스) 후 WAL 복원 및 과거 exec_id 재수신 차단 검증
 - 테스트 5: 다중 PARTIAL 체결 누적 및 WAL 복원 정밀도 검증
 - 테스트 6: PARTIAL -> FILLED 체결 전이 및 종료 주문의 active_orders 정리 및 복원 일관성 검증
-- 테스트 7: WAL 기록 실패 시 FSM 및 메모리 상태 안전성 검증
+- 테스트 7: WAL 기록 실패 시 FSM, 누적수량, active_orders, processed_exec_ids 오염 방지 및 재시도 성공 검증
 - 테스트 8: exec_id가 None/빈문자열인 경우의 정상 동작 보존 검증
 - 테스트 9: OptionProgramRuntime을 통한 체결 수신 및 WAL 영속/복원 통합 경로 검증
 """
 
 import uuid
+from unittest.mock import MagicMock
 import pytest
 from infra.wal_store import WalStore
 from option_program.orders.oms_fsm import OrderStatus
@@ -85,7 +86,8 @@ async def test_execution_report_persists_to_wal_with_all_fields(tmp_path):
     router.register_and_route(command=cmd, token=tok)
 
     report = make_report(oid, "ORD-F1", exec_id="EXEC-001", exec_qty=4, price=3.0)
-    router.handle_execution_report(oid, report)
+    ok = router.handle_execution_report(oid, report)
+    assert ok is True
 
     assert router.fsm.get_status(oid) == OrderStatus.PARTIAL
     assert router.get_executed_qty(oid) == 4
@@ -121,12 +123,14 @@ async def test_duplicate_exec_id_ignored_idempotency(tmp_path):
 
     # 1차 수신
     rep1 = make_report(oid, "ORD-DUP", exec_id="EXEC-DUP-99", exec_qty=3)
-    router.handle_execution_report(oid, rep1)
+    ok1 = router.handle_execution_report(oid, rep1)
+    assert ok1 is True
     assert router.get_executed_qty(oid) == 3
 
     # 2차 중복 수신 (동일 exec_id)
     rep2 = make_report(oid, "ORD-DUP", exec_id="EXEC-DUP-99", exec_qty=3)
-    router.handle_execution_report(oid, rep2)
+    ok2 = router.handle_execution_report(oid, rep2)
+    assert ok2 is True
     assert router.get_executed_qty(oid) == 3  # 수량 증가 없음
 
     history = await wal_store.load_history()
@@ -185,20 +189,21 @@ async def test_restart_recovery_blocks_past_exec_id_replay(tmp_path):
     # 재시작 모사
     history = await wal_store.load_history()
     router2 = OrderRouter(wal_store=wal_store)
-    # 활성 주문 복원 (active_orders에 등록된 상태 가정)
     router2._active_orders[oid] = (cmd, tok)
     router2.recover_from_wal(history)
 
     # 과거 exec_id가 다시 유입됨
     rep_dup = make_report(oid, "ORD-RST", exec_id="EXEC-PAST-1", exec_qty=5)
-    router2.handle_execution_report(oid, rep_dup)
+    ok_dup = router2.handle_execution_report(oid, rep_dup)
+    assert ok_dup is True
 
     # 체결량이 5에서 10으로 중복 증가하지 않아야 함
     assert router2.get_executed_qty(oid) == 5
 
     # 신규 exec_id 유입 시 정상 체결
     rep_new = make_report(oid, "ORD-RST", exec_id="EXEC-NEW-2", exec_qty=5)
-    router2.handle_execution_report(oid, rep_new)
+    ok_new = router2.handle_execution_report(oid, rep_new)
+    assert ok_new is True
 
     assert router2.get_executed_qty(oid) == 10
     assert router2.fsm.get_status(oid) == OrderStatus.FILLED
@@ -271,15 +276,53 @@ async def test_partial_to_filled_and_active_orders_cleanup(tmp_path):
     assert new_router.get_executed_qty(oid) == 5
 
 
+def test_wal_persistence_failure_blocks_execution_state_mutation():
+    """테스트 7: WAL 저장 실패 시 FSM, 누적체결수량, active_orders, processed_exec_ids 오염 방지 및 재시도 성공 검증."""
+    mock_wal = MagicMock()
+    # 1. WAL 저장 실패 설정
+    mock_wal.save_event_sync.side_effect = IOError("Disk full or WAL write error")
+
+    router = OrderRouter(wal_store=mock_wal)
+    cmd = make_cmd("ORD-FAIL-WAL", qty=10)
+    oid = uuid.uuid4()
+    tok = make_token(oid, "ORD-FAIL-WAL")
+    # Intent 저장 실패 시 None 반환되므로 wal_store 일시 비활성화 후 등록
+    router.wal_store = None
+    router.register_and_route(command=cmd, token=tok)
+    router.wal_store = mock_wal
+
+    assert router.fsm.get_status(oid) == OrderStatus.SENT
+    assert router.get_executed_qty(oid) == 0
+    assert oid in router._active_orders
+
+    # 체결 이벤트 수신 시 WAL 저장 실패 발생
+    rep = make_report(oid, "ORD-FAIL-WAL", exec_id="EXEC-FAIL-01", exec_qty=5)
+    ok = router.handle_execution_report(oid, rep)
+
+    # 검증 A: 실패 반환 및 상태 불변
+    assert ok is False
+    assert "EXEC-FAIL-01" not in router._processed_exec_ids
+    assert router.get_executed_qty(oid) == 0
+    assert router.fsm.get_status(oid) == OrderStatus.SENT
+    assert oid in router._active_orders
+
+    # 검증 B: WAL 저장소 정상 복구 후 재시도 시 정상 성공
+    mock_wal.save_event_sync.side_effect = None
+    ok_retry = router.handle_execution_report(oid, rep)
+    assert ok_retry is True
+    assert "EXEC-FAIL-01" in router._processed_exec_ids
+    assert router.get_executed_qty(oid) == 5
+    assert router.fsm.get_status(oid) == OrderStatus.PARTIAL
+
+
 def test_exec_id_none_or_empty_safe_handling():
-    """테스트 7: exec_id가 None/빈문자열인 경우 중복 검사 우회 후 정상 체결 처리 검증."""
+    """테스트 8: exec_id가 None/빈문자열인 경우 중복 검사 우회 후 정상 체결 처리 검증."""
     router = OrderRouter()
     cmd = make_cmd("ORD-NO-EXEC-ID", qty=5)
     oid = uuid.uuid4()
     tok = make_token(oid, "ORD-NO-EXEC-ID")
     router.register_and_route(command=cmd, token=tok)
 
-    # exec_id가 None인 report
     rep = CanonicalExecutionReport(
         exec_id="",
         client_order_id="ORD-NO-EXEC-ID",
@@ -292,14 +335,15 @@ def test_exec_id_none_or_empty_safe_handling():
         slippage=0.0,
         timestamp="2026-08-23 10:00:00",
     )
-    router.handle_execution_report(oid, rep)
+    ok = router.handle_execution_report(oid, rep)
+    assert ok is True
     assert router.get_executed_qty(oid) == 2
     assert router.fsm.get_status(oid) == OrderStatus.PARTIAL
 
 
 @pytest.mark.asyncio
 async def test_option_program_runtime_execution_and_recovery_path(tmp_path):
-    """테스트 8: OptionProgramRuntime을 통한 체결 수신 및 WAL 영속/복원 통합 경로 검증."""
+    """테스트 9: OptionProgramRuntime을 통한 체결 수신 및 WAL 영속/복원 통합 경로 검증."""
     wal_file = str(tmp_path / "runtime_exec.wal")
     wal_store = WalStore(log_path=wal_file)
     runtime = OptionProgramRuntime(wal_store=wal_store)
@@ -311,7 +355,8 @@ async def test_option_program_runtime_execution_and_recovery_path(tmp_path):
     runtime._order_id_to_uuid["ORD-RT-01"] = oid
 
     rep = make_report(oid, "ORD-RT-01", exec_id="EXEC-RT-1", exec_qty=6)
-    runtime.consume_execution_report(rep)
+    ok = runtime.consume_execution_report(rep)
+    assert ok is True
 
     assert runtime.get_order_executed_qty("ORD-RT-01") == 6
     assert runtime.order_router.fsm.get_status(oid) == OrderStatus.FILLED
