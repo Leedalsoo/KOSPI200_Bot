@@ -99,6 +99,14 @@ class RealBrokerHttpClient:
                 },
                 "output2": []
             }
+        elif "inquire-ccld" in path:
+            return {
+                "rt_cd": "0",
+                "msg_cd": "APBK0013",
+                "msg1": "조회 완료",
+                "output1": [],
+                "output2": {}
+            }
         return {"rt_cd": "0", "output": {}}
 
     def authenticate(self) -> bool:
@@ -145,12 +153,15 @@ class RealBrokerAdapter(IBrokerAdapter):
         self._connected: bool = False
         self._orders_history: Dict[str, Dict[str, Any]] = {}
         self._pending_executions: List[CanonicalExecutionReport] = []
+        self._seen_exec_ids: set[str] = set()
+        self._listener_running: bool = False
 
     def connect(self) -> bool:
-        """실전 증권사 세션 연결 및 토큰 인증"""
+        """실전 증권사 세션 연결 및 토큰 인증, 체결 수신 리스너 활성화"""
         logger.info(f"[{self.config.broker_name}] Initializing real broker connection...")
         if self.client.authenticate():
             self._connected = True
+            self.start_execution_listener()
             logger.info(f"[{self.config.broker_name}] Connected and armed for live trading.")
             return True
         self._connected = False
@@ -158,11 +169,109 @@ class RealBrokerAdapter(IBrokerAdapter):
         return False
 
     def disconnect(self) -> None:
+        """실전 증권사 세션 연결 해제 및 체결 수신 리스너 안전 종료"""
+        self.stop_execution_listener()
         self._connected = False
         logger.info(f"[{self.config.broker_name}] Disconnected.")
 
     def is_connected(self) -> bool:
         return self._connected
+
+    def start_execution_listener(self) -> None:
+        """체결 이벤트 수신 계층 활성화"""
+        self._listener_running = True
+        logger.info(f"[{self.config.broker_name}] Execution listener started.")
+
+    def stop_execution_listener(self) -> None:
+        """체결 이벤트 수신 계층 안전 종료"""
+        self._listener_running = False
+        self._pending_executions.clear()
+        logger.info(f"[{self.config.broker_name}] Execution listener stopped.")
+
+    def inject_execution_report(self, report: CanonicalExecutionReport) -> None:
+        """[수신 계층/테스트용] 실시간 WebSocket 또는 외부 수신 체결 보고서 큐 주입"""
+        if report and getattr(report, "exec_id", None):
+            if report.exec_id not in self._seen_exec_ids:
+                self._seen_exec_ids.add(report.exec_id)
+                self._pending_executions.append(report)
+        else:
+            self._pending_executions.append(report)
+
+    def poll_execution_reports(self) -> List[CanonicalExecutionReport]:
+        """[D-11] 실제 증권사 체결 이벤트 수신/폴링 및 CanonicalExecutionReport 정규화"""
+        if not self._connected:
+            return []
+
+        reports: List[CanonicalExecutionReport] = []
+
+        # 1. 내부 수신 큐(WebSocket 이벤트 또는 사전 주입 건) 처리
+        while self._pending_executions:
+            rep = self._pending_executions.pop(0)
+            reports.append(rep)
+
+        # 2. 증권사 REST 체결 내역 조회 (inquire-ccld)
+        try:
+            resp = self.client.request(
+                "GET",
+                "/uapi/domestic-futureoption/v1/trading/inquire-ccld",
+                tr_id="TTTO1101R"
+            )
+            if isinstance(resp, dict) and resp.get("rt_cd") == "0":
+                output1 = resp.get("output1", [])
+                if isinstance(output1, list):
+                    for item in output1:
+                        if not isinstance(item, dict):
+                            continue
+                        ccld_qty_raw = item.get("ccld_qty") or item.get("ord_qty") or "0"
+                        try:
+                            ccld_qty = int(float(ccld_qty_raw))
+                        except (ValueError, TypeError):
+                            continue
+
+                        if ccld_qty <= 0:
+                            continue
+
+                        odno = str(item.get("odno", "")).strip()
+                        ccld_time = str(item.get("ord_tmd", "") or item.get("ccld_time", "")).strip()
+                        exec_id = item.get("exec_id") or f"EXEC-{odno}-{ccld_time}-{ccld_qty}"
+
+                        if exec_id in self._seen_exec_ids:
+                            continue
+                        self._seen_exec_ids.add(exec_id)
+
+                        symbol = item.get("pdno") or item.get("prdt_cd") or item.get("symbol") or "101V3000"
+                        side_cd = str(item.get("sll_buy_dvsn_cd") or item.get("side") or "02")
+                        side = CanonicalOrderSide.SELL if side_cd in ["01", "SELL"] else CanonicalOrderSide.BUY
+
+                        try:
+                            executed_price = float(item.get("ccld_pric") or item.get("avg_pric") or item.get("price") or 0.0)
+                        except (ValueError, TypeError):
+                            executed_price = 0.0
+
+                        asset_type = (
+                            CanonicalAssetType.OPTION
+                            if ("201" in symbol or "301" in symbol)
+                            else CanonicalAssetType.FUTURES
+                        )
+
+                        report = CanonicalExecutionReport(
+                            exec_id=exec_id,
+                            client_order_id=item.get("client_order_id", odno),
+                            track_id=item.get("track_id", "REAL_BROKER"),
+                            asset_type=asset_type,
+                            side=side,
+                            executed_qty=ccld_qty,
+                            executed_price=executed_price,
+                            fee=float(item.get("fee", 0.0)),
+                            slippage=float(item.get("slippage", 0.0)),
+                            timestamp=item.get("timestamp") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            symbol=symbol,
+                        )
+                        reports.append(report)
+        except Exception as exc:
+            logger.exception(f"[{self.config.broker_name}] Exception while polling execution reports: {exc}")
+
+        return reports
 
     def send_order(self, command: CanonicalOrderCommand) -> BrokerOrderResponse:
         """CanonicalOrderCommand ➔ 증권사 파생상품 주문 API 호출 ➔ BrokerOrderResponse (ACK/실패분류) 반환"""
@@ -258,17 +367,6 @@ class RealBrokerAdapter(IBrokerAdapter):
             status="ACCEPTED",
             message="Real broker order placed successfully"
         )
-
-    def inject_execution_report(self, report: CanonicalExecutionReport) -> None:
-        """[8단계-FAIL 보완] 실제 체결 이벤트 수신 또는 테스트 주입 경로"""
-        if report is not None:
-            self._pending_executions.append(report)
-
-    def poll_execution_reports(self) -> List[CanonicalExecutionReport]:
-        """실전 증권사 체결 이벤트 폴링 (주문 접수와 분리된 실제 체결 전달 경로)"""
-        reps = list(self._pending_executions)
-        self._pending_executions.clear()
-        return reps
 
     def cancel_order(self, client_order_id: str) -> bool:
         """주문 취소 API 호출"""
