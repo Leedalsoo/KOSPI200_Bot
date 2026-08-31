@@ -278,10 +278,51 @@ class RealBrokerAdapter(IBrokerAdapter):
         )
 
     def get_positions(self) -> Dict[str, Any]:
-        """실시간 보유 포지션 조회"""
+        """실시간 보유 포지션 조회 및 정규화"""
         if not self._connected:
-            return {}
-        return {}
+            raise RuntimeError(f"[{self.config.broker_name}] Broker is disconnected: cannot query positions")
+
+        resp = self.client.request("GET", "/uapi/domestic-futureoption/v1/trading/inquire-balance", tr_id="TTTO1104R")
+        if not isinstance(resp, dict) or resp.get("rt_cd") != "0":
+            msg_cd = resp.get("msg_cd", "UNKNOWN") if isinstance(resp, dict) else "NO_RESP"
+            msg1 = resp.get("msg1", "Position balance query failed") if isinstance(resp, dict) else "No response"
+            raise RuntimeError(f"[{self.config.broker_name}] Position query failed: [{msg_cd}] {msg1}")
+
+        output2 = resp.get("output2", [])
+        if not isinstance(output2, list):
+            raise RuntimeError(f"[{self.config.broker_name}] Invalid position response: 'output2' must be a list")
+
+        positions: Dict[str, Any] = {}
+        for item in output2:
+            if not isinstance(item, dict):
+                continue
+            symbol = item.get("pdno") or item.get("prdt_cd") or item.get("symbol") or item.get("item_code")
+            if not symbol:
+                continue
+
+            qty_raw = item.get("cclt_qty") or item.get("hld_qty") or item.get("ord_psbl_qty") or item.get("qty") or "0"
+            side_raw = str(item.get("sll_buy_dvsn_cd") or item.get("side") or "02")
+            avg_price_raw = item.get("pchs_avg_pric") or item.get("avg_price") or "0.0"
+            pnl_raw = item.get("evlu_pfls_amt") or item.get("pnl") or "0.0"
+
+            try:
+                qty = int(float(qty_raw))
+                avg_price = float(avg_price_raw)
+                pnl = float(pnl_raw)
+            except (ValueError, TypeError) as exc:
+                raise RuntimeError(f"[{self.config.broker_name}] Invalid numeric data in position item: {exc}") from exc
+
+            if qty > 0:
+                side = "SELL" if side_raw in ["01", "SELL"] else "BUY"
+                positions[symbol] = {
+                    "symbol": symbol,
+                    "qty": qty,
+                    "side": side,
+                    "avg_price": avg_price,
+                    "pnl": pnl
+                }
+
+        return positions
 
     def _map_instrument_code(self, command: CanonicalOrderCommand) -> str:
         """Canonical DTO ➔ 표준 KRX 선물/옵션 종목코드 매핑"""
