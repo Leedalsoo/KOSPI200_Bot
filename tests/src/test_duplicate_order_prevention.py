@@ -262,6 +262,8 @@ def test_reuse_blocked_after_order_completion():
     token_b = make_test_token(oid_b, client_order_id="ORD-TERM-B")
     router.register_and_route(command=cmd_b, token=token_b)
     router.cancel_stale_order(oid_b)
+    assert router.fsm.get_status(oid_b) == OrderStatus.CANCEL_REQUESTED
+    router.confirm_cancel(oid_b)
     assert router.fsm.get_status(oid_b) == OrderStatus.CANCELLED
 
     # CANCELLED 후 동일 토큰 재요청 -> 차단

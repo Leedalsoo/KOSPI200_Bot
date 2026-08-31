@@ -127,12 +127,13 @@ def test_direct_sent_to_filled_and_rejected_transitions():
     assert fsm2.transition_sync(oid2, OrderStatus.REJECTED) is True
     assert fsm2.get_status(oid2) == OrderStatus.REJECTED
 
-    # SENT -> CANCELLED
+    # SENT -> CANCEL_REQUESTED -> CANCELLED
     fsm3 = OmsFsm()
     oid3 = uuid.uuid4()
     assert fsm3.transition_sync(oid3, OrderStatus.NEW) is True
     assert fsm3.transition_sync(oid3, OrderStatus.VALIDATED) is True
     assert fsm3.transition_sync(oid3, OrderStatus.SENT) is True
+    assert fsm3.transition_sync(oid3, OrderStatus.CANCEL_REQUESTED) is True
     assert fsm3.transition_sync(oid3, OrderStatus.CANCELLED) is True
     assert fsm3.get_status(oid3) == OrderStatus.CANCELLED
 
@@ -237,12 +238,16 @@ def test_partial_to_cancelled_via_stale_cancel():
     router.handle_execution_report(order_id, rep)
     assert router.fsm.get_status(order_id) == OrderStatus.PARTIAL
 
-    # 시간 경과 후 stale scan 및 취소
+    # 시간 경과 후 stale scan 및 취소 요청
     stale_ids = router.scan_stale_orders(current_time=time.time() + 10.0)
     assert order_id in stale_ids
 
     cancelled = router.cancel_stale_order(order_id)
     assert cancelled is True
+    assert router.fsm.get_status(order_id) == OrderStatus.CANCEL_REQUESTED
+
+    # 실제 취소 확정 수신 시 CANCELLED 전이
+    assert router.confirm_cancel(order_id) is True
     assert router.fsm.get_status(order_id) == OrderStatus.CANCELLED
     assert order_id not in router._active_orders
 

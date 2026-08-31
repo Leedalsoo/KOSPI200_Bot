@@ -221,7 +221,7 @@ class OrderRouter:
             return stale_order_ids
 
     def cancel_stale_order(self, order_id: uuid.UUID, broker_adapter: Optional[Any] = None) -> bool:
-        """미체결 지연 주문 실제 Broker cancel_order() 호출 및 FSM 상태 전이"""
+        """미체결 지연 주문 실제 Broker cancel_order() 호출 및 CANCEL_REQUESTED 전이 (D-09)"""
         with self._lock:
             if order_id not in self._active_orders:
                 return False
@@ -232,27 +232,60 @@ class OrderRouter:
 
             if broker is not None:
                 try:
-                    cancelled = broker.cancel_order(client_order_id)
-                    if cancelled:
-                        self.fsm.transition_sync(order_id, OrderStatus.CANCELLED)
-                        self._active_orders.pop(order_id, None)
-                        self._order_brokers.pop(order_id, None)
-                        self._cum_executed_qty.pop(order_id, None)
-                        logger.info(f"[OrderRouter] Stale order {order_id} ({client_order_id}) CANCELLED safely via Broker.")
+                    cancelled_req = broker.cancel_order(client_order_id)
+                    if cancelled_req:
+                        # [D-09] 취소 요청 성공 시 CANCEL_REQUESTED로 전이하며, 실제 취소 확정 전까지 active_orders 유지
+                        self.fsm.transition_sync(order_id, OrderStatus.CANCEL_REQUESTED)
+                        logger.info(
+                            f"[OrderRouter] Stale order {order_id} ({client_order_id}) cancel requested to Broker (CANCEL_REQUESTED)."
+                        )
                         return True
                     else:
-                        logger.warning(f"[OrderRouter] Broker failed to cancel stale order {order_id} ({client_order_id}).")
+                        logger.warning(
+                            f"[OrderRouter] Broker failed to cancel stale order {order_id} ({client_order_id}). Order preserved."
+                        )
                         return False
                 except Exception as exc:
-                    logger.error(f"[OrderRouter] Exception while cancelling stale order {order_id} ({client_order_id}) via Broker: {exc}")
+                    logger.error(
+                        f"[OrderRouter] Exception while cancelling stale order {order_id} ({client_order_id}) via Broker: {exc}"
+                    )
                     return False
             else:
-                self.fsm.transition_sync(order_id, OrderStatus.CANCELLED)
-                self._active_orders.pop(order_id, None)
-                self._order_brokers.pop(order_id, None)
-                self._cum_executed_qty.pop(order_id, None)
-                logger.info(f"[OrderRouter] Stale order {order_id} CANCELLED safely (no broker attached).")
+                self.fsm.transition_sync(order_id, OrderStatus.CANCEL_REQUESTED)
+                logger.info(f"[OrderRouter] Stale order {order_id} cancel requested (no broker attached).")
                 return True
+
+    def confirm_cancel(self, order_identifier: Any) -> bool:
+        """[D-09] 실제 Broker 취소 확정(Cancellation Confirmation) 수신 시 CANCEL_REQUESTED -> CANCELLED 전이 및 active 주문 정리"""
+        with self._lock:
+            order_id: Optional[uuid.UUID] = None
+            if isinstance(order_identifier, uuid.UUID):
+                order_id = order_identifier
+            elif isinstance(order_identifier, str):
+                # client_order_id로부터 order_uuid 탐색
+                for u, (cmd, _) in self._active_orders.items():
+                    if getattr(cmd, "client_order_id", None) == order_identifier:
+                        order_id = u
+                        break
+
+            if order_id is None:
+                logger.warning(f"[OrderRouter] Cannot confirm cancellation for unknown order identifier: {order_identifier}")
+                return False
+
+            current_status = self.fsm.get_status(order_id)
+            if current_status != OrderStatus.CANCEL_REQUESTED:
+                logger.warning(
+                    f"[OrderRouter] Cannot confirm cancellation for order {order_id}: "
+                    f"Current status is {current_status}, expected {OrderStatus.CANCEL_REQUESTED}"
+                )
+                return False
+
+            self.fsm.transition_sync(order_id, OrderStatus.CANCELLED)
+            self._active_orders.pop(order_id, None)
+            self._order_brokers.pop(order_id, None)
+            self._cum_executed_qty.pop(order_id, None)
+            logger.info(f"[OrderRouter] Order {order_id} ({order_identifier}) CANCELLED confirmed safely.")
+            return True
 
     def register_broker_order_id(self, order_identifier: Any, broker_order_id: str) -> None:
         """[8단계-2] 주문 접수 ACK 성공 시 client_order_id 또는 order_uuid와 broker_order_id 간의 양방향 매핑 등록."""

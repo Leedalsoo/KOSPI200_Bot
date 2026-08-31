@@ -156,12 +156,16 @@ def test_partial_then_timeout_and_cancel_path():
     stale_orders = router.scan_stale_orders(current_time=submitted_time + 30.1)
     assert order_uuid in stale_orders
 
-    # 4. cancel_stale_order() 실행
+    # 4. cancel_stale_order() 실행 (취소 요청 -> CANCEL_REQUESTED)
     success = router.cancel_stale_order(order_uuid)
     assert success is True
     broker_mock.cancel_order.assert_called_once_with("ORD-PT-001")
+    assert router.fsm.get_status(order_uuid) == OrderStatus.CANCEL_REQUESTED
+    assert order_uuid in router._active_orders  # 확정 전까지 active_orders 유지
 
-    # 5. FSM 상태 CANCELLED 전이 및 active_orders 정리 검증
+    # 5. 실제 취소 확정 수신 시 CANCELLED 전이 및 active_orders 정리 검증
+    confirm_ok = router.confirm_cancel(order_uuid)
+    assert confirm_ok is True
     assert router.fsm.get_status(order_uuid) == OrderStatus.CANCELLED
     assert order_uuid not in router._active_orders
     assert order_uuid not in router._order_brokers
@@ -370,8 +374,10 @@ def test_full_order_exception_lifecycle_event_path():
     cancel_res = router.cancel_stale_order(order_uuid)
     assert cancel_res is True
     broker_mock.cancel_order.assert_called_once_with("ORD-E2E-001")
+    assert router.fsm.get_status(order_uuid) == OrderStatus.CANCEL_REQUESTED
 
-    # 5. 최종 FSM 상태 확인 및 자원 정리 검증
+    # 5. 실제 취소 확정 수신 시 최종 CANCELLED 전이 및 자원 정리 검증
+    assert router.confirm_cancel(order_uuid) is True
     assert router.fsm.get_status(order_uuid) == OrderStatus.CANCELLED
     assert order_uuid not in router._active_orders
     assert order_uuid not in router._cum_executed_qty
