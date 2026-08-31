@@ -7,6 +7,8 @@ import gc
 import logging
 import signal
 import sys
+import threading
+import time
 from typing import Any, Callable, Dict, Optional, List
 
 from shared.contracts.canonical import CanonicalMarketTick, CanonicalOrderCommand, CanonicalExecutionReport
@@ -45,6 +47,11 @@ class TradingSystem:
         self.ticks_processed: int = 0
         self.orders_routed: int = 0
         self.executions_handled: int = 0
+        self.reconcile_count: int = 0
+        self.reconcile_interval_sec: float = float(self.config.get("reconcile_interval_sec", 1.0))
+        self._last_reconcile_time: float = 0.0
+        self._reconcile_lock: threading.Lock = threading.Lock()
+        self.last_reconcile_summary: Optional[Dict[str, Any]] = None
         self.last_tick: Optional[CanonicalMarketTick] = None
         self.broker_mode: str = str(self.config.get("broker_mode", "PAPER")).upper()
         self.ui_server = TargetArchitectureUIServer(self)
@@ -137,10 +144,26 @@ class TradingSystem:
             logger.warning("TradingSystem: Broker get_positions 동기화 실패 (기존 성공 타임스탬프 유지): %s", exc)
 
     def reconcile_orders(self) -> Dict[str, Any]:
-        """[D-13] Broker 주문 상태와 내부 OMS 간의 실시간 Reconciliation 실행."""
+        """[D-13] Broker 주문 상태와 내부 OMS 간의 실시간 Reconciliation 실행 (중복 실행 방지 보장)."""
         if self.broker is None or self.op_runtime is None:
             return {}
-        return self.op_runtime.reconcile_with_broker(self.broker)
+
+        # 중복 실행 방지: 이전 reconcile이 진행 중이면 안전하게 건너뜀
+        if not self._reconcile_lock.acquire(blocking=False):
+            logger.debug("TradingSystem: Reconciliation 이미 실행 중 — 건너뜀 (중복 방지)")
+            return {"status": "SKIPPED_CONCURRENT"}
+
+        try:
+            result = self.op_runtime.reconcile_with_broker(self.broker)
+            self._last_reconcile_time = time.time()
+            self.reconcile_count += 1
+            self.last_reconcile_summary = result
+            return result
+        except Exception as exc:
+            logger.error("TradingSystem: reconcile_orders 실행 중 예외 발생: %s", exc)
+            return {"status": "FAILED", "error": str(exc)}
+        finally:
+            self._reconcile_lock.release()
 
     def _lockdown_os(self) -> None:
         """메모리 스와핑 잠금 및 리얼타임 스케줄러 설정 (HFT 헌법 4부 강제)"""
@@ -226,6 +249,11 @@ class TradingSystem:
                     break
                 
                 self.last_tick = tick
+
+                # 0. [운영 Reconciliation 사이클] 정해진 주기(reconcile_interval_sec)마다 Broker ↔ 내부 OMS 대사 자동 실행
+                now = time.time()
+                if (now - self._last_reconcile_time) >= self.reconcile_interval_sec:
+                    self.reconcile_orders()
 
                 # 1. [체결 사이클] 이전 틱에서 접수된 주문의 체결 이벤트 수신 및 처리 (선행 체결 처리)
                 if hasattr(self.broker, "poll_execution_reports"):

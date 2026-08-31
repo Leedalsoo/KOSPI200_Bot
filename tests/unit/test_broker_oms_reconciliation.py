@@ -336,3 +336,106 @@ def test_reconciliation_wal_failure_safety_flag():
     summary = router.reconcile_with_broker(broker)
 
     assert summary["wal_persisted"] is False
+
+
+@pytest.mark.asyncio
+async def test_trading_system_run_loop_auto_calls_reconciliation(tmp_path):
+    """테스트 12: TradingSystem.run_loop() 실행 시 reconcile_orders가 자동 주기 호출되는지 검증."""
+    from main import TradingSystem
+
+    wal_file = str(tmp_path / "ts_auto_recon.wal")
+    config = {
+        "broker_mode": "PAPER",
+        "wal_log_path": wal_file,
+        "reconcile_interval_sec": 0.0,  # 매 틱마다 즉시 reconciliation 실행
+    }
+    ts = TradingSystem(config=config)
+    await ts.initialize()
+
+    assert ts.reconcile_count == 0
+
+    # 10틱 실행
+    await ts.run_loop(max_ticks=10)
+
+    # 틱 순회 중에 자동으로 reconciliation이 호출되었음을 검증
+    assert ts.reconcile_count > 0
+    assert ts.last_reconcile_summary is not None
+    assert ts.last_reconcile_summary.get("status") == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_trading_system_reconciliation_interval_control(tmp_path):
+    """테스트 13: reconcile_interval_sec 주기에 따라 호출 빈도가 제어되는지 검증."""
+    from main import TradingSystem
+
+    wal_file = str(tmp_path / "ts_interval_recon.wal")
+    # 매우 긴 주기 설정 (100초) -> 틱이 빠르게 돌아도 첫 틱 1회만 호출됨
+    config = {
+        "broker_mode": "PAPER",
+        "wal_log_path": wal_file,
+        "reconcile_interval_sec": 100.0,
+    }
+    ts = TradingSystem(config=config)
+    await ts.initialize()
+
+    await ts.run_loop(max_ticks=20)
+
+    # 20틱이 돌았지만 긴 주기로 인해 정확히 1회만 호출됨
+    assert ts.reconcile_count == 1
+
+
+@pytest.mark.asyncio
+async def test_trading_system_reconciliation_concurrent_execution_prevention(tmp_path):
+    """테스트 14: 이전 reconciliation 실행 중일 때 중복 실행 방지(SKIPPED_CONCURRENT) 검증."""
+    from main import TradingSystem
+
+    wal_file = str(tmp_path / "ts_concur_recon.wal")
+    config = {
+        "broker_mode": "PAPER",
+        "wal_log_path": wal_file,
+    }
+    ts = TradingSystem(config=config)
+    await ts.initialize()
+
+    # 인위적으로 락을 점유하여 실행 중인 상태를 모사
+    ts._reconcile_lock.acquire()
+    try:
+        res = ts.reconcile_orders()
+        assert res.get("status") == "SKIPPED_CONCURRENT"
+    finally:
+        ts._reconcile_lock.release()
+
+    # 락 해제 후 정상 실행
+    res_normal = ts.reconcile_orders()
+    assert res_normal.get("status") == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_trading_system_reconciliation_uncertain_blocks_new_orders_in_run_loop(tmp_path):
+    """테스트 15: 운영 중 reconciliation에 의해 UNKNOWN 격리 발생 시 run_loop 내 신규 주문이 SAFETY BLOCK으로 차단되는지 검증."""
+    from main import TradingSystem
+
+    wal_file = str(tmp_path / "ts_safety_block.wal")
+    config = {
+        "broker_mode": "PAPER",
+        "wal_log_path": wal_file,
+        "reconcile_interval_sec": 0.0,
+    }
+    ts = TradingSystem(config=config)
+    await ts.initialize()
+
+    # 가상으로 UNKNOWN 주문을 발생시킴
+    cmd = make_cmd("ORD-SAFETY-TEST", qty=5)
+    oid = uuid.uuid4()
+    tok = make_token(oid, "ORD-SAFETY-TEST")
+    ts.op_runtime.order_router.register_and_route(command=cmd, token=tok)
+    ts.op_runtime.order_router.mark_order_unknown(oid, reason="BROKER_TIMEOUT")
+
+    assert ts.op_runtime.has_unresolved_unknown_orders() is True
+    initial_orders_routed = ts.orders_routed
+
+    # 틱 루프 5회 실행
+    await ts.run_loop(max_ticks=5)
+
+    # 미해결 UNKNOWN이 존재하므로 신규 주문이 안전 차단되어 orders_routed가 증가하지 않아야 함
+    assert ts.orders_routed == initial_orders_routed

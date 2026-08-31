@@ -163,6 +163,7 @@ class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
         )
         self._connected = True
         self._pending_orders: List[CanonicalOrderCommand] = []
+        self._order_status_history: Dict[str, Dict[str, Any]] = {}
         self._init_control_state()
 
     def send_order(self, command: CanonicalOrderCommand) -> BrokerOrderResponse:
@@ -208,6 +209,19 @@ class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
 
         broker_order_id = f"BRK-PAPER-{uuid.uuid4().hex[:8]}"
         self._pending_orders.append(command)
+        order_info = {
+            "broker_order_id": broker_order_id,
+            "client_order_id": command.client_order_id,
+            "symbol": command.symbol,
+            "side": command.side.value if hasattr(command.side, "value") else str(command.side),
+            "order_qty": command.qty,
+            "executed_qty": 0,
+            "unexecuted_qty": command.qty,
+            "order_price": command.price,
+            "status": "OPEN",
+        }
+        self._order_status_history[command.client_order_id] = order_info
+        self._order_status_history[broker_order_id] = order_info
         return BrokerOrderResponse(
             success=True,
             broker_order_id=broker_order_id,
@@ -227,11 +241,18 @@ class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
             rep = self.vssf.process_order(cmd)
             if rep is not None:
                 reports.append(rep)
+                # 이력 갱신
+                if cmd.client_order_id in self._order_status_history:
+                    self._order_status_history[cmd.client_order_id]["status"] = "FILLED"
+                    self._order_status_history[cmd.client_order_id]["executed_qty"] = rep.executed_qty
+                    self._order_status_history[cmd.client_order_id]["unexecuted_qty"] = 0
         return reports
 
     def cancel_order(self, client_order_id: str) -> bool:
         # 대기 중인 주문이 있다면 먼저 제거
         self._pending_orders = [cmd for cmd in self._pending_orders if cmd.client_order_id != client_order_id]
+        if client_order_id in self._order_status_history:
+            self._order_status_history[client_order_id]["status"] = "CANCELLED"
         return self._connected and self.vssf.cancel_order(client_order_id)
 
     def get_account_summary(self) -> CanonicalAccountSummary:
@@ -272,6 +293,8 @@ class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
                     "order_price": cmd.price,
                     "status": "OPEN",
                 }
+        if order_identifier in self._order_status_history:
+            return self._order_status_history[order_identifier]
         return None
 
     def is_connected(self) -> bool:

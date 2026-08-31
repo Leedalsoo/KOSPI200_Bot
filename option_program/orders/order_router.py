@@ -880,6 +880,11 @@ class OrderRouter:
                         summary["synced_orders"] += 1
                         self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
 
+                    elif b_status in ("OPEN", "ACCEPTED", "PENDING"):
+                        # Broker가 정상 접수 상태를 보고한 경우
+                        if current_status == OrderStatus.SENT and b_status == "ACCEPTED":
+                            self.fsm.transition_sync(order_id, OrderStatus.ACCEPTED)
+
                     else:
                         # 알 수 없는 기타 응답 상태 -> 안전 격리
                         self.mark_order_unknown(order_id, reason=f"BROKER_UNEXPECTED_STATUS_{b_status}")
