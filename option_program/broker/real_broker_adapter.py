@@ -107,6 +107,14 @@ class RealBrokerHttpClient:
                 "output1": [],
                 "output2": {}
             }
+        elif "inquire-nccs" in path:
+            return {
+                "rt_cd": "0",
+                "msg_cd": "APBK0013",
+                "msg1": "미체결 조회 완료",
+                "output1": [],
+                "output2": {}
+            }
         return {"rt_cd": "0", "output": {}}
 
     def authenticate(self) -> bool:
@@ -470,6 +478,144 @@ class RealBrokerAdapter(IBrokerAdapter):
                 }
 
         return positions
+
+    def _reverse_lookup_client_id(self, broker_order_no: str) -> Optional[str]:
+        """broker_order_no로부터 등록된 client_order_id 역조회"""
+        for cid, info in self._orders_history.items():
+            if info.get("broker_order_no") == broker_order_no:
+                return cid
+        return None
+
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        """[D-12] 실제 증권사 미체결 활성 주문 목록 조회 및 정규화 (Recovery / 대사용)"""
+        if not self._connected:
+            raise RuntimeError(f"[{self.config.broker_name}] Broker is disconnected: cannot query open orders")
+
+        resp = self.client.request(
+            "GET",
+            "/uapi/domestic-futureoption/v1/trading/inquire-nccs",
+            tr_id="TTTO1102R"
+        )
+        if not isinstance(resp, dict) or resp.get("rt_cd") != "0":
+            msg_cd = resp.get("msg_cd", "UNKNOWN") if isinstance(resp, dict) else "NO_RESP"
+            msg1 = resp.get("msg1", "Open orders query failed") if isinstance(resp, dict) else "No response"
+            logger.warning(f"[{self.config.broker_name}] Open orders query warning: [{msg_cd}] {msg1}")
+            return []
+
+        output1 = resp.get("output1", [])
+        if not isinstance(output1, list):
+            return []
+
+        open_orders: List[Dict[str, Any]] = []
+        for item in output1:
+            if not isinstance(item, dict):
+                continue
+            odno = str(item.get("odno") or item.get("ord_no") or "").strip()
+            if not odno:
+                continue
+
+            client_order_id = item.get("client_order_id") or self._reverse_lookup_client_id(odno) or odno
+            symbol = item.get("pdno") or item.get("symbol") or "101V3000"
+            side_raw = str(item.get("sll_buy_dvsn_cd") or item.get("side") or "02")
+            side = "SELL" if side_raw in ["01", "SELL"] else "BUY"
+
+            try:
+                ord_qty = int(float(item.get("ord_qty") or item.get("order_qty") or "0"))
+                ccld_qty = int(float(item.get("ccld_qty") or item.get("executed_qty") or "0"))
+                nccs_qty = int(float(item.get("nccs_qty") or item.get("unexecuted_qty") or (ord_qty - ccld_qty)))
+                ord_unpr = float(item.get("ord_unpr") or item.get("price") or item.get("order_price") or "0.0")
+            except (ValueError, TypeError) as exc:
+                logger.warning(f"[{self.config.broker_name}] Invalid numeric data in open order record {odno}: {exc}")
+                continue
+
+            if nccs_qty <= 0 and ord_qty > 0 and ccld_qty >= ord_qty:
+                continue  # 전량 체결된 건 제외
+
+            status = "PARTIAL" if ccld_qty > 0 else "OPEN"
+            open_orders.append({
+                "broker_order_id": odno,
+                "client_order_id": client_order_id,
+                "symbol": symbol,
+                "side": side,
+                "order_qty": ord_qty,
+                "executed_qty": ccld_qty,
+                "unexecuted_qty": nccs_qty,
+                "order_price": ord_unpr,
+                "order_time": str(item.get("ord_tmd") or ""),
+                "status": status,
+            })
+
+        return open_orders
+
+    def get_order_status(self, order_identifier: str) -> Optional[Dict[str, Any]]:
+        """[D-12] 특정 주문(client_order_id 또는 broker_order_id)의 최신 상태 조회 (Recovery용)"""
+        if not self._connected:
+            raise RuntimeError(f"[{self.config.broker_name}] Broker is disconnected: cannot query order status")
+
+        target_id = str(order_identifier).strip()
+        order_info = self._orders_history.get(target_id)
+        broker_order_no = order_info["broker_order_no"] if order_info else target_id
+        client_order_id = target_id if order_info else (self._reverse_lookup_client_id(broker_order_no) or broker_order_no)
+
+        # 1. 미체결 목록 우선 확인
+        open_orders = self.get_open_orders()
+        for o in open_orders:
+            if o.get("broker_order_id") == broker_order_no or o.get("client_order_id") == target_id:
+                return o
+
+        # 2. 체결 내역(inquire-ccld) 조회하여 체결 완료 확인
+        resp = self.client.request(
+            "GET",
+            "/uapi/domestic-futureoption/v1/trading/inquire-ccld",
+            tr_id="TTTO1101R"
+        )
+        if isinstance(resp, dict) and resp.get("rt_cd") == "0":
+            output1 = resp.get("output1", [])
+            matched_items = [
+                item for item in output1
+                if isinstance(item, dict) and str(item.get("odno", "")).strip() == broker_order_no
+            ]
+            if matched_items:
+                total_executed = sum(int(float(item.get("ccld_qty", 0))) for item in matched_items)
+                first_item = matched_items[0]
+                symbol = first_item.get("pdno") or "101V3000"
+                side_raw = str(first_item.get("sll_buy_dvsn_cd") or "02")
+                side = "SELL" if side_raw in ["01", "SELL"] else "BUY"
+                orig_qty = int(float(order_info["command"].qty)) if order_info and hasattr(order_info.get("command"), "qty") else total_executed
+                status = "FILLED" if total_executed >= orig_qty else "PARTIAL"
+
+                return {
+                    "broker_order_id": broker_order_no,
+                    "client_order_id": client_order_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "order_qty": orig_qty,
+                    "executed_qty": total_executed,
+                    "unexecuted_qty": max(0, orig_qty - total_executed),
+                    "order_price": float(first_item.get("ccld_pric") or 0.0),
+                    "order_time": str(first_item.get("ord_tmd") or ""),
+                    "status": status,
+                }
+
+        # 3. 로컬 주문 이력이 존재하나 미체결/체결 어디에도 없는 경우 (취소 판정)
+        if order_info:
+            cmd = order_info.get("command")
+            side_val = getattr(cmd, "side", CanonicalOrderSide.BUY)
+            side_str = side_val.value if hasattr(side_val, "value") else str(side_val)
+            return {
+                "broker_order_id": broker_order_no,
+                "client_order_id": client_order_id,
+                "symbol": getattr(cmd, "symbol", "101V3000"),
+                "side": side_str,
+                "order_qty": getattr(cmd, "qty", 0),
+                "executed_qty": 0,
+                "unexecuted_qty": 0,
+                "order_price": getattr(cmd, "price", 0.0),
+                "order_time": "",
+                "status": "CANCELLED",
+            }
+
+        return None
 
     def _map_instrument_code(self, command: CanonicalOrderCommand) -> str:
         """Canonical DTO ➔ 표준 KRX 선물/옵션 종목코드 매핑"""

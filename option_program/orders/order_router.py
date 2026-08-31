@@ -35,7 +35,7 @@ class OrderRouter:
         self.fsm = fsm or OmsFsm()
         self.stale_timeout_sec = stale_timeout_sec
         self.wal_store = wal_store
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         # order_id -> (command, submitted_timestamp)
         self._active_orders: Dict[uuid.UUID, Tuple[CanonicalOrderCommand, float]] = {}
         # order_id -> broker_adapter
@@ -417,4 +417,60 @@ class OrderRouter:
         """[8단계-2] broker_order_id로부터 client_order_id 역방향 조회."""
         with self._lock:
             return self._broker_to_client_id.get(broker_order_id)
+
+    def reconcile_with_broker(self, broker_adapter: Any) -> Dict[str, Any]:
+        """[D-12] 브로커의 공식 Recovery 조회 계약(get_open_orders, get_order_status)을 통해 활성 주문 상태 대사 및 안전 동기화"""
+        with self._lock:
+            reconcile_summary = {
+                "active_orders_checked": len(self._active_orders),
+                "open_orders_broker_count": 0,
+                "confirmed_cancelled": 0,
+                "synced_orders": 0,
+            }
+            if broker_adapter is None or not hasattr(broker_adapter, "get_open_orders"):
+                return reconcile_summary
+
+            try:
+                open_orders = broker_adapter.get_open_orders()
+                reconcile_summary["open_orders_broker_count"] = len(open_orders)
+            except Exception as exc:
+                logger.error(f"[OrderRouter] Failed to fetch open orders during broker reconcile: {exc}")
+                return reconcile_summary
+
+            broker_open_client_ids = {
+                str(item.get("client_order_id", "")) for item in open_orders if isinstance(item, dict)
+            }
+            broker_open_ids = {
+                str(item.get("broker_order_id", "")) for item in open_orders if isinstance(item, dict)
+            }
+
+            for order_id, (cmd, _) in list(self._active_orders.items()):
+                client_id = getattr(cmd, "client_order_id", str(order_id))
+                broker_order_id = self._order_to_broker_id.get(order_id) or ""
+                current_status = self.fsm.get_status(order_id)
+
+                is_open_in_broker = (client_id in broker_open_client_ids) or (
+                    bool(broker_order_id) and broker_order_id in broker_open_ids
+                )
+
+                if current_status == OrderStatus.CANCEL_REQUESTED and not is_open_in_broker:
+                    order_status_info = None
+                    if hasattr(broker_adapter, "get_order_status"):
+                        try:
+                            order_status_info = broker_adapter.get_order_status(client_id)
+                        except Exception as exc:
+                            logger.warning(f"[OrderRouter] Failed to query order status for {client_id}: {exc}")
+
+                    if order_status_info is None or order_status_info.get("status") in ("CANCELLED", "FILLED"):
+                        if order_status_info and order_status_info.get("status") == "FILLED":
+                            self.fsm.transition_sync(order_id, OrderStatus.FILLED)
+                            self._active_orders.pop(order_id, None)
+                            self._order_brokers.pop(order_id, None)
+                            self._cum_executed_qty.pop(order_id, None)
+                            reconcile_summary["synced_orders"] += 1
+                        else:
+                            self.confirm_cancel(order_id)
+                            reconcile_summary["confirmed_cancelled"] += 1
+
+            return reconcile_summary
 

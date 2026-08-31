@@ -68,6 +68,16 @@ class IBrokerAdapter(ABC):
         pass
 
     @abstractmethod
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        """[D-12] 미체결 활성 주문 목록 조회 (Recovery 및 상태 대사용)."""
+        pass
+
+    @abstractmethod
+    def get_order_status(self, order_identifier: str) -> Optional[Dict[str, Any]]:
+        """[D-12] 특정 주문(client_order_id 또는 broker_order_id)의 최신 상태 조회 (Recovery용)."""
+        pass
+
+    @abstractmethod
     def is_connected(self) -> bool:
         pass
 
@@ -132,7 +142,7 @@ class _ControllableBrokerMixin:
 
     def control_snapshot(self) -> Dict[str, Any]:
         return {
-            "connected": self.is_connected(),
+            "connected": self._connected,
             "latency_ms": self._latency_ms,
             "execution_behavior": self._execution_behavior,
         }
@@ -229,6 +239,40 @@ class PaperBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
 
     def get_positions(self) -> Dict[str, Any]:
         return self.vssf.account.positions
+
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        """[D-12] 미체결 활성 주문 목록 조회"""
+        open_orders: List[Dict[str, Any]] = []
+        for cmd in self._pending_orders:
+            open_orders.append({
+                "broker_order_id": f"BRK-PAPER-{cmd.client_order_id}",
+                "client_order_id": cmd.client_order_id,
+                "symbol": cmd.symbol,
+                "side": cmd.side.value if hasattr(cmd.side, "value") else str(cmd.side),
+                "order_qty": cmd.qty,
+                "executed_qty": 0,
+                "unexecuted_qty": cmd.qty,
+                "order_price": cmd.price,
+                "status": "OPEN",
+            })
+        return open_orders
+
+    def get_order_status(self, order_identifier: str) -> Optional[Dict[str, Any]]:
+        """[D-12] 특정 주문 상태 조회"""
+        for cmd in self._pending_orders:
+            if cmd.client_order_id == order_identifier or f"BRK-PAPER-{cmd.client_order_id}" == order_identifier:
+                return {
+                    "broker_order_id": f"BRK-PAPER-{cmd.client_order_id}",
+                    "client_order_id": cmd.client_order_id,
+                    "symbol": cmd.symbol,
+                    "side": cmd.side.value if hasattr(cmd.side, "value") else str(cmd.side),
+                    "order_qty": cmd.qty,
+                    "executed_qty": 0,
+                    "unexecuted_qty": cmd.qty,
+                    "order_price": cmd.price,
+                    "status": "OPEN",
+                }
+        return None
 
     def is_connected(self) -> bool:
         return self._connected
@@ -335,6 +379,40 @@ class ShadowBrokerAdapter(_ControllableBrokerMixin, IBrokerAdapter):
     def get_positions(self) -> Dict[str, Any]:
         return self.vssf.account.positions
 
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        """[D-12] 미체결 활성 주문 목록 조회"""
+        open_orders: List[Dict[str, Any]] = []
+        for cmd in self._pending_orders:
+            open_orders.append({
+                "broker_order_id": f"BRK-SHADOW-{cmd.client_order_id}",
+                "client_order_id": cmd.client_order_id,
+                "symbol": cmd.symbol,
+                "side": cmd.side.value if hasattr(cmd.side, "value") else str(cmd.side),
+                "order_qty": cmd.qty,
+                "executed_qty": 0,
+                "unexecuted_qty": cmd.qty,
+                "order_price": cmd.price,
+                "status": "OPEN",
+            })
+        return open_orders
+
+    def get_order_status(self, order_identifier: str) -> Optional[Dict[str, Any]]:
+        """[D-12] 특정 주문 상태 조회"""
+        for cmd in self._pending_orders:
+            if cmd.client_order_id == order_identifier or f"BRK-SHADOW-{cmd.client_order_id}" == order_identifier:
+                return {
+                    "broker_order_id": f"BRK-SHADOW-{cmd.client_order_id}",
+                    "client_order_id": cmd.client_order_id,
+                    "symbol": cmd.symbol,
+                    "side": cmd.side.value if hasattr(cmd.side, "value") else str(cmd.side),
+                    "order_qty": cmd.qty,
+                    "executed_qty": 0,
+                    "unexecuted_qty": cmd.qty,
+                    "order_price": cmd.price,
+                    "status": "OPEN",
+                }
+        return None
+
     def is_connected(self) -> bool:
         return self._connected
 
@@ -405,6 +483,12 @@ class RealBrokerAdapterStub(IBrokerAdapter):
 
     def get_positions(self) -> Dict[str, Any]:
         return {}
+
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        return []
+
+    def get_order_status(self, order_identifier: str) -> Optional[Dict[str, Any]]:
+        return None
 
     def is_connected(self) -> bool:
         return self._connected
