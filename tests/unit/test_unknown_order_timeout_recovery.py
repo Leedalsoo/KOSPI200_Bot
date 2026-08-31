@@ -55,9 +55,9 @@ class MockBrokerAdapter:
         self.open_orders_list = []
         self.query_count = 0
 
-    def get_order_status(self, client_order_id: str = "", broker_order_id: str = ""):
+    def get_order_status(self, order_identifier: str = ""):
         self.query_count += 1
-        return self.status_map.get(client_order_id)
+        return self.status_map.get(order_identifier)
 
     def get_open_orders(self):
         return self.open_orders_list
@@ -239,7 +239,7 @@ def test_recover_unknown_orders_unclear_maintains_unknown():
 
     # 2. Broker에서 예외가 발생하는 경우
     class ErrorBroker:
-        def get_order_status(self, client_order_id="", broker_order_id=""):
+        def get_order_status(self, order_identifier: str = ""):
             raise ConnectionResetError("Broker gateway unreachable")
 
     summary2 = router.recover_unknown_orders(ErrorBroker())

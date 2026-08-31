@@ -648,7 +648,8 @@ class OrderRouter:
                 status_resp = None
                 if hasattr(broker_adapter, "get_order_status"):
                     try:
-                        status_resp = broker_adapter.get_order_status(client_order_id=client_id, broker_order_id=broker_order_id)
+                        target_id = broker_order_id if broker_order_id else client_id
+                        status_resp = broker_adapter.get_order_status(target_id)
                     except Exception as exc:
                         logger.warning(f"[OrderRouter] Exception querying get_order_status for {client_id}: {exc}")
 
