@@ -100,14 +100,25 @@ class TradingSystem:
             sys.exit(1)
 
     def sync_broker_state(self) -> None:
-        """Broker의 최신 계좌 및 포지션 상태를 OptionProgramRuntime 및 RiskEngine에 동기화."""
+        """Broker의 최신 계좌 및 포지션 상태를 OptionProgramRuntime 및 RiskEngine에 독립적으로 동기화."""
         if self.broker is None or self.op_runtime is None:
             return
-        summary = self.broker.get_account_summary()
-        positions = self.broker.get_positions()
-        if positions:
-            summary.positions = dict(positions)
-        self.op_runtime.update_account_summary(summary)
+
+        # 1. 계좌 상태 독립 동기화 (성공 시에만 타임스탬프 갱신)
+        try:
+            summary = self.broker.get_account_summary()
+            if summary is not None:
+                self.op_runtime.update_account_summary(summary)
+        except Exception as exc:
+            logger.warning("TradingSystem: Broker get_account_summary 동기화 실패 (기존 성공 타임스탬프 유지): %s", exc)
+
+        # 2. 포지션 상태 독립 동기화 (성공 시에만 타임스탬프 갱신)
+        try:
+            positions = self.broker.get_positions()
+            if positions is not None:
+                self.op_runtime.update_positions(positions)
+        except Exception as exc:
+            logger.warning("TradingSystem: Broker get_positions 동기화 실패 (기존 성공 타임스탬프 유지): %s", exc)
 
     def _lockdown_os(self) -> None:
         """메모리 스와핑 잠금 및 리얼타임 스케줄러 설정 (HFT 헌법 4부 강제)"""

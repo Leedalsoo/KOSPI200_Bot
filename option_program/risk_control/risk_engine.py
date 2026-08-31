@@ -33,6 +33,8 @@ class RiskConfig:
     max_position_per_instrument: int = 100           # 종목당 최대 보유 수량
     vol_spike_threshold_multiplier: float = 1.30     # 변동성 스파이크 배율 임계치
     margin_diet_active: bool = False                 # 긴급 마진 다이어트 활성화 여부
+    account_stale_timeout_sec: float = 30.0          # 계좌 상태 Freshness 타임아웃 (30초)
+    position_stale_timeout_sec: float = 30.0         # 포지션 상태 Freshness 타임아웃 (30초)
 
 @dataclass
 class RiskSensorSnapshot:
@@ -40,6 +42,8 @@ class RiskSensorSnapshot:
     is_vol_spike: bool = False
     is_crisis_regime: bool = False
     is_margin_diet_required: bool = False
+    is_account_stale: bool = False
+    is_position_stale: bool = False
     active_vol_ratio: float = 1.0
     reason: str = "NORMAL"
 
@@ -67,7 +71,9 @@ class RiskSensor:
         active_vol: float,
         base_vol: float,
         current_regime: str = "NORMAL",
-        account_margin_ratio: float = 0.0
+        account_margin_ratio: float = 0.0,
+        is_account_stale: bool = False,
+        is_position_stale: bool = False
     ) -> RiskSensorSnapshot:
         """시장 데이터 및 계좌 상태 기반 리스크 센싱"""
         # 1. 결측치 및 NaN 방어
@@ -86,11 +92,15 @@ class RiskSensor:
             reason = f"VOLATILITY_SPIKE_DETECTED (Ratio={vol_ratio:.2f})"
         elif is_crisis:
             reason = f"CRISIS_REGIME_ACTIVE ({current_regime})"
+        elif is_account_stale or is_position_stale:
+            reason = f"STALE_STATE_DETECTED (AccountStale={is_account_stale}, PosStale={is_position_stale})"
 
         return RiskSensorSnapshot(
             is_vol_spike=is_vol_spike,
             is_crisis_regime=is_crisis,
             is_margin_diet_required=is_margin_diet,
+            is_account_stale=is_account_stale,
+            is_position_stale=is_position_stale,
             active_vol_ratio=vol_ratio,
             reason=reason
         )

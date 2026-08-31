@@ -1,5 +1,6 @@
 """Option Program Runtime (OptionProgram) - Pure Strategy Signal Generation."""
 import logging
+import time
 from typing import List, Optional, Dict, Any
 import numpy as np
 from shared.contracts.canonical import (
@@ -73,6 +74,10 @@ class OptionProgramRuntime:
             free_margin=50_000_000.0
         )
         
+        # 계좌 및 포지션의 마지막 성공 동기화 시각 (초 단위 timestamp)
+        self.last_account_sync_time: Optional[float] = time.time() if account_summary is not None else None
+        self.last_position_sync_time: Optional[float] = time.time() if (account_summary is not None and bool(account_summary.positions)) else None
+
         self.received_execution_reports: List[CanonicalExecutionReport] = []
         self.tick_counter: int = 0
         self.last_price: float = 350.0
@@ -92,9 +97,31 @@ class OptionProgramRuntime:
             } for st in self.strategies
         }
 
-    def update_account_summary(self, summary: CanonicalAccountSummary) -> None:
-        """VSSF / Broker로부터 최신 계좌 현황 동기화 (Read-Only)"""
+    def update_account_summary(self, summary: CanonicalAccountSummary, sync_time: Optional[float] = None) -> None:
+        """VSSF / Broker로부터 최신 계좌 현황 동기화 (성공 시각 갱신)"""
         self.account_summary = summary
+        self.last_account_sync_time = sync_time if sync_time is not None else time.time()
+
+    def update_positions(self, positions: Dict[str, Any], sync_time: Optional[float] = None) -> None:
+        """VSSF / Broker로부터 최신 보유 포지션 동기화 (성공 시각 갱신)"""
+        self.account_summary.positions = dict(positions)
+        self.last_position_sync_time = sync_time if sync_time is not None else time.time()
+
+    def is_account_state_stale(self, current_time: Optional[float] = None, timeout_sec: Optional[float] = None) -> bool:
+        """계좌 상태의 Freshness/Staleness 판정"""
+        if self.last_account_sync_time is None:
+            return True
+        now = current_time if current_time is not None else time.time()
+        timeout = timeout_sec if timeout_sec is not None else self.risk_config.account_stale_timeout_sec
+        return (now - self.last_account_sync_time) > timeout
+
+    def is_position_state_stale(self, current_time: Optional[float] = None, timeout_sec: Optional[float] = None) -> bool:
+        """포지션 상태의 Freshness/Staleness 판정"""
+        if self.last_position_sync_time is None:
+            return True
+        now = current_time if current_time is not None else time.time()
+        timeout = timeout_sec if timeout_sec is not None else self.risk_config.position_stale_timeout_sec
+        return (now - self.last_position_sync_time) > timeout
 
     def process_tick(self, tick: CanonicalMarketTick) -> List[CanonicalOrderCommand]:
         """[틱 수신 ➔ Sensor / Regime ➔ Track 1~9 ➔ SignalGen ➔ Arbiter ➔ RiskGate ➔ FSM 파이프라인]"""
@@ -121,13 +148,15 @@ class OptionProgramRuntime:
         except Exception as e:
             logger.debug(f"RegimeDetector note: {e}")
 
-        # 3. Risk Sensor는 Analyzer가 관측한 실제 변동성과 국면을 사용
+        # 3. Risk Sensor는 Analyzer가 관측한 실제 변동성과 국면, 계좌/포지션 Stale 상태를 사용
         condition = self.market_condition
         sensor_snapshot = self.risk_sensor.scan_risk(
             active_vol=condition.volatility if condition else 0.0,
             base_vol=condition.baseline_volatility if condition else 0.0,
             current_regime=condition.regime if condition else self.current_regime,
-            account_margin_ratio=(self.account_summary.used_margin / self.account_summary.total_balance) if self.account_summary.total_balance > 0 else 0.0
+            account_margin_ratio=(self.account_summary.used_margin / self.account_summary.total_balance) if self.account_summary.total_balance > 0 else 0.0,
+            is_account_stale=self.is_account_state_stale(),
+            is_position_stale=self.is_position_state_stale()
         )
 
         raw_signals_collected: List[CanonicalStrategySignal] = []
