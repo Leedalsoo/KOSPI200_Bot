@@ -244,6 +244,14 @@ class TradingSystem:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
+        # [Broker 연결 안전 해제]
+        if self.broker is not None:
+            try:
+                self.broker.disconnect()
+                logger.info("TradingSystem: Broker disconnect 완료")
+            except Exception as exc:
+                logger.warning("TradingSystem: Broker disconnect 중 예외 발생 (무시하고 종료 진행): %s", exc)
+
         # [GC 동결 해제 및 수동 정리]
         gc.enable()
         collected = gc.collect()
