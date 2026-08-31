@@ -26,9 +26,15 @@ logger = logging.getLogger(__name__)
 class OrderRouter:
     """[주문 라우터] OMS FSM 및 브로커 계층 간의 주문 발주, 상태 전이, 미체결 타임아웃 관리"""
 
-    def __init__(self, fsm: Optional[OmsFsm] = None, stale_timeout_sec: float = 30.0):
+    def __init__(
+        self,
+        fsm: Optional[OmsFsm] = None,
+        stale_timeout_sec: float = 30.0,
+        wal_store: Optional[Any] = None,
+    ):
         self.fsm = fsm or OmsFsm()
         self.stale_timeout_sec = stale_timeout_sec
+        self.wal_store = wal_store
         self._lock = threading.Lock()
         # order_id -> (command, submitted_timestamp)
         self._active_orders: Dict[uuid.UUID, Tuple[CanonicalOrderCommand, float]] = {}
@@ -161,6 +167,7 @@ class OrderRouter:
                     if client_id:
                         self._client_to_executed_qty[client_id] = new_cum
                     self.fsm.transition_sync(order_id, OrderStatus.PARTIAL)
+                    self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.PARTIAL, client_id)
                     logger.info(
                         f"[OrderRouter] Order {order_id} PARTIAL: {new_cum}/{requested_qty}@{report.executed_price}"
                     )
@@ -170,12 +177,14 @@ class OrderRouter:
                     if client_id:
                         self._client_to_executed_qty[client_id] = new_cum
                     self.fsm.transition_sync(order_id, OrderStatus.FILLED)
+                    self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.FILLED, client_id)
                     self._active_orders.pop(order_id, None)
                     self._order_brokers.pop(order_id, None)
                     self._cum_executed_qty.pop(order_id, None)
                     logger.info(f"[OrderRouter] Order {order_id} FILLED: {new_cum}@{report.executed_price}")
                 else:
                     self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
+                    self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.REJECTED, client_id)
                     self._active_orders.pop(order_id, None)
                     self._order_brokers.pop(order_id, None)
                     self._cum_executed_qty.pop(order_id, None)
@@ -184,10 +193,99 @@ class OrderRouter:
                     )
             else:
                 self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
+                self._persist_execution_wal(order_id, report, new_cum, requested_qty, OrderStatus.REJECTED, client_id)
                 self._active_orders.pop(order_id, None)
                 self._order_brokers.pop(order_id, None)
                 self._cum_executed_qty.pop(order_id, None)
                 logger.warning(f"[OrderRouter] Order {order_id} REJECTED by Broker.")
+
+    def _persist_execution_wal(
+        self,
+        order_id: uuid.UUID,
+        report: CanonicalExecutionReport,
+        cum_qty: int,
+        requested_qty: Optional[int],
+        status: OrderStatus,
+        client_id: Optional[str],
+    ) -> None:
+        """[D-10] 체결 이벤트 및 누적 체결 상태를 WAL 영속 저장소에 즉시 기록"""
+        if self.wal_store is None:
+            return
+
+        try:
+            event_type = (
+                "PARTIAL_EXECUTION"
+                if status == OrderStatus.PARTIAL
+                else ("FILLED_EXECUTION" if status == OrderStatus.FILLED else "EXECUTION_REPORT")
+            )
+            event_data = {
+                "exec_id": getattr(report, "exec_id", None),
+                "order_id": str(order_id),
+                "client_order_id": client_id or getattr(report, "client_order_id", None),
+                "executed_qty": getattr(report, "executed_qty", 0),
+                "cum_executed_qty": cum_qty,
+                "requested_qty": requested_qty,
+                "executed_price": getattr(report, "executed_price", 0.0),
+                "status": status.value,
+                "timestamp": getattr(report, "timestamp", str(time.time())),
+            }
+            if hasattr(self.wal_store, "save_event_sync"):
+                self.wal_store.save_event_sync(event_type, event_data)
+            elif hasattr(self.wal_store, "_sync_save"):
+                import orjson
+
+                payload = orjson.dumps(
+                    {"event_type": event_type, "data": event_data},
+                    default=str,
+                    option=orjson.OPT_APPEND_NEWLINE,
+                )
+                self.wal_store._sync_save(payload)
+        except Exception as exc:
+            logger.error(f"[OrderRouter] Failed to persist execution to WAL: {exc}")
+
+    def recover_from_wal(self, events: List[Dict[str, Any]]) -> int:
+        """[D-10] WAL 이벤트 로그로부터 누적 체결 상태, 멱등성 exec_id, FSM 상태 복원"""
+        with self._lock:
+            recovered_count = 0
+            for entry in events:
+                if not isinstance(entry, dict):
+                    continue
+                event_type = entry.get("event_type")
+                if event_type not in ("EXECUTION_REPORT", "PARTIAL_EXECUTION", "FILLED_EXECUTION"):
+                    continue
+
+                data = entry.get("data", {})
+                exec_id = data.get("exec_id")
+                if exec_id:
+                    self._processed_exec_ids.add(str(exec_id))
+
+                order_id_raw = data.get("order_id")
+                client_id = data.get("client_order_id")
+                cum_qty = int(data.get("cum_executed_qty", 0))
+                status_str = data.get("status")
+
+                if order_id_raw:
+                    try:
+                        order_id = uuid.UUID(str(order_id_raw))
+                        self._executed_qty_history[order_id] = cum_qty
+                        if status_str:
+                            status_enum = OrderStatus(status_str)
+                            self.fsm.states[order_id] = status_enum
+                            if status_enum not in (OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED):
+                                self._cum_executed_qty[order_id] = cum_qty
+                            else:
+                                self._cum_executed_qty.pop(order_id, None)
+                                self._active_orders.pop(order_id, None)
+                    except Exception as e:
+                        logger.warning(f"[OrderRouter] Failed to recover order {order_id_raw}: {e}")
+
+                if client_id:
+                    self._client_to_executed_qty[str(client_id)] = cum_qty
+
+                recovered_count += 1
+
+            logger.info(f"[OrderRouter] Successfully recovered {recovered_count} execution events from WAL.")
+            return recovered_count
 
     def is_execution_processed(self, exec_id: str) -> bool:
         """[8단계-5] exec_id 중복 처리 완료 여부 조회."""

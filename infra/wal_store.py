@@ -30,12 +30,21 @@ class WalStore:
         self._executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
 
     def _sync_save(self, payload: bytes) -> None:
-        """[목표 A] 동기 방식 파일 I/O 및 fsync (스레드풀에서만 실행됨)"""
+        """[목표 A] 동기 방식 파일 I/O 및 fsync (스레드풀 또는 동기 호출에서 실행됨)"""
         with open(self.log_path, "ab") as f:
             f.write(payload)
             f.flush()
             # 🛡️ [fsync 은닉 금지] OS 커널의 쓰기 지연 캐시 강제 동기화
             os.fsync(f.fileno())
+
+    def save_event_sync(self, event_type: str, data: Dict[str, Any]) -> None:
+        """동기 방식 WAL 이벤트 기록 (fsync 보장)"""
+        payload = orjson.dumps(
+            {"event_type": event_type, "data": data},
+            default=wal_default,
+            option=orjson.OPT_APPEND_NEWLINE
+        )
+        self._sync_save(payload)
 
     async def save_event(self, event_type: str, data: Dict[str, Any]) -> None:
         """[목표 A, B] 이벤트를 JSONL로 직렬화 후 비동기적으로 스레드풀에 기록 요청"""
