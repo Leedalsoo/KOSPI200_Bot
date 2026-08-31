@@ -81,7 +81,16 @@ class TradingSystem:
             self.vms = VirtualMarketSimulatorRuntime()
 
             # 5. Option Program Runtime (전략, 신호, 리스크, FSM) 초기화
-            initial_summary = self.vssf.get_account_snapshot() if self.vssf is not None else None
+            if self.vssf is not None:
+                initial_summary = self.vssf.get_account_snapshot()
+            elif self.broker is not None:
+                initial_summary = self.broker.get_account_summary()
+                positions = self.broker.get_positions()
+                if positions:
+                    initial_summary.positions = dict(positions)
+            else:
+                initial_summary = None
+
             self.op_runtime = OptionProgramRuntime(account_summary=initial_summary)
 
             self.is_running = False
@@ -89,6 +98,16 @@ class TradingSystem:
         except Exception as exc:
             logger.critical("TradingSystem: 초기화 실패 — 부팅 차단: %s", exc, exc_info=True)
             sys.exit(1)
+
+    def sync_broker_state(self) -> None:
+        """Broker의 최신 계좌 및 포지션 상태를 OptionProgramRuntime 및 RiskEngine에 동기화."""
+        if self.broker is None or self.op_runtime is None:
+            return
+        summary = self.broker.get_account_summary()
+        positions = self.broker.get_positions()
+        if positions:
+            summary.positions = dict(positions)
+        self.op_runtime.update_account_summary(summary)
 
     def _lockdown_os(self) -> None:
         """메모리 스와핑 잠금 및 리얼타임 스케줄러 설정 (HFT 헌법 4부 강제)"""
