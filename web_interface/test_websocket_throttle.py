@@ -27,7 +27,7 @@ class MockClient:
     """테스트용 WebSocket Client Mock."""
 
     def __init__(self, should_fail: bool = False):
-        self.sent_messages = []
+        self.sent_messages: list[str] = []
         self.should_fail = should_fail
 
     async def send(self, message: str):

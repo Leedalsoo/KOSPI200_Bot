@@ -141,7 +141,8 @@ class TargetArchitectureUIServer:
                 if not isinstance(value, dict):
                     continue
                 qty = float(value.get("qty", 0))
-                entry = float(value.get("avg_price", value.get("price", current_price)))
+                entry_val = value.get("avg_price", value.get("price", current_price))
+                entry = float(entry_val) if entry_val is not None else float(current_price)
                 sign = 1.0 if str(value.get("side", "BUY")).upper() == "BUY" else -1.0
                 pnl += (x - entry) * qty * sign
             points.append({"x": x, "y": pnl})
@@ -154,7 +155,9 @@ class TargetArchitectureUIServer:
         action = command.get("action")
         if action not in cls._COMMAND_SPECS:
             raise UICommandError(f"unknown action: {action}")
-        _, _, required, choices = cls._COMMAND_SPECS[action]
+        spec = cls._COMMAND_SPECS[action]
+        required: Dict[str, Any] = spec[2] if isinstance(spec, (tuple, list)) and len(spec) > 2 and isinstance(spec[2], dict) else {}
+        choices: Dict[str, Any] = spec[3] if isinstance(spec, (tuple, list)) and len(spec) > 3 and isinstance(spec[3], dict) else {}
         for name, expected in required.items():
             if name not in command:
                 raise UICommandError(f"missing payload: {name}")
@@ -175,7 +178,9 @@ class TargetArchitectureUIServer:
             action = self._validate_command(command)
             if self.system is None:
                 raise UICommandError("runtime unavailable: trading_system")
-            target_name, method_name, required, _ = self._COMMAND_SPECS[action]
+            spec = self._COMMAND_SPECS[action]
+            target_name, method_name, required_raw, _ = spec
+            required: Dict[str, Any] = required_raw if isinstance(required_raw, dict) else {}
             target = getattr(self.system, target_name, None)
             method = getattr(target, method_name, None) if target is not None else None
             if not callable(method):
