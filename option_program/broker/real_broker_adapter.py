@@ -438,10 +438,10 @@ class RealBrokerAdapter(IBrokerAdapter):
 
         try:
             total_balance = float(out1["dnca_tot_amt"])
-            tot_evlu_amt = float(out1.get("tot_evlu_amt", "0") or "0")
-            used_margin = tot_evlu_amt - total_balance if tot_evlu_amt > total_balance else 0.0
-            free_margin = max(0.0, total_balance - used_margin)
+            used_margin = float(out1.get("mgn_amt", "0") or out1.get("tot_mgn_amt", "0") or "0")
+            free_margin = float(out1.get("ord_psbl_amt", "0") or out1.get("prsm_dpst_amt", "0") or "0")
             unrealized = float(out1.get("evlu_pfls_smtl_amt", "0") or "0")
+            realized = float(out1.get("rlzt_pfls", "0") or "0")
         except (ValueError, TypeError) as exc:
             raise RuntimeError(f"[{self.config.broker_name}] Invalid account numeric data in 'output1': {exc}") from exc
 
@@ -450,7 +450,7 @@ class RealBrokerAdapter(IBrokerAdapter):
             total_balance=total_balance,
             used_margin=used_margin,
             free_margin=free_margin,
-            realized_pnl=0.0,
+            realized_pnl=realized,
             unrealized_pnl=unrealized,
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         )

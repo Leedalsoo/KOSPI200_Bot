@@ -58,11 +58,14 @@ class TestKISAccountLiveVTS:
             assert summary.used_margin >= 0.0
         except Exception as exc:
             err_str = str(exc)
-            # rate-limit(EGW00133) 또는 모의투자 계좌 미등록/세션 한도 등 실제 KIS 서버 응답 에러 확인
-            if "EGW" in err_str or "APBK" in err_str or "Account query failed" in err_str:
-                print(f"\n[LIVE VTS ACCOUNT SERVER-RESPONSE] Real VTS responded with error/limit: {err_str}")
+            # 구체적인 KIS 서버 공식 에러코드(EGW rate-limit 또는 APBK 비즈니스 응답코드)만 SERVER_LIMIT_OR_ENV로 인정
+            import re
+            kis_msg_match = re.search(r"\[(EGW\w+|APBK\w+|OPS\w+)\]", err_str)
+            if kis_msg_match:
+                msg_cd = kis_msg_match.group(1)
+                print(f"\n[LIVE VTS ACCOUNT SERVER_LIMIT_OR_ENV] Real VTS returned msg_cd={msg_cd}: {err_str}")
             else:
-                pytest.fail(f"Real VTS account inquiry failed with unexpected transport error: {exc}")
+                pytest.fail(f"Real VTS account inquiry failed without valid KIS msg_cd: {exc}")
 
     def test_live_vts_account_skip_when_credentials_missing(self):
         """자격증명 미설정 시 에러가 아닌 pytest.skip 처리 검증."""

@@ -268,8 +268,10 @@ def test_kis_account_summary_request_contract_and_mapping():
                 "msg1": "조회 완료",
                 "output1": {
                     "dnca_tot_amt": "35000000",
-                    "tot_evlu_amt": "37500000",
+                    "mgn_amt": "2500000",
+                    "ord_psbl_amt": "32500000",
                     "evlu_pfls_smtl_amt": "2500000",
+                    "rlzt_pfls": "150000",
                 },
                 "output2": [],
             }
@@ -290,9 +292,10 @@ def test_kis_account_summary_request_contract_and_mapping():
     summary_real = adapter_real.get_account_summary()
     assert summary_real.account_id == "50012345-01"
     assert summary_real.total_balance == 35000000.0
-    assert summary_real.used_margin == 2500000.0  # 37500000 - 35000000
+    assert summary_real.used_margin == 2500000.0
     assert summary_real.free_margin == 32500000.0
     assert summary_real.unrealized_pnl == 2500000.0
+    assert summary_real.realized_pnl == 150000.0
 
     inq_req = [r for r in captured_requests if "/inquire-balance" in r["path"]][0]
     assert inq_req["method"] == "GET"
