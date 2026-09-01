@@ -245,3 +245,125 @@ def test_kis_failure_categorization_regression():
     current_resp = {"rt_cd": "1", "msg_cd": "APBK0055", "msg1": "증거금 부족으로 주문이 거부되었습니다."}
     resp = adapter.send_order(cmd)
     assert resp.status == "REJECTED"
+
+
+def test_kis_account_summary_request_contract_and_mapping():
+    """Validates get_account_summary query params, TR ID (TTTO1104R/VTTO1104R), and DTO mapping."""
+    import pytest
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({
+            "method": method,
+            "path": path,
+            "headers": headers,
+            "body": body,
+        })
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        elif "inquire-balance" in path:
+            return {
+                "rt_cd": "0",
+                "msg_cd": "APBK0013",
+                "msg1": "조회 완료",
+                "output1": {
+                    "dnca_tot_amt": "35000000",
+                    "tot_evlu_amt": "37500000",
+                    "evlu_pfls_smtl_amt": "2500000",
+                },
+                "output2": [],
+            }
+        return {"rt_cd": "0"}
+
+    # 1. 실전 환경 (is_vts=False -> TTTO1104R)
+    config_real = RealBrokerConfig(
+        account_no="50012345-01",
+        app_key="TEST_APP_KEY",
+        app_secret="TEST_APP_SECRET",
+        is_simulation=True,
+        is_vts=False,
+    )
+    client_real = RealBrokerHttpClient(config=config_real, transport=mock_transport)
+    adapter_real = RealBrokerAdapter(config=config_real, http_client=client_real)
+    assert adapter_real.connect() is True
+
+    summary_real = adapter_real.get_account_summary()
+    assert summary_real.account_id == "50012345-01"
+    assert summary_real.total_balance == 35000000.0
+    assert summary_real.used_margin == 2500000.0  # 37500000 - 35000000
+    assert summary_real.free_margin == 32500000.0
+    assert summary_real.unrealized_pnl == 2500000.0
+
+    inq_req = [r for r in captured_requests if "/inquire-balance" in r["path"]][0]
+    assert inq_req["method"] == "GET"
+    assert inq_req["headers"]["tr_id"] == "TTTO1104R"
+    assert inq_req["body"]["CANO"] == "50012345"
+    assert inq_req["body"]["ACNT_PRDT_CD"] == "01"
+    assert inq_req["body"]["FK100"] == ""
+    assert inq_req["body"]["NK100"] == ""
+
+    # 2. 모의 환경 (is_vts=True -> VTTO1104R)
+    captured_requests.clear()
+    config_vts = RealBrokerConfig(
+        account_no="50012345-03",
+        app_key="TEST_APP_KEY",
+        app_secret="TEST_APP_SECRET",
+        is_simulation=True,
+        is_vts=True,
+    )
+    client_vts = RealBrokerHttpClient(config=config_vts, transport=mock_transport)
+    adapter_vts = RealBrokerAdapter(config=config_vts, http_client=client_vts)
+    assert adapter_vts.connect() is True
+
+    summary_vts = adapter_vts.get_account_summary()
+    assert summary_vts.total_balance == 35000000.0
+
+    inq_req_vts = [r for r in captured_requests if "/inquire-balance" in r["path"]][0]
+    assert inq_req_vts["headers"]["tr_id"] == "VTTO1104R"
+    assert inq_req_vts["body"]["ACNT_PRDT_CD"] == "03"
+
+
+def test_kis_account_summary_zero_balance_vs_failure_separation():
+    """Validates strict separation between actual 0 won balance and query failure (D-05)."""
+    import pytest
+    current_resp = {}
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        return current_resp
+
+    config = RealBrokerConfig(
+        account_no="12345678-01",
+        app_key="TEST_APP_KEY",
+        app_secret="TEST_APP_SECRET",
+        is_simulation=True,
+    )
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+    assert adapter.connect() is True
+
+    # Case A: 실제 0원 정상 계좌 (rt_cd="0", dnca_tot_amt="0")
+    current_resp = {
+        "rt_cd": "0",
+        "output1": {
+            "dnca_tot_amt": "0",
+            "tot_evlu_amt": "0",
+            "evlu_pfls_smtl_amt": "0",
+        },
+    }
+    summary = adapter.get_account_summary()
+    assert summary.total_balance == 0.0
+    assert summary.free_margin == 0.0
+    assert summary.used_margin == 0.0
+
+    # Case B: 조회 실패 (rt_cd="1") -> RuntimeError 발생
+    current_resp = {"rt_cd": "1", "msg_cd": "ERR_NET", "msg1": "Network error"}
+    with pytest.raises(RuntimeError, match="Account query failed"):
+        adapter.get_account_summary()
+
+    # Case C: 연결 해제 시 조회 차단
+    adapter.disconnect()
+    with pytest.raises(RuntimeError, match="Broker is disconnected"):
+        adapter.get_account_summary()
+

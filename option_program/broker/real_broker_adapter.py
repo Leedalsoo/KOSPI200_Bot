@@ -408,11 +408,25 @@ class RealBrokerAdapter(IBrokerAdapter):
         return resp.get("rt_cd") == "0"
 
     def get_account_summary(self) -> CanonicalAccountSummary:
-        """실시간 증권사 계좌 잔고 및 증거금 조회"""
+        """실시간 증권사 계좌 잔고 및 증거금 조회 (KIS 국내선물옵션 공식 규격 준수)"""
         if not self._connected:
             raise RuntimeError(f"[{self.config.broker_name}] Broker is disconnected: cannot query account summary")
 
-        resp = self.client.request("GET", "/uapi/domestic-futureoption/v1/trading/inquire-balance", tr_id="TTTO1104R")
+        cano = self.config.account_no.split("-")[0] if self.config.account_no else ""
+        acnt_prdt_cd = self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01"
+        body = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
+            "FK100": "",
+            "NK100": "",
+        }
+        tr_id = "VTTO1104R" if self.config.is_vts else "TTTO1104R"
+        resp = self.client.request(
+            "GET",
+            "/uapi/domestic-futureoption/v1/trading/inquire-balance",
+            body=body,
+            tr_id=tr_id
+        )
         if not isinstance(resp, dict) or resp.get("rt_cd") != "0":
             msg_cd = resp.get("msg_cd", "UNKNOWN") if isinstance(resp, dict) else "NO_RESP"
             msg1 = resp.get("msg1", "Account balance query failed") if isinstance(resp, dict) else "No response"
