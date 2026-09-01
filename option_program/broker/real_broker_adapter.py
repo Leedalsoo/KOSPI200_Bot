@@ -35,6 +35,7 @@ class RealBrokerConfig:
     account_no: str = field(default_factory=lambda: os.getenv("REAL_BROKER_ACCOUNT_NO", "00000000-01"))
     base_url: str = field(default_factory=lambda: os.getenv("REAL_BROKER_BASE_URL", "https://openapi.koreainvestment.com:9443"))
     is_simulation: bool = field(default_factory=lambda: os.getenv("REAL_BROKER_SIMULATION", "1") == "1")
+    is_vts: bool = field(default_factory=lambda: os.getenv("REAL_BROKER_IS_VTS", "0") == "1")
     safety_arm_key: str = field(default_factory=lambda: os.getenv("ARM_REAL_TRADING_ORDERS", ""))
 
 class RealBrokerHttpClient:
@@ -304,21 +305,25 @@ class RealBrokerAdapter(IBrokerAdapter):
                 message=f"[{self.config.broker_name}] Live order blocked by safety interlock key",
             )
 
-        # 1. 증권사 종목코드 및 주문 파라미터 매핑
-        order_side_cd = "02" if command.side == CanonicalOrderSide.BUY else "01"  # 01: 매도, 02: 매수
+        # 1. 증권사 종목코드 및 주문 파라미터 매핑 (KIS 국내선물옵션 공식 규격 준수)
+        sll_buy_dvsn_cd = "02" if command.side == CanonicalOrderSide.BUY else "01"  # 01: 매도, 02: 매수
         prod_code = self._map_instrument_code(command)
         
         body = {
             "CANO": self.config.account_no.split("-")[0],
             "ACNT_PRDT_CD": self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01",
-            "PDNO": prod_code,
-            "ORD_DVSN": "00",  # 00: 지정가, 01: 시장가
+            "SHTN_PDNO": prod_code,
+            "ORD_PRCS_DVSN_CD": "02",  # 02: 신규주문
+            "SLL_BUY_DVSN_CD": sll_buy_dvsn_cd,
+            "ORD_DVSN_CD": "00",  # 00: 지정가
+            "UNIT_PRICE": f"{command.price:.2f}",
             "ORD_QTY": str(command.qty),
-            "ORD_UNPR": f"{command.price:.2f}"
+            "NMPR_TYPE_CD": "01",  # 01: 호가조건 없음 / 일반
+            "KRX_NMPR_CNDT_CD": "0",  # 0: 조건없음
         }
 
-        # 2. 증권사 주문 TR 호출
-        tr_id = "TTTO1101U" if command.side == CanonicalOrderSide.BUY else "TTTO1102U"
+        # 2. 증권사 주문 TR 호출 (주간 국내선물옵션 단일 주문 TR ID: 실전 TTTO1101U / 모의 VTTO1101U)
+        tr_id = "VTTO1101U" if self.config.is_vts else "TTTO1101U"
         try:
             resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order", body=body, tr_id=tr_id)
         except Exception as exc:
@@ -377,7 +382,7 @@ class RealBrokerAdapter(IBrokerAdapter):
         )
 
     def cancel_order(self, client_order_id: str) -> bool:
-        """주문 취소 API 호출"""
+        """주문 취소 API 호출 (KIS 국내선물옵션 공식 규격 준수)"""
         if not self._connected:
             return False
         order_info = self._orders_history.get(client_order_id)
@@ -386,16 +391,20 @@ class RealBrokerAdapter(IBrokerAdapter):
             return False
 
         broker_order_no = order_info["broker_order_no"]
+        cmd = order_info.get("command")
+        prod_code = self._map_instrument_code(cmd) if cmd else ""
         body = {
             "CANO": self.config.account_no.split("-")[0],
             "ACNT_PRDT_CD": self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01",
             "ORGN_ODNO": broker_order_no,
-            "ORD_DVSN": "00",
+            "SHTN_PDNO": prod_code,
             "RVSE_CNCL_DVSN_CD": "02",  # 02: 취소
+            "ORD_DVSN_CD": "00",  # 00: 지정가
             "ORD_QTY": "0",  # 0: 잔량 전부 취소
-            "ORD_UNPR": "0"
+            "UNIT_PRICE": "0",
         }
-        resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order-rvsecncl", body=body, tr_id="TTTO1103U")
+        tr_id = "VTTO1103U" if self.config.is_vts else "TTTO1103U"
+        resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order-rvsecncl", body=body, tr_id=tr_id)
         return resp.get("rt_cd") == "0"
 
     def get_account_summary(self) -> CanonicalAccountSummary:
