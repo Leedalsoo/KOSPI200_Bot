@@ -95,6 +95,22 @@ class TestKISAuthToken:
         assert token.token_expired_at > now
         assert token.is_valid() is True
 
+    def test_token_kst_timezone_boundary_fixed_epoch(self):
+        """KST 타임존 문자열 파싱 시 OS 타임존에 독립적인 고정 UTC epoch timestamp 산출 검증."""
+        # KST: 2026-09-02 10:30:00 (UTC: 2026-09-02 01:30:00)
+        # 2026-09-02 01:30:00 UTC epoch = 1788312600.0
+        resp_data = {
+            "access_token": "token_for_fixed_kst_test",
+            "token_type": "Bearer",
+            "expires_in": 86400,
+            "access_token_token_expired": "2026-09-02 10:30:00",
+        }
+        token = KISAuthToken.from_response(resp_data, issued_at=1788300000.0)
+        assert token.expired_at_str == "2026-09-02 10:30:00"
+        assert token.token_expired_at == 1788312600.0
+        assert token.token_type == "Bearer"
+
+
 
 class TestKISAuthManager:
     def test_has_credentials(self):
