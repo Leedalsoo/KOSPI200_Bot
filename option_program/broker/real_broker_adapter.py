@@ -53,13 +53,24 @@ class RealBrokerHttpClient:
             try:
                 import urllib.request
                 import urllib.error
+                import urllib.parse
                 import socket
                 import orjson as json
                 url = f"{self.config.base_url}{path}"
-                data_bytes = json.dumps(body) if body else None
+                if method.upper() == "GET" and body:
+                    query_str = urllib.parse.urlencode(body)
+                    url = f"{url}?{query_str}"
+                    data_bytes = None
+                else:
+                    data_bytes = json.dumps(body) if body else None
                 req = urllib.request.Request(url, data=data_bytes, headers=headers, method=method)
                 with urllib.request.urlopen(req, timeout=5.0) as resp:
-                    return json.loads(resp.read().decode("utf-8"))
+                    resp_bytes = resp.read()
+                    try:
+                        resp_str = resp_bytes.decode("utf-8")
+                    except UnicodeDecodeError:
+                        resp_str = resp_bytes.decode("euc-kr", errors="replace")
+                    return json.loads(resp_str)
             except (TimeoutError, socket.timeout, urllib.error.URLError) as e:
                 if isinstance(e, (TimeoutError, socket.timeout)) or "timed out" in str(e).lower():
                     logger.error(f"[RealBrokerHttpClient] Request timed out: {e}")
@@ -119,7 +130,28 @@ class RealBrokerHttpClient:
         return {"rt_cd": "0", "output": {}}
 
     def authenticate(self) -> bool:
-        """증권사 OAuth2 토큰 발급 및 갱신"""
+        """증권사 OAuth2 토큰 발급 및 갱신 (KISAuthManager 캐시 연동 지원)"""
+        # 실제 통신 모드일 경우 KISAuthManager 캐시를 우선 활용
+        if not self.config.is_simulation and self.config.app_key and self.config.app_secret:
+            try:
+                from option_program.broker.kis_auth import KISAuthManager
+                cache_path = f"data/.kis_token_cache_{'vts' if self.config.is_vts else 'real'}.json"
+                auth_mgr = KISAuthManager(
+                    app_key=self.config.app_key,
+                    app_secret=self.config.app_secret,
+                    base_url=self.config.base_url,
+                    is_vts=self.config.is_vts,
+                    cache_file_path=cache_path,
+                )
+                self._access_token = auth_mgr.get_access_token()
+                token_info = auth_mgr.get_token_info()
+                if token_info:
+                    self._token_expired_at = token_info.token_expired_at
+                logger.info(f"[{self.config.broker_name}] OAuth2 authentication successful via KISAuthManager.")
+                return True
+            except Exception as exc:
+                logger.warning(f"[{self.config.broker_name}] KISAuthManager token load failed, falling back to transport: {exc}")
+
         payload = {
             "grant_type": "client_credentials",
             "appkey": self.config.app_key or "MOCK_KEY",
@@ -417,8 +449,10 @@ class RealBrokerAdapter(IBrokerAdapter):
         body = {
             "CANO": cano,
             "ACNT_PRDT_CD": acnt_prdt_cd,
-            "FK100": "",
-            "NK100": "",
+            "MGNA_DVSN": "01",
+            "EXCC_STAT_CD": "1",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
         }
         tr_id = "VTTO1104R" if self.config.is_vts else "TTTO1104R"
         resp = self.client.request(

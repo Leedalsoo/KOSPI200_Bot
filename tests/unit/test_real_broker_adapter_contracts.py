@@ -302,8 +302,10 @@ def test_kis_account_summary_request_contract_and_mapping():
     assert inq_req["headers"]["tr_id"] == "TTTO1104R"
     assert inq_req["body"]["CANO"] == "50012345"
     assert inq_req["body"]["ACNT_PRDT_CD"] == "01"
-    assert inq_req["body"]["FK100"] == ""
-    assert inq_req["body"]["NK100"] == ""
+    assert inq_req["body"]["MGNA_DVSN"] == "01"
+    assert inq_req["body"]["EXCC_STAT_CD"] == "1"
+    assert inq_req["body"]["CTX_AREA_FK200"] == ""
+    assert inq_req["body"]["CTX_AREA_NK200"] == ""
 
     # 2. 모의 환경 (is_vts=True -> VTTO1104R)
     captured_requests.clear()
