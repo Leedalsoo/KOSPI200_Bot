@@ -117,7 +117,7 @@ class TestKISAuthManager:
             "access_token": "test_real_access_token_vts",
             "token_type": "Bearer",
             "expires_in": 86400,
-            "access_token_token_expired": "2026-09-01 12:00:00",
+            "access_token_token_expired": "2099-12-31 23:59:59",
         })
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
