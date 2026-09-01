@@ -62,12 +62,13 @@ class KISAuthToken:
 
         now = issued_at if issued_at is not None else time.time()
         
-        # 만료 시각 계산
+        # 만료 시각 계산 (KIS 날짜 형식: "YYYY-MM-DD HH:MM:SS", KST UTC+9 기준)
         if expired_at_str:
             try:
-                # KIS 날짜 형식: "YYYY-MM-DD HH:MM:SS"
+                from datetime import timezone, timedelta
+                kst = timezone(timedelta(hours=9))
                 dt = datetime.strptime(expired_at_str.strip(), "%Y-%m-%d %H:%M:%S")
-                token_expired_at = dt.timestamp()
+                token_expired_at = dt.replace(tzinfo=kst).timestamp()
             except Exception:
                 token_expired_at = now + expires_in
         else:
