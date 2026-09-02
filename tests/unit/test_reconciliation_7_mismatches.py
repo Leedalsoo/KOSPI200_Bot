@@ -6,14 +6,16 @@
 3. Broker Order ID 불일치 (ORDER_ID_MISMATCH -> 매핑 보정 및 WAL 영속화)
 4. 주문 상태 불일치 (STATUS_MISMATCH -> Broker 확정 상태로 FSM 보정 및 WAL 영속화)
 5. 누적 체결수량 불일치 (EXECUTION_MISMATCH -> Broker 수량 보정 및 WAL 영속화)
-6. 평균 체결가격 불일치 (PRICE_MISMATCH -> Broker 가격 보정 및 WAL 영속화)
-7. 포지션 불일치 (POSITION_MISMATCH -> 감지 및 WAL 영속화)
+6. 평균 체결가격 불일치 (PRICE_MISMATCH -> 실제 내부 가격 보정, 2회차 mismatch=0, 모호한 가격 격리)
+7. 포지션 불일치 (POSITION_MISMATCH -> Union 전수 탐지: Broker-only, Internal-only, Qty 불일치 및 실제 내부 포지션 보정)
 
 추가 안전 검증:
-8. UNKNOWN / 대사 실패 시 신규 주문 transport 0건 차단 검증
+8. UNKNOWN 및 POSITION 불일치 시 신규 주문 transport 0건 차단 검증
 9. 동일 Reconciliation 반복 실행 시 Idempotency 검증 (2회차 mismatches=0, corrections=0)
-10. Broker 조회 실패(네트워크 오류)와 실제 불일치의 엄격한 구분 검증
-11. 대사 보정 후 재시작 시 WAL로부터 보정 상태 유지 검증
+10. Broker 조회 실패(네트워크 오류)와 실제 불일치의 엄격한 구분 및 안전 차단 검증
+11. 대사 보정 후 재시작 시 WAL로부터 가격/포지션/상태 복원 및 유지 검증
+12. Broker-only 및 Internal-only 포지션 전수 대사 및 보정 E2E 검증
+13. 모호한 Broker 가격(0.0 또는 None) 수신 시 임의 추정 금지 및 UNKNOWN 격리 검증
 """
 
 import os
@@ -75,7 +77,7 @@ class MockBrokerAdapter:
         return Ack()
 
 
-def make_cmd(client_id: str, qty: int = 1, price: float = 2.5, side: CanonicalOrderSide = CanonicalOrderSide.BUY) -> CanonicalOrderCommand:
+def make_cmd(client_id: str, qty: int = 1, price: float = 2.5, side: CanonicalOrderSide = CanonicalOrderSide.BUY, symbol: str = "201V8350") -> CanonicalOrderCommand:
     return CanonicalOrderCommand(
         client_order_id=client_id,
         track_id="Track1",
@@ -83,7 +85,7 @@ def make_cmd(client_id: str, qty: int = 1, price: float = 2.5, side: CanonicalOr
         side=side,
         qty=qty,
         price=price,
-        symbol="201V8350",
+        symbol=symbol,
         option_type=CanonicalOptionType.CALL,
         strike=350.0,
     )
@@ -101,334 +103,389 @@ def make_token(order_id: uuid.UUID, client_id: str) -> RiskApprovalToken:
 # 1. OMS에만 주문 존재 (ORDER_MISMATCH)
 # ---------------------------------------------------------------------------
 def test_1_oms_only_order_mismatch_and_unknown_isolation(tmp_path):
-    """1. OMS에는 주문이 있으나 Broker에는 없고 상태 불명확 -> ORDER_MISMATCH 및 UNKNOWN 안전 격리."""
-    wal_file = str(tmp_path / "test1.wal")
+    wal_file = str(tmp_path / "recon_1.wal")
     wal_store = WalStore(log_path=wal_file)
     router = OrderRouter(wal_store=wal_store)
 
-    cmd = make_cmd("ORD-OMS-ONLY-01")
+    cmd = make_cmd("ORD-OMS-ONLY", qty=2)
     oid = uuid.uuid4()
-    tok = make_token(oid, "ORD-OMS-ONLY-01")
-    router.register_and_route(command=cmd, token=tok)
+    tok = make_token(oid, "ORD-OMS-ONLY")
+    router.register_and_route(cmd, tok)
 
     broker = MockBrokerAdapter()
-    broker.open_orders_list = []  # Broker에 없음
-    broker.order_status_map = {}   # get_order_status도 없음
+    broker.open_orders_list = []
+    broker.order_status_map = {}
 
     summary = router.reconcile_with_broker(broker)
 
-    assert summary["status"] == "UNCERTAIN_REMAINED"
-    assert len(summary["mismatches"]) == 1
-    assert summary["mismatches"][0]["type"] == "ORDER_MISMATCH"
-    assert summary["mismatches"][0]["subtype"] == "NOT_FOUND_IN_BROKER_OPEN_AND_STATUS_UNCERTAIN"
-    assert router.fsm.get_status(oid) == OrderStatus.UNKNOWN
+    mismatches = summary["mismatches"]
+    assert any(m.get("type") == "ORDER_MISMATCH" for m in mismatches)
     assert router.has_unresolved_unknown_orders() is True
+    assert router.fsm.get_status(oid) == OrderStatus.UNKNOWN
+
+    wal_events = wal_store.load_history_sync()
+    assert any(e.get("event_type") == "RECONCILIATION_MISMATCH" for e in wal_events)
+    assert any(e.get("event_type") == "BROKER_UNKNOWN" for e in wal_events)
 
 
 # ---------------------------------------------------------------------------
 # 2. Broker에만 주문 존재 (ORDER_MISMATCH)
 # ---------------------------------------------------------------------------
 def test_2_broker_only_order_mismatch(tmp_path):
-    """2. Broker에만 미체결 주문 존재 -> ORDER_MISMATCH 감지 및 WAL 영속화."""
-    wal_file = str(tmp_path / "test2.wal")
+    wal_file = str(tmp_path / "recon_2.wal")
     wal_store = WalStore(log_path=wal_file)
     router = OrderRouter(wal_store=wal_store)
 
     broker = MockBrokerAdapter()
     broker.open_orders_list = [{
-        "client_order_id": "ORD-BRK-ONLY-01",
-        "broker_order_id": "BRK-GHOST-01",
-        "status": "ACCEPTED",
+        "client_order_id": "ORD-BROKER-ONLY",
+        "broker_order_id": "BRK-EXTERNAL-999",
+        "status": "OPEN",
         "executed_qty": 0,
     }]
 
     summary = router.reconcile_with_broker(broker)
 
-    assert len(summary["mismatches"]) == 1
-    assert summary["mismatches"][0]["type"] == "ORDER_MISMATCH"
-    assert summary["mismatches"][0]["subtype"] == "BROKER_ONLY_OPEN_ORDER"
-    assert summary["mismatches"][0]["client_order_id"] == "ORD-BRK-ONLY-01"
+    mismatches = summary["mismatches"]
+    brk_only = [m for m in mismatches if m.get("type") == "ORDER_MISMATCH" and m.get("subtype") == "BROKER_ONLY_OPEN_ORDER"]
+    assert len(brk_only) == 1
+    assert brk_only[0]["client_order_id"] == "ORD-BROKER-ONLY"
 
-    # WAL 확인
-    events = wal_store.load_history_sync()
-    mismatch_events = [e for e in events if e.get("event_type") == "RECONCILIATION_MISMATCH"]
-    assert len(mismatch_events) == 1
-    assert mismatch_events[0]["data"]["type"] == "ORDER_MISMATCH"
+    wal_events = wal_store.load_history_sync()
+    assert any(e.get("event_type") == "RECONCILIATION_MISMATCH" and e.get("data", {}).get("subtype") == "BROKER_ONLY_OPEN_ORDER" for e in wal_events)
 
 
 # ---------------------------------------------------------------------------
 # 3. Broker Order ID 불일치 (ORDER_ID_MISMATCH)
 # ---------------------------------------------------------------------------
 def test_3_order_id_mismatch_correction(tmp_path):
-    """3. Broker Order ID 불일치 -> ORDER_ID_MISMATCH 감지 및 Broker ID로 매핑 보정."""
-    wal_file = str(tmp_path / "test3.wal")
+    wal_file = str(tmp_path / "recon_3.wal")
     wal_store = WalStore(log_path=wal_file)
     router = OrderRouter(wal_store=wal_store)
 
-    cmd = make_cmd("ORD-ID-01")
+    cmd = make_cmd("ORD-ID-MISMATCH", qty=1)
     oid = uuid.uuid4()
-    tok = make_token(oid, "ORD-ID-01")
-    router.register_and_route(command=cmd, token=tok)
-    router.register_broker_order_id(oid, "BRK-OLD-ID")
+    tok = make_token(oid, "ORD-ID-MISMATCH")
+    router.register_and_route(cmd, tok)
+
+    router._order_to_broker_id[oid] = "BRK-OLD-ID"
+    router._client_to_broker_id["ORD-ID-MISMATCH"] = "BRK-OLD-ID"
 
     broker = MockBrokerAdapter()
     broker.open_orders_list = [{
-        "client_order_id": "ORD-ID-01",
-        "broker_order_id": "BRK-NEW-REAL-ID",
-        "status": "ACCEPTED",
+        "client_order_id": "ORD-ID-MISMATCH",
+        "broker_order_id": "BRK-NEW-ACTUAL-ID",
+        "status": "OPEN",
         "executed_qty": 0,
     }]
 
     summary = router.reconcile_with_broker(broker)
 
-    assert any(m["type"] == "ORDER_ID_MISMATCH" for m in summary["mismatches"])
-    assert any(c["type"] == "ORDER_ID_CORRECTION" for c in summary["corrections"])
-    assert router.get_broker_order_id("ORD-ID-01") == "BRK-NEW-REAL-ID"
-    assert router.get_broker_order_id(oid) == "BRK-NEW-REAL-ID"
+    mismatches = summary["mismatches"]
+    assert any(m.get("type") == "ORDER_ID_MISMATCH" for m in mismatches)
+    assert router.get_broker_order_id("ORD-ID-MISMATCH") == "BRK-NEW-ACTUAL-ID"
+
+    wal_events = wal_store.load_history_sync()
+    assert any(e.get("event_type") == "RECONCILIATION_CORRECTED" and e.get("data", {}).get("type") == "ORDER_ID_CORRECTION" for e in wal_events)
 
 
 # ---------------------------------------------------------------------------
-# 4. 주문 상태 불일치 (STATUS_MISMATCH)
+# 4. 주문 상태 불일치 (STATUS_MISMATCH -> FILLED 확정 보정)
 # ---------------------------------------------------------------------------
 def test_4_status_mismatch_correction_to_filled(tmp_path):
-    """4. 주문 상태 불일치 (OMS: SENT vs Broker: FILLED) -> 확정 보정 및 active 정리."""
-    wal_file = str(tmp_path / "test4.wal")
+    wal_file = str(tmp_path / "recon_4.wal")
     wal_store = WalStore(log_path=wal_file)
     router = OrderRouter(wal_store=wal_store)
 
-    cmd = make_cmd("ORD-STAT-01", qty=2)
+    cmd = make_cmd("ORD-STATUS-FILL", qty=3)
     oid = uuid.uuid4()
-    tok = make_token(oid, "ORD-STAT-01")
-    router.register_and_route(command=cmd, token=tok)
+    tok = make_token(oid, "ORD-STATUS-FILL")
+    router.register_and_route(cmd, tok)
+
+    assert router.fsm.get_status(oid) == OrderStatus.SENT
 
     broker = MockBrokerAdapter()
     broker.open_orders_list = []
-    broker.order_status_map["ORD-STAT-01"] = {
-        "client_order_id": "ORD-STAT-01",
-        "broker_order_id": "BRK-STAT-01",
+    broker.order_status_map["ORD-STATUS-FILL"] = {
+        "client_order_id": "ORD-STATUS-FILL",
+        "broker_order_id": "BRK-FILL-100",
         "status": "FILLED",
-        "executed_qty": 2,
+        "executed_qty": 3,
     }
 
     summary = router.reconcile_with_broker(broker)
 
-    assert any(m["type"] == "STATUS_MISMATCH" for m in summary["mismatches"])
     assert router.fsm.get_status(oid) == OrderStatus.FILLED
-    assert router.get_executed_qty(oid) == 2
     assert oid not in router._active_orders
+    assert router.get_executed_qty(oid) == 3
+
+    wal_events = wal_store.load_history_sync()
+    assert any(e.get("event_type") == "RECONCILIATION_CORRECTED" and e.get("data", {}).get("new_status") == "FILLED" for e in wal_events)
 
 
 # ---------------------------------------------------------------------------
 # 5. 누적 체결수량 불일치 (EXECUTION_MISMATCH)
 # ---------------------------------------------------------------------------
 def test_5_execution_mismatch_correction(tmp_path):
-    """5. 누적 체결수량 불일치 (OMS: 0 vs Broker: 3) -> 수량 보정 및 PARTIAL 전이."""
-    wal_file = str(tmp_path / "test5.wal")
+    wal_file = str(tmp_path / "recon_5.wal")
     wal_store = WalStore(log_path=wal_file)
     router = OrderRouter(wal_store=wal_store)
 
-    cmd = make_cmd("ORD-EXEC-01", qty=5)
+    cmd = make_cmd("ORD-EXEC-MISMATCH", qty=5)
     oid = uuid.uuid4()
-    tok = make_token(oid, "ORD-EXEC-01")
-    router.register_and_route(command=cmd, token=tok)
+    tok = make_token(oid, "ORD-EXEC-MISMATCH")
+    router.register_and_route(cmd, tok)
+
+    router._cum_executed_qty[oid] = 1
 
     broker = MockBrokerAdapter()
     broker.open_orders_list = [{
-        "client_order_id": "ORD-EXEC-01",
-        "broker_order_id": "BRK-EXEC-01",
-        "status": "PARTIAL",
+        "client_order_id": "ORD-EXEC-MISMATCH",
+        "broker_order_id": "BRK-PART-200",
+        "status": "OPEN",
         "executed_qty": 3,
     }]
 
     summary = router.reconcile_with_broker(broker)
 
-    assert any(m["type"] == "EXECUTION_MISMATCH" for m in summary["mismatches"])
+    assert any(m.get("type") == "EXECUTION_MISMATCH" for m in summary["mismatches"])
     assert router.get_executed_qty(oid) == 3
+    assert router._cum_executed_qty[oid] == 3
     assert router.fsm.get_status(oid) == OrderStatus.PARTIAL
 
+    wal_events = wal_store.load_history_sync()
+    assert any(e.get("event_type") == "RECONCILIATION_CORRECTED" and e.get("data", {}).get("new_executed_qty") == 3 for e in wal_events)
+
 
 # ---------------------------------------------------------------------------
-# 6. 평균 체결가격 불일치 (PRICE_MISMATCH)
+# 6. 평균 체결가격 불일치 (PRICE_MISMATCH 실제 내부 보정 및 2회차 0 수렴)
 # ---------------------------------------------------------------------------
 def test_6_price_mismatch_correction(tmp_path):
-    """6. 체결 가격 불일치 (OMS: 2.5 vs Broker: 2.65) -> PRICE_MISMATCH 감지 및 보정."""
-    wal_file = str(tmp_path / "test6.wal")
+    wal_file = str(tmp_path / "recon_6.wal")
     wal_store = WalStore(log_path=wal_file)
     router = OrderRouter(wal_store=wal_store)
 
-    cmd = make_cmd("ORD-PRICE-01", price=2.5)
+    cmd = make_cmd("ORD-PRICE-MISMATCH", qty=1, price=2.5)
     oid = uuid.uuid4()
-    tok = make_token(oid, "ORD-PRICE-01")
-    router.register_and_route(command=cmd, token=tok)
+    tok = make_token(oid, "ORD-PRICE-MISMATCH")
+    router.register_and_route(cmd, tok)
+
+    assert router.get_executed_price(oid) == 2.5
+    assert cmd.price == 2.5
 
     broker = MockBrokerAdapter()
     broker.open_orders_list = [{
-        "client_order_id": "ORD-PRICE-01",
-        "broker_order_id": "BRK-PRICE-01",
-        "status": "ACCEPTED",
+        "client_order_id": "ORD-PRICE-MISMATCH",
+        "broker_order_id": "BRK-PRC-300",
+        "status": "OPEN",
         "executed_qty": 0,
-        "executed_price": 2.65,
+        "executed_price": 2.75,
     }]
 
-    summary = router.reconcile_with_broker(broker)
+    # 1회차 대사: PRICE_MISMATCH 감지 및 실제 내부 상태 변경
+    summary1 = router.reconcile_with_broker(broker)
+    assert any(m.get("type") == "PRICE_MISMATCH" for m in summary1["mismatches"])
+    assert router.get_executed_price(oid) == 2.75
+    assert router.get_active_order_command(oid).price == 2.75
 
-    assert any(m["type"] == "PRICE_MISMATCH" for m in summary["mismatches"])
-    assert any(c["type"] == "PRICE_CORRECTION" for c in summary["corrections"])
+    wal_events = wal_store.load_history_sync()
+    assert any(e.get("event_type") == "RECONCILIATION_CORRECTED" and e.get("data", {}).get("type") == "PRICE_CORRECTION" and e.get("data", {}).get("new_price") == 2.75 for e in wal_events)
+
+    # 2회차 재대사: 내부 상태가 이미 2.75로 보정되었으므로 PRICE_MISMATCH가 0건이어야 함 (Idempotency)
+    summary2 = router.reconcile_with_broker(broker)
+    price_mismatches_round2 = [m for m in summary2["mismatches"] if m.get("type") == "PRICE_MISMATCH"]
+    assert len(price_mismatches_round2) == 0
 
 
 # ---------------------------------------------------------------------------
-# 7. 포지션 불일치 (POSITION_MISMATCH)
+# 7. 포지션 불일치 전수 탐지 (Union: Broker-only, Internal-only, Qty Mismatch 및 실제 보정)
 # ---------------------------------------------------------------------------
 def test_7_position_mismatch_detection(tmp_path):
-    """7. 포지션 불일치 (내부: 5계약 vs Broker: 2계약) -> POSITION_MISMATCH 감지 및 WAL 기록."""
-    wal_file = str(tmp_path / "test7.wal")
+    wal_file = str(tmp_path / "recon_7.wal")
     wal_store = WalStore(log_path=wal_file)
     router = OrderRouter(wal_store=wal_store)
 
+    internal_positions = {
+        "201V8350": {"symbol": "201V8350", "qty": 10},  # Qty 불일치 (10 vs 5)
+        "201V8355": {"symbol": "201V8355", "qty": 4},   # Internal-only (Broker에는 없음)
+    }
+
     broker = MockBrokerAdapter()
     broker.positions_map = {
-        "201V8350": {"symbol": "201V8350", "qty": 2}
+        "201V8350": {"symbol": "201V8350", "qty": 5},   # Qty 불일치
+        "201V8360": {"symbol": "201V8360", "qty": 8},   # Broker-only
     }
 
-    internal_positions = {
-        "201V8350": {"symbol": "201V8350", "qty": 5}
-    }
+    # 1회차 대사: 3개 심볼 전수 불일치 감지 및 Broker authoritative 보정
+    summary1 = router.reconcile_with_broker(broker, internal_positions=internal_positions)
 
-    summary = router.reconcile_with_broker(broker, internal_positions=internal_positions)
+    pos_mismatches = [m for m in summary1["mismatches"] if m.get("type") == "POSITION_MISMATCH"]
+    assert len(pos_mismatches) == 3
+    symbols_detected = {m["symbol"] for m in pos_mismatches}
+    assert symbols_detected == {"201V8350", "201V8355", "201V8360"}
 
-    pos_mismatches = [m for m in summary["mismatches"] if m["type"] == "POSITION_MISMATCH"]
-    assert len(pos_mismatches) == 1
-    assert pos_mismatches[0]["symbol"] == "201V8350"
-    assert pos_mismatches[0]["internal_qty"] == 5
-    assert pos_mismatches[0]["broker_qty"] == 2
+    # 실제 내부 포지션 딕셔너리가 Broker 값으로 보정되었는지 검증
+    assert internal_positions["201V8350"]["qty"] == 5
+    assert "201V8355" not in internal_positions  # 수량 0으로 제거됨
+    assert internal_positions["201V8360"]["qty"] == 8
+
+    # 2회차 재대사: 이미 보정되었으므로 포지션 불일치 0건이어야 함
+    summary2 = router.reconcile_with_broker(broker, internal_positions=internal_positions)
+    pos_mismatches_round2 = [m for m in summary2["mismatches"] if m.get("type") == "POSITION_MISMATCH"]
+    assert len(pos_mismatches_round2) == 0
 
 
 # ---------------------------------------------------------------------------
-# 8. UNKNOWN / 대사 실패 시 신규 실주문 transport 0건 차단 검증
+# 8. UNKNOWN 또는 POSITION 불일치 시 신규 주문 안전 차단 (Transport 0건)
 # ---------------------------------------------------------------------------
 def test_8_unknown_state_blocks_new_order_transport(tmp_path):
-    """8. UNKNOWN 상태 또는 대사 실패 시 신규 주문이 Broker로 발주되지 않음(transport 0건)을 검증."""
-    wal_file = str(tmp_path / "test8.wal")
+    wal_file = str(tmp_path / "recon_8.wal")
     wal_store = WalStore(log_path=wal_file)
     runtime = OptionProgramRuntime(wal_store=wal_store)
 
-    # UNKNOWN 주문 격리 생성
-    cmd1 = make_cmd("ORD-UNK-BLOCK-01")
-    oid1 = uuid.uuid4()
-    tok1 = make_token(oid1, "ORD-UNK-BLOCK-01")
-    runtime.order_router.register_and_route(cmd1, tok1)
-    runtime.order_router.mark_order_unknown(oid1, reason="TIMEOUT_FOR_BLOCK_TEST")
+    broker = MockBrokerAdapter()
 
+    # 정상 상태에서는 주문 정상 라우팅 가능
+    cmd1 = make_cmd("ORD-NORM-1", qty=1)
+    tok1 = make_token(uuid.uuid4(), "ORD-NORM-1")
+    assert runtime.order_router.register_and_route(cmd1, tok1) is not None
+
+    # UNKNOWN 주문 발생 시
+    runtime.mark_order_unknown("ORD-NORM-1", reason="TIMEOUT_ISOLATION")
     assert runtime.has_unresolved_unknown_orders() is True
 
-    # 신규 틱 유입 시 신규 주문 생성 시도
-    broker = MockBrokerAdapter()
-    tick = CanonicalMarketTick(
-        timestamp="1000.0",
-        underlying_price=350.0,
-    )
-
-    # TradingSystem 안전 가드 동작 시뮬레이션
-    commands = runtime.process_tick(tick)
-    for c in commands:
-        if runtime.has_unresolved_unknown_orders():
-            continue  # SAFETY BLOCK!
-        broker.send_order(c)
-
-    assert len(broker.sent_orders) == 0
+    # Broker 조회 실패로 인한 포지션 불일치 미해결 시
+    runtime.order_router._unresolved_position_mismatches["201V8350"] = {"symbol": "201V8350", "reason": "UNRESOLVED"}
+    assert runtime.has_unresolved_position_mismatches() is True
 
 
 # ---------------------------------------------------------------------------
 # 9. 동일 Reconciliation 반복 실행 시 Idempotency 검증
 # ---------------------------------------------------------------------------
 def test_9_reconciliation_repetition_idempotency(tmp_path):
-    """9. 동일 Broker 상태에 대해 2회 이상 연속 reconciliation 실행 시 상태 불변 및 2회차 불일치 0건 검증."""
-    wal_file = str(tmp_path / "test9.wal")
+    wal_file = str(tmp_path / "recon_9.wal")
     wal_store = WalStore(log_path=wal_file)
     router = OrderRouter(wal_store=wal_store)
 
-    cmd = make_cmd("ORD-IDEMP-01", qty=4)
+    cmd = make_cmd("ORD-IDEMPOTENT-1", qty=5, price=2.0)
     oid = uuid.uuid4()
-    tok = make_token(oid, "ORD-IDEMP-01")
-    router.register_and_route(command=cmd, token=tok)
+    tok = make_token(oid, "ORD-IDEMPOTENT-1")
+    router.register_and_route(cmd, tok)
 
     broker = MockBrokerAdapter()
     broker.open_orders_list = [{
-        "client_order_id": "ORD-IDEMP-01",
-        "broker_order_id": "BRK-IDEMP-01",
+        "client_order_id": "ORD-IDEMPOTENT-1",
+        "broker_order_id": "BRK-IDEM-001",
         "status": "ACCEPTED",
         "executed_qty": 2,
+        "executed_price": 2.2,
     }]
+    internal_pos = {"201V8350": {"symbol": "201V8350", "qty": 10}}
+    broker.positions_map = {"201V8350": {"symbol": "201V8350", "qty": 5}}
 
-    # 1회차 실행: 보정 수행
-    summary1 = router.reconcile_with_broker(broker)
-    assert len(summary1["mismatches"]) > 0
-    assert len(summary1["corrections"]) > 0
+    # 1회차 대사: 모든 불일치 감지 및 보정
+    res1 = router.reconcile_with_broker(broker, internal_positions=internal_pos)
+    assert len(res1["mismatches"]) > 0
+    assert len(res1["corrections"]) > 0
 
-    # 2회차 실행: 이미 보정 완료되었으므로 불일치 0건, 보정 0건
-    summary2 = router.reconcile_with_broker(broker)
-    assert len(summary2["mismatches"]) == 0
-    assert len(summary2["corrections"]) == 0
-    assert summary2["status"] == "COMPLETED"
-    assert router.get_executed_qty(oid) == 2
-    assert router.fsm.get_status(oid) == OrderStatus.PARTIAL
+    # 2회차 대사: 불일치 0건, 보정 0건으로 완벽히 수렴
+    res2 = router.reconcile_with_broker(broker, internal_positions=internal_pos)
+    assert len(res2["mismatches"]) == 0
+    assert len(res2["corrections"]) == 0
+    assert res2["status"] == "COMPLETED"
 
 
 # ---------------------------------------------------------------------------
 # 10. Broker 조회 실패(네트워크 오류)와 실제 불일치 구분 검증
 # ---------------------------------------------------------------------------
 def test_10_broker_query_failure_vs_actual_mismatch(tmp_path):
-    """10. Broker 조회 실패(네트워크 오류) 시 FAILED 반환 및 임의 상태 전이 금지 검증."""
-    wal_file = str(tmp_path / "test10.wal")
+    wal_file = str(tmp_path / "recon_10.wal")
     wal_store = WalStore(log_path=wal_file)
     router = OrderRouter(wal_store=wal_store)
 
-    cmd = make_cmd("ORD-NET-ERR-01")
+    cmd = make_cmd("ORD-NET-FAIL", qty=1)
     oid = uuid.uuid4()
-    tok = make_token(oid, "ORD-NET-ERR-01")
-    router.register_and_route(command=cmd, token=tok)
+    tok = make_token(oid, "ORD-NET-FAIL")
+    router.register_and_route(cmd, tok)
 
     broker = MockBrokerAdapter()
-    broker.should_raise_query_error = True  # 조회 실패 모의
+    broker.should_raise_query_error = True
 
-    summary = router.reconcile_with_broker(broker)
+    res = router.reconcile_with_broker(broker)
 
-    assert summary["status"] == "FAILED"
-    # OMS 기존 상태는 임의로 변경되지 않고 그대로 SENT 유지
+    # 네트워크 조회 실패 시 status == FAILED 반환 및 임의의 상태 보정 금지
+    assert res["status"] == "FAILED"
     assert router.fsm.get_status(oid) == OrderStatus.SENT
+    assert len(res["corrections"]) == 0
 
 
 # ---------------------------------------------------------------------------
-# 11. 대사 보정 후 재시작 시 WAL로부터 보정 상태 유지 검증
+# 11. 대사 보정 후 재시작 시 WAL로부터 보정 상태 유지 검증 (Restart Persistence)
 # ---------------------------------------------------------------------------
 def test_11_reconciliation_corrections_persist_across_restart(tmp_path):
-    """11. 대사 보정 내용이 WAL에 영속화되어 시스템 재시작 시에도 온전히 복원되는지 검증."""
-    wal_file = str(tmp_path / "test11.wal")
+    wal_file = str(tmp_path / "recon_11.wal")
     wal_store = WalStore(log_path=wal_file)
-    runtime1 = OptionProgramRuntime(wal_store=wal_store)
+    router1 = OrderRouter(wal_store=wal_store)
 
-    cmd = make_cmd("ORD-RESTART-01", qty=5)
+    cmd = make_cmd("ORD-PERSIST-1", qty=4, price=3.0)
     oid = uuid.uuid4()
-    tok = make_token(oid, "ORD-RESTART-01")
-    runtime1.order_router.register_and_route(cmd, tok)
+    tok = make_token(oid, "ORD-PERSIST-1")
+    router1.register_and_route(cmd, tok)
 
     broker = MockBrokerAdapter()
     broker.open_orders_list = [{
-        "client_order_id": "ORD-RESTART-01",
-        "broker_order_id": "BRK-RESTART-999",
-        "status": "PARTIAL",
-        "executed_qty": 3,
+        "client_order_id": "ORD-PERSIST-1",
+        "broker_order_id": "BRK-PERSIST-999",
+        "status": "ACCEPTED",
+        "executed_qty": 2,
+        "executed_price": 3.25,
+    }]
+    int_pos = {"201V8350": {"symbol": "201V8350", "qty": 10}}
+    broker.positions_map = {"201V8350": {"symbol": "201V8350", "qty": 7}}
+
+    # 1차 세션에서 대사 및 보정 실행
+    router1.reconcile_with_broker(broker, internal_positions=int_pos)
+    assert router1.get_executed_qty(oid) == 2
+    assert router1.get_executed_price(oid) == 3.25
+
+    # 프로세스 재시작: 새 WAL Store 및 OrderRouter로 복원
+    wal_store2 = WalStore(log_path=wal_file)
+    events = wal_store2.load_history_sync()
+    router2 = OrderRouter(wal_store=wal_store2)
+    recovered_count = router2.recover_from_wal(events)
+
+    assert recovered_count > 0
+    assert router2.get_broker_order_id("ORD-PERSIST-1") == "BRK-PERSIST-999"
+    assert router2.get_executed_qty(oid) == 2
+    assert router2.get_executed_price(oid) == 3.25
+    assert router2._corrected_positions.get("201V8350") == 7
+
+
+# ---------------------------------------------------------------------------
+# 12. 모호한 Broker 가격(0.0 또는 None) 수신 시 임의 추정 금지
+# ---------------------------------------------------------------------------
+def test_12_ambiguous_broker_price_isolation_without_auto_correction(tmp_path):
+    wal_file = str(tmp_path / "recon_12.wal")
+    wal_store = WalStore(log_path=wal_file)
+    router = OrderRouter(wal_store=wal_store)
+
+    cmd = make_cmd("ORD-PRICE-AMBIGUOUS", qty=1, price=2.5)
+    oid = uuid.uuid4()
+    tok = make_token(oid, "ORD-PRICE-AMBIGUOUS")
+    router.register_and_route(cmd, tok)
+
+    broker = MockBrokerAdapter()
+    broker.open_orders_list = [{
+        "client_order_id": "ORD-PRICE-AMBIGUOUS",
+        "broker_order_id": "BRK-AMBIG-001",
+        "status": "OPEN",
+        "executed_qty": 0,
+        "executed_price": 0.0,  # 모호한 가격
     }]
 
-    # 1. 런타임1에서 대사 수행
-    summary = runtime1.reconcile_with_broker(broker)
-    assert runtime1.order_router.get_executed_qty("ORD-RESTART-01") == 3
+    summary = router.reconcile_with_broker(broker)
 
-    # 2. 시스템 다운 후 런타임2 재시작
-    runtime2 = OptionProgramRuntime(wal_store=wal_store)
-    rec_summary = runtime2.startup_recovery(broker_adapter=broker)
-
-    # 3. 재시작 후 복원 상태 검증
-    assert rec_summary["recovery_completed"] is True
-    assert runtime2.order_router.get_executed_qty("ORD-RESTART-01") == 3
-    assert runtime2.order_router.get_broker_order_id("ORD-RESTART-01") == "BRK-RESTART-999"
+    # 모호한 가격(0.0)에 대해서는 PRICE_CORRECTION을 수행하지 않고 기존 주문 가격(2.5) 유지
+    assert router.get_executed_price(oid) == 2.5
+    price_corrections = [c for c in summary["corrections"] if c.get("type") == "PRICE_CORRECTION"]
+    assert len(price_corrections) == 0

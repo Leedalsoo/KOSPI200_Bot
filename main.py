@@ -272,10 +272,10 @@ class TradingSystem:
 
                 # 4. [주문 접수 사이클] Broker 인터페이스를 통한 주문 접수 (체결 이벤트와 명확히 분리된 접수/식별자 확보)
                 for cmd in commands:
-                    # [D-16] 미해결 UNKNOWN 주문이 존재할 경우 신규 실주문 전송 안전 차단
-                    if self.op_runtime.has_unresolved_unknown_orders():
+                    # [D-16 / 10단계-3] 미해결 UNKNOWN 주문 또는 미해결 POSITION 불일치가 존재할 경우 신규 실주문 전송 안전 차단
+                    if self.op_runtime.has_unresolved_unknown_orders() or self.op_runtime.has_unresolved_position_mismatches():
                         logger.critical(
-                            "TradingSystem: [SAFETY BLOCK] 미해결 UNKNOWN 주문이 존재하여 신규 주문 발주 차단 (Client: %s)",
+                            "TradingSystem: [SAFETY BLOCK] 미해결 UNKNOWN 주문 또는 POSITION 불일치로 인해 신규 주문 발주 차단 (Client: %s)",
                             cmd.client_order_id,
                         )
                         continue

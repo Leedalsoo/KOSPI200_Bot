@@ -151,6 +151,14 @@ class OptionProgramRuntime:
         """[D-16] 미해결 UNKNOWN 상태의 주문이 존재하는지 확인"""
         return self.order_router.has_unresolved_unknown_orders()
 
+    def has_unresolved_position_mismatches(self) -> bool:
+        """[10단계-3] 미해결 포지션 불일치가 존재하는지 확인"""
+        return self.order_router.has_unresolved_position_mismatches()
+
+    def get_unresolved_position_mismatches(self) -> Dict[str, Dict[str, Any]]:
+        """[10단계-3] 미해결 포지션 불일치 상세 내역 반환"""
+        return self.order_router.get_unresolved_position_mismatches()
+
     def recover_unknown_orders(self, broker_adapter: Any) -> Dict[str, Any]:
         """[D-16] UNKNOWN 주문에 대해 Broker 조회를 통한 확정 상태 복구"""
         return self.order_router.recover_unknown_orders(broker_adapter)
