@@ -869,13 +869,15 @@ class OrderRouter:
                             else:
                                 summary["wal_persisted"] = False
 
-                    # 2) 가격 불일치 (PRICE_MISMATCH)
-                    b_price_raw = broker_info.get("executed_price") if broker_info.get("executed_price") is not None else (
-                        broker_info.get("avg_price") if broker_info.get("avg_price") is not None else (
-                            broker_info.get("order_price") if broker_info.get("executed_qty", 0) == 0 else broker_info.get("price")
-                        )
-                    )
-                    b_price = float(b_price_raw or 0.0)
+                    # 2) 가격 불일치 (PRICE_MISMATCH): executed_price 또는 avg_price 확정 가격만 허용
+                    b_exec_p = broker_info.get("executed_price")
+                    b_avg_p = broker_info.get("avg_price")
+                    b_price = 0.0
+                    if b_exec_p is not None and float(b_exec_p or 0.0) > 0.0:
+                        b_price = float(b_exec_p)
+                    elif b_avg_p is not None and float(b_avg_p or 0.0) > 0.0:
+                        b_price = float(b_avg_p)
+
                     if b_price > 0.0 and oms_price > 0.0 and abs(b_price - oms_price) > 1e-4:
                         price_mismatch = {
                             "type": "PRICE_MISMATCH",
@@ -1053,13 +1055,15 @@ class OrderRouter:
                             else:
                                 summary["wal_persisted"] = False
 
-                    # 가격 불일치 검사 및 실제 보정
-                    b_price_raw = status_info.get("executed_price") if status_info.get("executed_price") is not None else (
-                        status_info.get("avg_price") if status_info.get("avg_price") is not None else (
-                            status_info.get("order_price") if status_info.get("executed_qty", 0) == 0 else status_info.get("price")
-                        )
-                    )
-                    b_price = float(b_price_raw or 0.0)
+                    # 가격 불일치 검사 및 실제 보정: executed_price 또는 avg_price 확정 가격만 허용
+                    b_exec_p = status_info.get("executed_price")
+                    b_avg_p = status_info.get("avg_price")
+                    b_price = 0.0
+                    if b_exec_p is not None and float(b_exec_p or 0.0) > 0.0:
+                        b_price = float(b_exec_p)
+                    elif b_avg_p is not None and float(b_avg_p or 0.0) > 0.0:
+                        b_price = float(b_avg_p)
+
                     if b_price > 0.0 and oms_price > 0.0 and abs(b_price - oms_price) > 1e-4:
                         price_mismatch = {
                             "type": "PRICE_MISMATCH",

@@ -694,4 +694,86 @@ def test_17_broker_position_query_failure_empty_positions_blocks_new_orders(tmp_
     assert len(broker.sent_orders) == 0
 
 
+# ---------------------------------------------------------------------------
+# 18. executed_price/avg_price 부재 시 order_price가 있어도 가격 보정 금지 검증
+# ---------------------------------------------------------------------------
+def test_18_no_executed_price_with_order_price_does_not_correct_price(tmp_path):
+    wal_file = str(tmp_path / "recon_18.wal")
+    wal_store = WalStore(log_path=wal_file)
+    router = OrderRouter(wal_store=wal_store)
+
+    cmd = make_cmd("ORD-NO-EXEC-PRC", qty=2, price=2.5)
+    oid = uuid.uuid4()
+    tok = make_token(oid, "ORD-NO-EXEC-PRC")
+    router.register_and_route(cmd, tok)
+
+    broker = MockBrokerAdapter()
+    broker.open_orders_list = [{
+        "client_order_id": "ORD-NO-EXEC-PRC",
+        "broker_order_id": "BRK-NO-EXEC-01",
+        "status": "OPEN",
+        "executed_qty": 0,
+        "order_price": 3.5,  # order_price만 존재 (executed_price/avg_price 없음)
+    }]
+
+    summary = router.reconcile_with_broker(broker)
+
+    # 1) PRICE_MISMATCH 및 PRICE_CORRECTION이 전혀 발생하지 않아야 함
+    price_mismatches = [m for m in summary["mismatches"] if m.get("type") == "PRICE_MISMATCH"]
+    price_corrections = [c for c in summary["corrections"] if c.get("type") == "PRICE_CORRECTION"]
+    assert len(price_mismatches) == 0
+    assert len(price_corrections) == 0
+
+    # 2) 내부 OMS 가격 상태는 기존 2.5가 그대로 유지되어야 함
+    assert router.get_executed_price(oid) == 2.5
+    active_cmd = router.get_active_order_command(oid)
+    assert active_cmd is not None
+    assert active_cmd.price == 2.5
+
+
+# ---------------------------------------------------------------------------
+# 19. executed_price 부재 시 avg_price 단독으로 정상 체결가격 보정 검증
+# ---------------------------------------------------------------------------
+def test_19_avg_price_alone_corrects_price(tmp_path):
+    wal_file = str(tmp_path / "recon_19.wal")
+    wal_store = WalStore(log_path=wal_file)
+    router = OrderRouter(wal_store=wal_store)
+
+    cmd = make_cmd("ORD-AVG-PRC-ONLY", qty=3, price=2.5)
+    oid = uuid.uuid4()
+    tok = make_token(oid, "ORD-AVG-PRC-ONLY")
+    router.register_and_route(cmd, tok)
+
+    broker = MockBrokerAdapter()
+    broker.open_orders_list = [{
+        "client_order_id": "ORD-AVG-PRC-ONLY",
+        "broker_order_id": "BRK-AVG-01",
+        "status": "OPEN",
+        "executed_qty": 1,
+        "avg_price": 2.8,  # avg_price 단독 제공 (executed_price 없음)
+    }]
+
+    summary1 = router.reconcile_with_broker(broker)
+
+    # 1) PRICE_MISMATCH 감지 및 PRICE_CORRECTION 정상 발생
+    price_mismatches = [m for m in summary1["mismatches"] if m.get("type") == "PRICE_MISMATCH"]
+    price_corrections = [c for c in summary1["corrections"] if c.get("type") == "PRICE_CORRECTION"]
+    assert len(price_mismatches) == 1
+    assert len(price_corrections) == 1
+    assert price_corrections[0]["prev_price"] == 2.5
+    assert price_corrections[0]["new_price"] == 2.8
+
+    # 2) 내부 상태가 2.8로 보정되었는지 확인
+    assert router.get_executed_price(oid) == 2.8
+    active_cmd = router.get_active_order_command(oid)
+    assert active_cmd is not None
+    assert active_cmd.price == 2.8
+
+    # 3) 2회차 재대사 시 불일치 0건 수렴 (Idempotency)
+    summary2 = router.reconcile_with_broker(broker)
+    price_mismatches_round2 = [m for m in summary2["mismatches"] if m.get("type") == "PRICE_MISMATCH"]
+    assert len(price_mismatches_round2) == 0
+
+
+
 
