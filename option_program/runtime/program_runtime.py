@@ -93,7 +93,7 @@ class OptionProgramRuntime:
 
         self.received_execution_reports: List[CanonicalExecutionReport] = []
         self.tick_counter: int = 0
-        self.last_price: float = 350.0
+        self.last_price: float = 0.0
         self.price_history: List[float] = []
         self.current_regime: str = "NORMAL"
         
@@ -212,7 +212,23 @@ class OptionProgramRuntime:
             signals_dicts: List[Dict[str, Any]] = []
 
             try:
-                date_str = (tick.timestamp or "2026-08-23").split(" ")[0]
+                # CanonicalMarketTick timestamp에서 날짜 및 시간 추출 (실제 입력 활용)
+                raw_ts = str(tick.timestamp) if tick.timestamp else ""
+                date_str = ""
+                time_str = ""
+                if " " in raw_ts:
+                    parts = raw_ts.split(" ")
+                    date_str = parts[0]
+                    time_str = parts[1].split(".")[0]
+                elif "T" in raw_ts:
+                    parts = raw_ts.split("T")
+                    date_str = parts[0]
+                    time_str = parts[1].split(".")[0]
+                elif ":" in raw_ts:
+                    time_str = raw_ts.split(".")[0]
+                else:
+                    date_str = raw_ts
+
                 if st_name == "Track1":
                     if st.active_fence is None:
                         atm = round(tick.underlying_price / 2.5) * 2.5
@@ -242,10 +258,9 @@ class OptionProgramRuntime:
                         signals_dicts.append(trap_res)
 
                 elif st_name == "Track3":
-                    dislocation = condition.basis if condition else 0.0
                     m_data = {
                         "underlying_price": tick.underlying_price,
-                        "time_str": "09:30:00",
+                        "time_str": time_str,
                         "atm_strike": round(tick.underlying_price / 2.5) * 2.5,
                         "near_synthetic_future": tick.underlying_price + (condition.basis if condition else 0.0),
                         "far_synthetic_future": tick.underlying_price,
@@ -259,12 +274,13 @@ class OptionProgramRuntime:
 
                 elif st_name == "Track4":
                     sc_vol = condition.volatility if condition else 0.0
+                    base_v = condition.baseline_volatility if condition and condition.baseline_volatility > 0.0 else (sc_vol if sc_vol > 0.0 else 1.0)
                     sc_res = st.evaluate_scalping_basecamp_entry(
                         current_price=tick.underlying_price,
                         active_vol=sc_vol,
-                        base_vol=1.0,
+                        base_vol=base_v,
                         date_str=date_str,
-                        time_str="09:05:00"
+                        time_str=time_str
                     )
                     if sc_res.get("signals"):
                         signals_dicts.extend(sc_res["signals"])
@@ -292,13 +308,16 @@ class OptionProgramRuntime:
 
                 elif st_name == "Track6":
                     vol_ratio = condition.volatility_ratio if condition else 1.0
+                    base_v6 = condition.baseline_volatility if condition and condition.baseline_volatility > 0.0 else 1.0
+                    act_v6 = condition.volatility if condition and condition.volatility > 0.0 else vol_ratio
+                    avail_budget6 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 1000000.0
                     ins_res = st.evaluate_insurance_buy(
                         current_price=tick.underlying_price,
-                        active_vol=vol_ratio,
-                        base_vol=1.0,
-                        budget=1000000.0,
+                        active_vol=act_v6,
+                        base_vol=base_v6,
+                        budget=avail_budget6,
                         date_str=date_str,
-                        time_str="09:00:00"
+                        time_str=time_str
                     )
                     if ins_res.get("signals"):
                         signals_dicts.extend(ins_res["signals"])
@@ -306,13 +325,15 @@ class OptionProgramRuntime:
                         signals_dicts.append(ins_res)
 
                 elif st_name == "Track7":
+                    act_v7 = condition.volatility if condition and condition.volatility > 0.0 else 1.0
+                    avail_budget7 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 1000000.0
                     ins7 = st.evaluate_insurance_buy(
                         current_price=tick.underlying_price,
-                        budget=1000000.0,
+                        budget=avail_budget7,
                         date_str=date_str,
                         is_new_week_start=True,
-                        active_vol=1.0,
-                        time_str="09:00:00"
+                        active_vol=act_v7,
+                        time_str=time_str
                     )
                     if ins7.get("signals"):
                         signals_dicts.extend(ins7["signals"])
@@ -320,9 +341,10 @@ class OptionProgramRuntime:
                         signals_dicts.append(ins7)
 
                 elif st_name == "Track8":
+                    avail_budget8 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 2000000.0
                     ent8 = st.evaluate_entry(
                         dte=30.0,
-                        budget=2000000.0,
+                        budget=avail_budget8,
                         current_price=tick.underlying_price,
                         current_regime=self.current_regime,
                         date_str=date_str
@@ -333,9 +355,11 @@ class OptionProgramRuntime:
                         signals_dicts.append(ent8)
 
                 elif st_name == "Track9":
+                    t1_st = self.strategies[0] if self.strategies else None
+                    actual_sell_qty = 1 if (t1_st and getattr(t1_st, "active_fence", None) is not None) else 0
                     ins9 = st.evaluate_insurance(
                         current_price=tick.underlying_price,
-                        active_sell_qty=2,
+                        active_sell_qty=actual_sell_qty if actual_sell_qty > 0 else 2,
                         current_ins_qty=0,
                         date_str=date_str
                     )
