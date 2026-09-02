@@ -197,13 +197,25 @@ class RealBrokerAdapter(IBrokerAdapter):
         self._seen_exec_ids: set[str] = set()
         self._listener_running: bool = False
 
+    def is_armed(self) -> bool:
+        """명시적 안전 무장 키 (Interlock B) 일치 여부 확인"""
+        return self.config.safety_arm_key == "I_CONFIRM_LIVE_TRADING"
+
+    def is_live_trading_allowed(self) -> bool:
+        """2중 안전 핀 (Interlock A & B) 전체 충족 여부 확인"""
+        return (not self.config.is_simulation) and self.is_armed()
+
     def connect(self) -> bool:
         """실전 증권사 세션 연결 및 토큰 인증, 체결 수신 리스너 활성화"""
         logger.info(f"[{self.config.broker_name}] Initializing real broker connection...")
         if self.client.authenticate():
             self._connected = True
             self.start_execution_listener()
-            logger.info(f"[{self.config.broker_name}] Connected and armed for live trading.")
+            if self.is_live_trading_allowed():
+                logger.info(f"[{self.config.broker_name}] Connected: Session authenticated and armed for LIVE trading.")
+            else:
+                reason = "simulation mode (Interlock A active)" if self.config.is_simulation else "missing ARM_REAL_TRADING_ORDERS key (Interlock B active)"
+                logger.info(f"[{self.config.broker_name}] Connected: Session authenticated (Live order disarmed: {reason}).")
             return True
         self._connected = False
         logger.error(f"[{self.config.broker_name}] Connection failed.")
@@ -347,16 +359,23 @@ class RealBrokerAdapter(IBrokerAdapter):
                 message=f"[{self.config.broker_name}] Broker is disconnected",
             )
 
-        # 🛡️ [2중 안전 핀] 실거래 환경에서 명시적 안전 무장 플래그가 없으면 실주문 차단
-        if not self.config.is_simulation and self.config.safety_arm_key != "I_CONFIRM_LIVE_TRADING":
-            logger.critical(f"[{self.config.broker_name}] [SAFETY INTERLOCK BLOCKED] Live order blocked! ARM_REAL_TRADING_ORDERS is not set to 'I_CONFIRM_LIVE_TRADING'")
-            return BrokerOrderResponse(
-                success=False,
-                broker_order_id=None,
-                client_order_id=command.client_order_id,
-                status="SAFETY_BLOCKED",
-                message=f"[{self.config.broker_name}] Live order blocked by safety interlock key",
-            )
+        # 🛡️ [2중 안전 핀 (Dual Safety Interlocks)]
+        # Interlock A: 실행 환경 확인 (Live vs Simulation)
+        # Interlock B: 명시적 무장 확인 (ARM_REAL_TRADING_ORDERS == "I_CONFIRM_LIVE_TRADING")
+        if not self.config.is_simulation:
+            if not self.is_armed():
+                logger.critical(
+                    f"[{self.config.broker_name}] [SAFETY INTERLOCK BLOCKED] "
+                    f"Live order blocked! Interlock B failed: ARM_REAL_TRADING_ORDERS is not set to 'I_CONFIRM_LIVE_TRADING' "
+                    f"(current: '{self.config.safety_arm_key}')"
+                )
+                return BrokerOrderResponse(
+                    success=False,
+                    broker_order_id=None,
+                    client_order_id=command.client_order_id,
+                    status="SAFETY_BLOCKED",
+                    message=f"[{self.config.broker_name}] Live order blocked by safety interlock key",
+                )
 
         # 1. 증권사 종목코드 및 주문 파라미터 매핑 (KIS 국내선물옵션 공식 규격 준수)
         sll_buy_dvsn_cd = "02" if command.side == CanonicalOrderSide.BUY else "01"  # 01: 매도, 02: 매수

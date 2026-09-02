@@ -927,4 +927,179 @@ def test_kis_inquire_ccnl_execution_and_open_orders_contracts():
     assert req_vts_open["headers"]["tr_id"] == "VTTO5201R"
 
 
+# ==============================================================================
+# REAL Live 주문 2중 Safety Interlock 및 명시적 ARM 계약 검증
+# ==============================================================================
+
+
+def test_real_broker_safety_interlock_blocked_when_disarmed():
+    """1. is_simulation=False, ARM key 없음 -> SAFETY_BLOCKED + 주문 transport 호출 0건 + orders_history 미기록"""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        return {"rt_cd": "0", "msg_cd": "APBK0013", "output": {"ODNO": "00012345"}}
+
+    config = RealBrokerConfig(
+        account_no="12345678-01",
+        app_key="TEST_APP_KEY",
+        app_secret="TEST_APP_SECRET",
+        is_simulation=False,  # Live 환경
+        safety_arm_key="",    # ARM key 없음 (Disarmed)
+    )
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+
+    assert adapter.connect() is True
+    assert adapter.is_connected() is True
+    assert adapter.is_armed() is False
+    assert adapter.is_live_trading_allowed() is False
+
+    cmd = make_test_command(client_id="ORD-SAFETY-01")
+    resp = adapter.send_order(cmd)
+
+    assert resp.success is False
+    assert resp.status == "SAFETY_BLOCKED"
+    assert resp.broker_order_id is None
+    assert "safety interlock" in resp.message.lower()
+
+    # 주문 transport 호출 0건 검증 (토큰 발급 요청 1건 외에 order 요청이 전혀 없어야 함)
+    order_requests = [r for r in captured_requests if "/trading/order" in r["path"]]
+    assert len(order_requests) == 0
+
+    # orders_history에 accepted order로 기록되지 않음 검증
+    assert "ORD-SAFETY-01" not in adapter._orders_history
+
+
+def test_real_broker_safety_interlock_blocked_on_typo_arm_key():
+    """2. is_simulation=False, ARM key 오타 -> SAFETY_BLOCKED + 주문 transport 호출 0건"""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        return {"rt_cd": "0", "output": {"ODNO": "00012345"}}
+
+    config = RealBrokerConfig(
+        account_no="12345678-01",
+        app_key="TEST_APP_KEY",
+        app_secret="TEST_APP_SECRET",
+        is_simulation=False,
+        safety_arm_key="I_CONFIRM_LIVE_TRADING_TYPO",  # 오타
+    )
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+
+    assert adapter.connect() is True
+    assert adapter.is_armed() is False
+    assert adapter.is_live_trading_allowed() is False
+
+    cmd = make_test_command(client_id="ORD-SAFETY-TYPO")
+    resp = adapter.send_order(cmd)
+
+    assert resp.success is False
+    assert resp.status == "SAFETY_BLOCKED"
+    assert resp.broker_order_id is None
+
+    order_requests = [r for r in captured_requests if "/trading/order" in r["path"]]
+    assert len(order_requests) == 0
+    assert "ORD-SAFETY-TYPO" not in adapter._orders_history
+
+
+def test_real_broker_live_order_allowed_when_fully_armed():
+    """3. is_simulation=False, ARM key 정답 -> 기존 live 주문 API 호출 경로 진입 가능"""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        return {
+            "rt_cd": "0",
+            "msg_cd": "APBK0013",
+            "msg1": "주문 접수 완료",
+            "output": {"ODNO": "00077777", "ORD_TMD": "093000"}
+        }
+
+    config = RealBrokerConfig(
+        account_no="12345678-01",
+        app_key="TEST_APP_KEY",
+        app_secret="TEST_APP_SECRET",
+        is_simulation=False,
+        safety_arm_key="I_CONFIRM_LIVE_TRADING",  # 명시적 정답 ARM
+    )
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+
+    assert adapter.connect() is True
+    assert adapter.is_connected() is True
+    assert adapter.is_armed() is True
+    assert adapter.is_live_trading_allowed() is True
+
+    cmd = make_test_command(client_id="ORD-LIVE-ARMED-01", symbol="201V3350", price=3.50, qty=2)
+    resp = adapter.send_order(cmd)
+
+    assert resp.success is True
+    assert resp.status == "ACCEPTED"
+    assert resp.broker_order_id == "BRK-REAL-00077777"
+
+    order_requests = [r for r in captured_requests if "/trading/order" in r["path"]]
+    assert len(order_requests) == 1
+    assert order_requests[0]["body"]["SHTN_PDNO"] == "201V3350"
+    assert "ORD-LIVE-ARMED-01" in adapter._orders_history
+
+
+def test_real_broker_simulation_mode_disarms_live_orders():
+    """4 & 5. is_simulation=True 일 때 ARM key 유무에 따른 동작 (Interlock A에 의해 live trading 불허)"""
+    # 4. is_simulation=True, ARM key 없음
+    config_sim_no_arm = RealBrokerConfig(is_simulation=True, safety_arm_key="")
+    adapter_sim_no_arm = RealBrokerAdapter(config=config_sim_no_arm)
+    assert adapter_sim_no_arm.is_armed() is False
+    assert adapter_sim_no_arm.is_live_trading_allowed() is False
+
+    # 5. is_simulation=True, ARM key 정답 -> is_armed는 True이지만 is_live_trading_allowed는 False 유지
+    config_sim_armed = RealBrokerConfig(is_simulation=True, safety_arm_key="I_CONFIRM_LIVE_TRADING")
+    adapter_sim_armed = RealBrokerAdapter(config=config_sim_armed)
+    assert adapter_sim_armed.is_armed() is True
+    assert adapter_sim_armed.is_live_trading_allowed() is False  # Interlock A가 live 진입 방어
+
+
+def test_real_broker_default_config_is_safely_disarmed():
+    """6. 기본 RealBrokerConfig()에서 ARM key 미설정 상태 -> live 주문 차단"""
+    default_config = RealBrokerConfig()
+    assert default_config.is_simulation is True
+    assert default_config.safety_arm_key == ""
+
+    adapter = RealBrokerAdapter(config=default_config)
+    assert adapter.is_armed() is False
+    assert adapter.is_live_trading_allowed() is False
+
+
+def test_real_broker_connect_auth_separated_from_armed_state():
+    """7. connect() 인증 성공만으로 ARM 상태가 true라고 표현되지 않음"""
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        return {"rt_cd": "0"}
+
+    config = RealBrokerConfig(
+        account_no="12345678-01",
+        app_key="TEST_APP_KEY",
+        app_secret="TEST_APP_SECRET",
+        is_simulation=False,
+        safety_arm_key="",  # Disarmed
+    )
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+
+    # connect() 실행
+    connected = adapter.connect()
+    assert connected is True
+    assert adapter.is_connected() is True
+    # 인증 성공 후에도 ARM 상태는 분리되어 False로 유지
+    assert adapter.is_armed() is False
+    assert adapter.is_live_trading_allowed() is False
 
