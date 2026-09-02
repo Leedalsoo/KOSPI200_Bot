@@ -1,18 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for OptionContractMaster contract and Runtime Expiry Lookup Integration."""
+"""Unit tests for OptionContractMaster contract and KIS MST Master Parsing Integration."""
+import io
 import unittest
+import zipfile
 
 from shared.calendar.krx_calendar import KrxTradingCalendar
 from shared.contracts.canonical import CanonicalMarketTick
 from shared.contracts.option_master import (
     IOptionContractMaster,
     InMemoryOptionContractMaster,
+    KisOptionMasterLoader,
+    calculate_krx_monthly_option_expiry,
+    calculate_krx_weekly_option_expiry,
+    parse_kis_fo_idx_mst,
 )
 from option_program.runtime.program_runtime import OptionProgramRuntime
 
 
 class TestOptionContractMaster(unittest.TestCase):
-    """OptionContractMaster 및 Runtime Expiry Lookup 연동 검증."""
+    """OptionContractMaster 및 KIS MST 파싱 연동 검증."""
 
     def setUp(self) -> None:
         self.master: IOptionContractMaster = InMemoryOptionContractMaster(
@@ -39,34 +45,87 @@ class TestOptionContractMaster(unittest.TestCase):
         self.master.register_contract("201X9355", "2026-10-08")
         self.assertEqual(self.master.get_expiry("201X9355"), "2026-10-08")
 
-    def test_runtime_expiry_lookup_via_symbol(self) -> None:
-        """Runtime이 tick.symbol을 통해 OptionContractMaster에서 expiry를 조회하고 DTE를 계산하는지 검증."""
+    def test_calculate_krx_monthly_option_expiry_exact_dates(self) -> None:
+        """KRX 월물 옵션 만기일(매월 2번째 목요일) 계산 검증."""
+        # 2026년 9월: 9/1(화), 첫 목=9/3, 둘째 목=9/10
+        self.assertEqual(calculate_krx_monthly_option_expiry(2026, 9, calendar=self.calendar), "2026-09-10")
+        # 2026년 10월: 10/1(목=1번째), 둘째 목=10/8
+        self.assertEqual(calculate_krx_monthly_option_expiry(2026, 10, calendar=self.calendar), "2026-10-08")
+        # 2026년 8월: 8/1(토), 첫 목=8/6, 둘째 목=8/13
+        self.assertEqual(calculate_krx_monthly_option_expiry(2026, 8, calendar=self.calendar), "2026-08-13")
+
+    def test_calculate_krx_weekly_option_expiry(self) -> None:
+        """KRX 위클리 옵션 만기일(해당 주차 목요일) 계산 검증."""
+        # 2026년 9월 1주차 목요일 -> 2026-09-03
+        self.assertEqual(calculate_krx_weekly_option_expiry(2026, 9, 1, calendar=self.calendar), "2026-09-03")
+        # 2026년 9월 3주차 목요일 -> 2026-09-17
+        self.assertEqual(calculate_krx_weekly_option_expiry(2026, 9, 3, calendar=self.calendar), "2026-09-17")
+
+    def test_parse_kis_fo_idx_mst_real_records(self) -> None:
+        """KIS fo_idx_code_mts.mst 실제 원시 레코드 파싱 및 만기일 매핑 검증."""
+        sample_mst = "\n".join([
+            "5|B01609335|KR4B01693351|C 202609   335.0|2|00335.00| |2001|KOSPI200",
+            "6|C01609335|KR4C01693350|P 202609   335.0|3|00335.00| |2001|KOSPI200",
+            "5|B01610350|KR4B016A3509|C 202610   350.0|2|00350.00| |2001|KOSPI200",
+            "L|B09FCW945|KR4B09FC9450|위클리C 2609W1   945.0|2|00945.00| |2001|KOSPI200",
+            "1|A01609|KR4A01690002|F 202609| |00000.00|1|2001|KOSPI200",  # 선물 레코드 (옵션 아니므로 제외)
+            "INVALID_LINE_NO_PIPES",
+        ])
+
+        contracts = parse_kis_fo_idx_mst(sample_mst, calendar=self.calendar)
+        # 2026-09 콜옵션 만기일 -> 2026-09-10
+        self.assertEqual(contracts.get("B01609335"), "2026-09-10")
+        self.assertEqual(contracts.get("KR4B01693351"), "2026-09-10")
+        # 2026-09 풋옵션 만기일 -> 2026-09-10
+        self.assertEqual(contracts.get("C01609335"), "2026-09-10")
+        # 2026-10 콜옵션 만기일 -> 2026-10-08
+        self.assertEqual(contracts.get("B01610350"), "2026-10-08")
+        # 위클리 1주차 만기일 -> 2026-09-03
+        self.assertEqual(contracts.get("B09FCW945"), "2026-09-03")
+        # 선물은 등록되지 않음
+        self.assertNotIn("A01609", contracts)
+
+    def test_kis_option_master_loader_zip_bytes(self) -> None:
+        """KIS Master ZIP 바이트 스트림 로더 검증."""
+        sample_mst = "5|B01609350|KR4B01693500|C 202609   350.0|2|00350.00| |2001|KOSPI200\n"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("fo_idx_code_mts.mst", sample_mst.encode("cp949"))
+
+        loaded = KisOptionMasterLoader.load_from_zip_bytes(buf.getvalue(), calendar=self.calendar)
+        self.assertEqual(loaded.get("B01609350"), "2026-09-10")
+
+    def test_runtime_expiry_lookup_via_mst_parsed_symbol(self) -> None:
+        """MST에서 파싱된 symbol을 이용해 Runtime이 DTE를 계산하고 전략(Track 1)에 전달하는 파이프라인 검증."""
+        master = InMemoryOptionContractMaster()
+        raw_mst = "5|B01609335|KR4B01693351|C 202609   335.0|2|00335.00| |2001|KOSPI200\n"
+        master.load_from_raw_mst_content(raw_mst, calendar=self.calendar)
+
         runtime = OptionProgramRuntime(
             calendar=self.calendar,
-            option_master=self.master,
+            option_master=master,
         )
 
-        # Track 1에 가두리 세팅
         t1 = runtime.strategies[0]
         t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
 
-        # 틱 생성: expiry는 비어있지만 symbol="201V8350"이 제공됨 (만기일 2026-09-04)
-        # 현재일 2026-08-28(금) 기준 2026-09-04(금)까지 남은 거래일은 3일 (8/31, 9/1 공휴일 가정 시 3일, 일반 주말 시 5일)
-        tick_with_symbol = CanonicalMarketTick(
-            timestamp="2026-08-28 09:00:01",
+        # 2026-09-04(금) 기준 2026-09-10(목) 만기일 (중간에 월~목 4거래일 -> DTE=4.0 -> Track 1 컷오프 발동 조건)
+        tick = CanonicalMarketTick(
+            timestamp="2026-09-04 09:00:01",
             underlying_price=350.0,
             bid_price=349.9,
             ask_price=350.1,
             last_price=350.0,
             volume=10,
             seq_id=1,
-            symbol="201V8350",
-            expiry="",
+            symbol="B01609335",
+            expiry="",  # 틱의 expiry는 비어있으나 symbol을 통해 master에서 2026-09-10 조회됨
         )
 
-        cmds = runtime.process_tick(tick_with_symbol)
-        # DTE가 정상 계산되어 5.0일 이하(또는 컷오프)로 전달되어 가두리 청산이 발동되거나 시그널 생성 확인
-        self.assertIsNone(t1.active_fence, "Track 1 active fence cleared on DTE <= 4.0 or cutoff")
+        cmds = runtime.process_tick(tick)
+        # Track 1 만기 컷오프(DTE <= 4.0)로 인해 가두리 청산 주문 발동 확인
+        self.assertIsNone(t1.active_fence, "Track 1 active fence cleared on DTE <= 4.0")
+        self.assertTrue(any(c.track_id == "Track1" for c in cmds))
 
     def test_runtime_empty_symbol_and_expiry_preserves_fallback(self) -> None:
         """symbol과 expiry 모두 없는 경우 기존 30.0 fallback 및 정상 틱 처리가 안전하게 유지되는지 검증."""
