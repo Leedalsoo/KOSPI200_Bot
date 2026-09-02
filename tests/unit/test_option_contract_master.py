@@ -9,10 +9,12 @@ from shared.contracts.canonical import CanonicalMarketTick
 from shared.contracts.option_master import (
     IOptionContractMaster,
     InMemoryOptionContractMaster,
+    KisProductionOptionContractMaster,
     KisOptionMasterLoader,
     calculate_krx_monthly_option_expiry,
     calculate_krx_weekly_option_expiry,
     parse_kis_fo_idx_mst,
+    create_default_option_master,
 )
 from option_program.runtime.program_runtime import OptionProgramRuntime
 
@@ -95,21 +97,23 @@ class TestOptionContractMaster(unittest.TestCase):
         loaded = KisOptionMasterLoader.load_from_zip_bytes(buf.getvalue(), calendar=self.calendar)
         self.assertEqual(loaded.get("B01609350"), "2026-09-10")
 
-    def test_runtime_expiry_lookup_via_mst_parsed_symbol(self) -> None:
-        """MST에서 파싱된 symbol을 이용해 Runtime이 DTE를 계산하고 전략(Track 1)에 전달하는 파이프라인 검증."""
-        master = InMemoryOptionContractMaster()
-        raw_mst = "5|B01609335|KR4B01693351|C 202609   335.0|2|00335.00| |2001|KOSPI200\n"
-        master.load_from_raw_mst_content(raw_mst, calendar=self.calendar)
+    def test_default_option_program_runtime_uses_production_option_master(self) -> None:
+        """기본 OptionProgramRuntime() 생성 시 실제 Production Master가 연결되는지 검증."""
+        # 인자 없이 기본 생성
+        runtime = OptionProgramRuntime()
+        self.assertIsInstance(runtime.option_master, IOptionContractMaster)
+        self.assertIsInstance(runtime.option_master, KisProductionOptionContractMaster)
 
-        runtime = OptionProgramRuntime(
-            calendar=self.calendar,
-            option_master=master,
-        )
+    def test_default_runtime_symbol_to_expiry_dte_pipeline(self) -> None:
+        """기본 OptionProgramRuntime()에서 symbol ➔ master lookup ➔ DTE 계산 ➔ 전략 전달 검증."""
+        runtime = OptionProgramRuntime()
+        # Production Master에 테스트 계약 등록
+        runtime.option_master.register_contract("B01609335", "2026-09-10")
 
         t1 = runtime.strategies[0]
         t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
 
-        # 2026-09-04(금) 기준 2026-09-10(목) 만기일 (중간에 월~목 4거래일 -> DTE=4.0 -> Track 1 컷오프 발동 조건)
+        # 2026-09-04(금) 기준 2026-09-10(목) 만기일 -> DTE=4.0 -> Track 1 컷오프 발동 조건
         tick = CanonicalMarketTick(
             timestamp="2026-09-04 09:00:01",
             underlying_price=350.0,
@@ -119,13 +123,19 @@ class TestOptionContractMaster(unittest.TestCase):
             volume=10,
             seq_id=1,
             symbol="B01609335",
-            expiry="",  # 틱의 expiry는 비어있으나 symbol을 통해 master에서 2026-09-10 조회됨
+            expiry="",  # 비어있는 expiry -> master lookup으로 2026-09-10 조회
         )
 
         cmds = runtime.process_tick(tick)
-        # Track 1 만기 컷오프(DTE <= 4.0)로 인해 가두리 청산 주문 발동 확인
         self.assertIsNone(t1.active_fence, "Track 1 active fence cleared on DTE <= 4.0")
         self.assertTrue(any(c.track_id == "Track1" for c in cmds))
+
+    def test_explicit_option_master_dependency_injection_preserved(self) -> None:
+        """명시적으로 option_master를 주입했을 때 기존 DI 경로가 유지되는지 검증."""
+        custom_master = InMemoryOptionContractMaster(contracts={"CUSTOM_SYM": "2026-11-12"})
+        runtime = OptionProgramRuntime(option_master=custom_master)
+        self.assertIs(runtime.option_master, custom_master)
+        self.assertEqual(runtime.option_master.get_expiry("CUSTOM_SYM"), "2026-11-12")
 
     def test_runtime_empty_symbol_and_expiry_preserves_fallback(self) -> None:
         """symbol과 expiry 모두 없는 경우 기존 30.0 fallback 및 정상 틱 처리가 안전하게 유지되는지 검증."""
@@ -146,6 +156,17 @@ class TestOptionContractMaster(unittest.TestCase):
 
         cmds = runtime.process_tick(bare_tick)
         self.assertIsInstance(cmds, list)
+
+    def test_malformed_mst_records_not_registered(self) -> None:
+        """잘못되거나 파이프가 부족한 MST 레코드가 무시되는지 검증."""
+        bad_mst = "\n".join([
+            "",
+            "|||",
+            "1|NO_OPTION",
+            "5|INVALIDSYM|NO_EXPIRY_INFO|NAME_WITHOUT_DATE",
+        ])
+        parsed = parse_kis_fo_idx_mst(bad_mst, calendar=self.calendar)
+        self.assertEqual(len(parsed), 0)
 
 
 if __name__ == "__main__":

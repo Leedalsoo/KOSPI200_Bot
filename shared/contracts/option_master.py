@@ -245,3 +245,58 @@ class InMemoryOptionContractMaster(IOptionContractMaster):
     @property
     def total_contracts(self) -> int:
         return len(self._contracts)
+
+
+class KisProductionOptionContractMaster(IOptionContractMaster):
+    """[실전 운영 구현체] KIS 공식 fo_idx_code_mts.mst 기반 옵션 마스터."""
+
+    def __init__(
+        self,
+        contracts: Optional[Dict[str, str]] = None,
+        calendar: Optional[KrxTradingCalendar] = None,
+        auto_load: bool = True,
+        url: str = KIS_FO_IDX_MASTER_URL,
+    ) -> None:
+        self.calendar: KrxTradingCalendar = calendar or KrxTradingCalendar()
+        self._contracts: Dict[str, str] = dict(contracts or {})
+        if auto_load and not self._contracts:
+            self.load_from_kis_source(url=url)
+
+    def get_expiry(self, symbol: str) -> Optional[str]:
+        if not symbol:
+            return None
+        return self._contracts.get(symbol.strip())
+
+    def register_contract(self, symbol: str, expiry: str) -> None:
+        if symbol and expiry:
+            self._contracts[symbol.strip()] = expiry.strip()
+
+    def load_from_kis_source(self, url: str = KIS_FO_IDX_MASTER_URL) -> int:
+        """공식 KIS 마스터 소스를 다운로드하여 등록."""
+        loaded = KisOptionMasterLoader.load_from_url(url=url, calendar=self.calendar)
+        self._contracts.update(loaded)
+        logger.info(f"[KisProductionOptionContractMaster] Loaded {len(loaded)} contracts from KIS source.")
+        return len(loaded)
+
+    def load_from_raw_mst_content(self, raw_text: str) -> int:
+        """원시 MST 텍스트로부터 파싱하여 등록."""
+        parsed = parse_kis_fo_idx_mst(raw_text, calendar=self.calendar)
+        self._contracts.update(parsed)
+        return len(parsed)
+
+    @property
+    def total_contracts(self) -> int:
+        return len(self._contracts)
+
+
+def create_default_option_master(
+    calendar: Optional[KrxTradingCalendar] = None,
+    contracts: Optional[Dict[str, str]] = None,
+    auto_load_kis: bool = True,
+) -> IOptionContractMaster:
+    """Production 기본 OptionContractMaster 팩토리 함수."""
+    return KisProductionOptionContractMaster(
+        contracts=contracts,
+        calendar=calendar,
+        auto_load=auto_load_kis,
+    )

@@ -32,7 +32,11 @@ from option_program.market_analysis.market_condition_analyzer import MarketCondi
 from option_program.market_analysis.market_condition_models import MarketConditionSnapshot
 from infra.wal_store import WalStore
 from shared.calendar import KrxTradingCalendar, calculate_dte
-from shared.contracts.option_master import IOptionContractMaster, InMemoryOptionContractMaster
+from shared.contracts.option_master import (
+    IOptionContractMaster,
+    InMemoryOptionContractMaster,
+    create_default_option_master,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +51,10 @@ class OptionProgramRuntime:
         option_master: Optional[IOptionContractMaster] = None,
     ):
         self.calendar: KrxTradingCalendar = calendar or KrxTradingCalendar()
-        self.option_master: IOptionContractMaster = option_master or InMemoryOptionContractMaster()
+        self.option_master: IOptionContractMaster = option_master or create_default_option_master(
+            calendar=self.calendar,
+            auto_load_kis=True,
+        )
         self.regime_detector = RegimeDetector()
         self.strategies: List[Any] = [
             Track1(config={}),
