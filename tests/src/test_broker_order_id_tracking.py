@@ -42,7 +42,7 @@ def _make_dummy_command(client_order_id: str, track_id: str = "Track1") -> Canon
         side=CanonicalOrderSide.BUY,
         qty=1,
         price=350.0,
-        symbol="KOSPI200",
+        symbol="101V3000",
     )
 
 

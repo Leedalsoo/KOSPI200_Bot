@@ -339,7 +339,17 @@ class RealBrokerAdapter(IBrokerAdapter):
 
         # 1. 증권사 종목코드 및 주문 파라미터 매핑 (KIS 국내선물옵션 공식 규격 준수)
         sll_buy_dvsn_cd = "02" if command.side == CanonicalOrderSide.BUY else "01"  # 01: 매도, 02: 매수
-        prod_code = self._map_instrument_code(command)
+        try:
+            prod_code = self._map_instrument_code(command)
+        except ValueError as val_err:
+            logger.critical(f"[{self.config.broker_name}] [SYMBOL REJECTED] Order blocked due to invalid KIS PDNO: {val_err}")
+            return BrokerOrderResponse(
+                success=False,
+                broker_order_id=None,
+                client_order_id=command.client_order_id,
+                status="SAFETY_BLOCKED",
+                message=f"Invalid KIS instrument symbol: {val_err}",
+            )
         
         body = {
             "CANO": self.config.account_no.split("-")[0],
@@ -424,7 +434,11 @@ class RealBrokerAdapter(IBrokerAdapter):
 
         broker_order_no = order_info["broker_order_no"]
         cmd = order_info.get("command")
-        prod_code = self._map_instrument_code(cmd) if cmd else ""
+        try:
+            prod_code = self._map_instrument_code(cmd) if cmd else ""
+        except ValueError as val_err:
+            logger.error(f"[{self.config.broker_name}] Cannot cancel order {client_order_id} due to invalid symbol: {val_err}")
+            return False
         body = {
             "CANO": self.config.account_no.split("-")[0],
             "ACNT_PRDT_CD": self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01",
@@ -691,10 +705,33 @@ class RealBrokerAdapter(IBrokerAdapter):
         return None
 
     def _map_instrument_code(self, command: CanonicalOrderCommand) -> str:
-        """Canonical DTO ➔ 표준 KRX 선물/옵션 종목코드 매핑"""
+        """Canonical DTO ➔ 표준 KRX/KIS 국내선물옵션 단축상품코드(SHTN_PDNO) 검증 및 Passthrough
+        
+        규칙:
+        - metadata(만기월/행사가)를 임의 규칙으로 추측 조합하지 않음.
+        - 공식 KRX/KIS 8자리 영숫자 단축상품코드(PDNO)만 유효성 검증 후 passthrough.
+        - FUTURES: '1'로 시작하는 8자리 영숫자 (예: '101V3000', '105V3000')
+        - OPTION CALL: '2'로 시작하는 8자리 영숫자 (예: '201V3350', '205V3350')
+        - OPTION PUT: '3'로 시작하는 8자리 영숫자 (예: '301V3345', '305V3345')
+        - 미확인/비정상 심볼은 ValueError 발생시켜 안전 차단.
+        """
+        symbol = str(getattr(command, "symbol", "") or "").strip()
+
+        if not symbol or len(symbol) != 8 or not symbol.isalnum():
+            raise ValueError(f"Invalid KIS PDNO format (must be 8 alphanumeric chars): '{symbol}'")
+
         if command.asset_type == CanonicalAssetType.FUTURES:
-            return "101V3000"  # KOSPI200 지수선물 최근월물
-        # 옵션 코드 매핑 (예: 201V3350 - 콜옵션 350.0 / 301V3350 - 풋옵션 350.0)
-        prefix = "201" if command.option_type == CanonicalOptionType.CALL else "301"
-        strike_int = int(command.strike)
-        return f"{prefix}V3{strike_int}"
+            if not symbol.startswith("1"):
+                raise ValueError(f"Futures KIS PDNO must start with '1', got: '{symbol}'")
+            return symbol
+
+        if command.asset_type == CanonicalAssetType.OPTION:
+            if command.option_type == CanonicalOptionType.CALL and not symbol.startswith("2"):
+                raise ValueError(f"Call Option KIS PDNO must start with '2', got: '{symbol}'")
+            if command.option_type == CanonicalOptionType.PUT and not symbol.startswith("3"):
+                raise ValueError(f"Put Option KIS PDNO must start with '3', got: '{symbol}'")
+            if not symbol.startswith(("2", "3")):
+                raise ValueError(f"Option KIS PDNO must start with '2'(Call) or '3'(Put), got: '{symbol}'")
+            return symbol
+
+        raise ValueError(f"Unsupported asset type for KIS PDNO: {command.asset_type}")

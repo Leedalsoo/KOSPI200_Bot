@@ -156,7 +156,7 @@ def test_real_mode_send_order_ack_only_and_explicit_execution_reflection():
         side=CanonicalOrderSide.BUY,
         qty=2,
         price=350.0,
-        symbol="KOSPI200",
+        symbol="101V3000",
     )
 
     # 1. send_order() 호출 -> 순수 ACK 반환

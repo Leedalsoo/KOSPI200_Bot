@@ -137,6 +137,7 @@ def test_kis_sell_order_payload_and_vts_tr_id_contract():
         side=CanonicalOrderSide.SELL,
         qty=3,
         price=1.80,
+        symbol="301V3345",
         strike=345.0,
         option_type=CanonicalOptionType.PUT,
     )
@@ -371,4 +372,164 @@ def test_kis_account_summary_zero_balance_vs_failure_separation():
     adapter.disconnect()
     with pytest.raises(RuntimeError, match="Broker is disconnected"):
         adapter.get_account_summary()
+
+
+def test_kis_pdno_passthrough_futures_and_options():
+    """Validates that verified KIS PDNO symbols pass through correctly without alteration."""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        return {"rt_cd": "0", "output": {"ODNO": "00012345"}}
+
+    config = RealBrokerConfig(account_no="12345678-01", app_key="KEY", app_secret="SEC", is_simulation=True)
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+    assert adapter.connect() is True
+
+    # 1. 선물 (FUTURES, 101V3000)
+    cmd_fut = CanonicalOrderCommand(
+        client_order_id="ORD-FUT-01",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.FUTURES,
+        side=CanonicalOrderSide.BUY,
+        qty=1,
+        price=350.0,
+        symbol="101V3000",
+    )
+    res_fut = adapter.send_order(cmd_fut)
+    assert res_fut.success is True
+    assert captured_requests[-1]["body"]["SHTN_PDNO"] == "101V3000"
+
+    # 2. 옵션 콜 (OPTION CALL, 201V3355)
+    cmd_call = CanonicalOrderCommand(
+        client_order_id="ORD-CALL-01",
+        track_id="Track2",
+        asset_type=CanonicalAssetType.OPTION,
+        side=CanonicalOrderSide.BUY,
+        qty=2,
+        price=1.50,
+        symbol="201V3355",
+        option_type=CanonicalOptionType.CALL,
+        strike=355.0,
+    )
+    res_call = adapter.send_order(cmd_call)
+    assert res_call.success is True
+    assert captured_requests[-1]["body"]["SHTN_PDNO"] == "201V3355"
+
+    # 3. 옵션 풋 (OPTION PUT, 301V3340)
+    cmd_put = CanonicalOrderCommand(
+        client_order_id="ORD-PUT-01",
+        track_id="Track3",
+        asset_type=CanonicalAssetType.OPTION,
+        side=CanonicalOrderSide.SELL,
+        qty=3,
+        price=2.10,
+        symbol="301V3340",
+        option_type=CanonicalOptionType.PUT,
+        strike=340.0,
+    )
+    res_put = adapter.send_order(cmd_put)
+    assert res_put.success is True
+    assert captured_requests[-1]["body"]["SHTN_PDNO"] == "301V3340"
+
+
+def test_kis_pdno_invalid_or_internal_symbol_safety_blocked():
+    """Validates that unverified or mismatched internal symbols are rejected with SAFETY_BLOCKED."""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        return {"rt_cd": "0"}
+
+    config = RealBrokerConfig(account_no="12345678-01", app_key="KEY", app_secret="SEC", is_simulation=True)
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+    assert adapter.connect() is True
+
+    # Case A: 내부 미변환 Canonical 심볼 (KOSPI200_OPTION_CALL_350.0) -> SAFETY_BLOCKED
+    cmd_internal = CanonicalOrderCommand(
+        client_order_id="ORD-BAD-01",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.OPTION,
+        side=CanonicalOrderSide.BUY,
+        qty=1,
+        price=2.0,
+        symbol="KOSPI200_OPTION_CALL_350.0",
+        option_type=CanonicalOptionType.CALL,
+        strike=350.0,
+    )
+    res_internal = adapter.send_order(cmd_internal)
+    assert res_internal.success is False
+    assert res_internal.status == "SAFETY_BLOCKED"
+    assert "Invalid KIS instrument symbol" in res_internal.message
+
+    # Case B: 비정상 길이 심볼 (101V3) -> SAFETY_BLOCKED
+    cmd_short = CanonicalOrderCommand(
+        client_order_id="ORD-BAD-02",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.FUTURES,
+        side=CanonicalOrderSide.BUY,
+        qty=1,
+        price=350.0,
+        symbol="101V3",
+    )
+    res_short = adapter.send_order(cmd_short)
+    assert res_short.success is False
+    assert res_short.status == "SAFETY_BLOCKED"
+
+    # Case C: 선물 자산에 옵션 코드 전달 (201V3350) -> SAFETY_BLOCKED
+    cmd_mismatch = CanonicalOrderCommand(
+        client_order_id="ORD-BAD-03",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.FUTURES,
+        side=CanonicalOrderSide.BUY,
+        qty=1,
+        price=350.0,
+        symbol="201V3350",
+    )
+    res_mismatch = adapter.send_order(cmd_mismatch)
+    assert res_mismatch.success is False
+    assert res_mismatch.status == "SAFETY_BLOCKED"
+
+    # 증권사 주문 엔드포인트(/trading/order)로의 전송이 0건이어야 함
+    order_calls = [r for r in captured_requests if "/trading/order" in r["path"]]
+    assert len(order_calls) == 0, "No invalid order must be sent to the broker"
+
+
+def test_kis_pdno_no_metadata_guess_combination():
+    """Validates that metadata strike/option_type does NOT guess or override the verified symbol."""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        return {"rt_cd": "0", "output": {"ODNO": "00099999"}}
+
+    config = RealBrokerConfig(account_no="12345678-01", app_key="KEY", app_secret="SEC", is_simulation=True)
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+    assert adapter.connect() is True
+
+    # symbol이 201V3345로 주어지면, strike가 350.0이어도 임의로 201V3350으로 바꾸지 않고 201V3345를 그대로 전달
+    cmd = CanonicalOrderCommand(
+        client_order_id="ORD-NO-GUESS",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.OPTION,
+        side=CanonicalOrderSide.BUY,
+        qty=1,
+        price=1.8,
+        symbol="201V3345",
+        option_type=CanonicalOptionType.CALL,
+        strike=350.0,
+    )
+    res = adapter.send_order(cmd)
+    assert res.success is True
+    assert captured_requests[-1]["body"]["SHTN_PDNO"] == "201V3345"
+
 
