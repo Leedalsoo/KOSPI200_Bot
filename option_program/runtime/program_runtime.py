@@ -510,6 +510,14 @@ class OptionProgramRuntime:
         wal_recovered_count = self.order_router.recover_from_wal(wal_events)
         self._order_id_to_uuid.update(getattr(self.order_router, "_client_to_order_id", {}))
 
+        # WAL 복원된 포지션 보정치가 있으면 account_summary.positions에 동기화
+        if hasattr(self.order_router, "_corrected_positions") and self.order_router._corrected_positions:
+            for sym, q in self.order_router._corrected_positions.items():
+                if q == 0:
+                    self.account_summary.positions.pop(sym, None)
+                else:
+                    self.account_summary.positions[sym] = {"symbol": sym, "qty": q}
+
         # 2. Broker 실제 주문 조회 및 대사 (UNKNOWN 및 활성 주문 복구)
         reconciliation_summary: Dict[str, Any] = {}
         if broker_adapter is not None:

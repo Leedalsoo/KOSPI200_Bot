@@ -489,3 +489,88 @@ def test_12_ambiguous_broker_price_isolation_without_auto_correction(tmp_path):
     assert router.get_executed_price(oid) == 2.5
     price_corrections = [c for c in summary["corrections"] if c.get("type") == "PRICE_CORRECTION"]
     assert len(price_corrections) == 0
+
+
+# ---------------------------------------------------------------------------
+# 13. Broker-only Position 단독 대사 및 보정 검증
+# ---------------------------------------------------------------------------
+def test_13_broker_only_position_reconciliation(tmp_path):
+    wal_file = str(tmp_path / "recon_13.wal")
+    wal_store = WalStore(log_path=wal_file)
+    router = OrderRouter(wal_store=wal_store)
+
+    internal_positions: Dict[str, Any] = {}
+    broker = MockBrokerAdapter()
+    broker.positions_map = {"201V8360": {"symbol": "201V8360", "qty": 12}}
+
+    summary = router.reconcile_with_broker(broker, internal_positions=internal_positions)
+
+    pos_mismatches = [m for m in summary["mismatches"] if m.get("type") == "POSITION_MISMATCH"]
+    assert len(pos_mismatches) == 1
+    assert pos_mismatches[0]["symbol"] == "201V8360"
+    assert pos_mismatches[0]["internal_qty"] == 0
+    assert pos_mismatches[0]["broker_qty"] == 12
+
+    assert internal_positions["201V8360"]["qty"] == 12
+    assert router._corrected_positions.get("201V8360") == 12
+
+    # 2회차 재대사 불일치 0건 검증
+    summary2 = router.reconcile_with_broker(broker, internal_positions=internal_positions)
+    assert len([m for m in summary2["mismatches"] if m.get("type") == "POSITION_MISMATCH"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# 14. Internal-only Position 단독 대사 및 정리 검증
+# ---------------------------------------------------------------------------
+def test_14_internal_only_position_reconciliation(tmp_path):
+    wal_file = str(tmp_path / "recon_14.wal")
+    wal_store = WalStore(log_path=wal_file)
+    router = OrderRouter(wal_store=wal_store)
+
+    internal_positions = {"201V8355": {"symbol": "201V8355", "qty": 6}}
+    broker = MockBrokerAdapter()
+    broker.positions_map = {}
+
+    summary = router.reconcile_with_broker(broker, internal_positions=internal_positions)
+
+    pos_mismatches = [m for m in summary["mismatches"] if m.get("type") == "POSITION_MISMATCH"]
+    assert len(pos_mismatches) == 1
+    assert pos_mismatches[0]["symbol"] == "201V8355"
+    assert pos_mismatches[0]["internal_qty"] == 6
+    assert pos_mismatches[0]["broker_qty"] == 0
+
+    assert "201V8355" not in internal_positions
+    assert router._corrected_positions.get("201V8355") == 0
+
+    # 2회차 재대사 불일치 0건 검증
+    summary2 = router.reconcile_with_broker(broker, internal_positions=internal_positions)
+    assert len([m for m in summary2["mismatches"] if m.get("type") == "POSITION_MISMATCH"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# 15. 동일 Symbol Qty Mismatch 단독 대사 및 보정 검증
+# ---------------------------------------------------------------------------
+def test_15_same_symbol_qty_mismatch_reconciliation(tmp_path):
+    wal_file = str(tmp_path / "recon_15.wal")
+    wal_store = WalStore(log_path=wal_file)
+    router = OrderRouter(wal_store=wal_store)
+
+    internal_positions = {"201V8350": {"symbol": "201V8350", "qty": 15}}
+    broker = MockBrokerAdapter()
+    broker.positions_map = {"201V8350": {"symbol": "201V8350", "qty": 9}}
+
+    summary = router.reconcile_with_broker(broker, internal_positions=internal_positions)
+
+    pos_mismatches = [m for m in summary["mismatches"] if m.get("type") == "POSITION_MISMATCH"]
+    assert len(pos_mismatches) == 1
+    assert pos_mismatches[0]["symbol"] == "201V8350"
+    assert pos_mismatches[0]["internal_qty"] == 15
+    assert pos_mismatches[0]["broker_qty"] == 9
+
+    assert internal_positions["201V8350"]["qty"] == 9
+    assert router._corrected_positions.get("201V8350") == 9
+
+    # 2회차 재대사 불일치 0건 검증
+    summary2 = router.reconcile_with_broker(broker, internal_positions=internal_positions)
+    assert len([m for m in summary2["mismatches"] if m.get("type") == "POSITION_MISMATCH"]) == 0
+
