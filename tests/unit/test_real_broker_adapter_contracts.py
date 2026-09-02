@@ -332,7 +332,7 @@ def test_kis_failure_categorization_regression():
 
 
 def test_kis_account_summary_request_contract_and_mapping():
-    """Validates get_account_summary query params, TR ID (CTFO6118R/VTFO6118R), and DTO mapping."""
+    """Validates get_account_summary query params, TR ID (CTFO6118R/VTFO6118R), EXCC_STAT_CD='1', and DTO mapping."""
     import pytest
     captured_requests: List[Dict[str, Any]] = []
 
@@ -387,7 +387,7 @@ def test_kis_account_summary_request_contract_and_mapping():
     assert inq_req["body"]["CANO"] == "50012345"
     assert inq_req["body"]["ACNT_PRDT_CD"] == "01"
     assert inq_req["body"]["MGNA_DVSN"] == "01"
-    assert inq_req["body"]["EXCC_STAT_CD"] == "00"
+    assert inq_req["body"]["EXCC_STAT_CD"] == "1"
     assert inq_req["body"]["CTX_AREA_FK200"] == ""
     assert inq_req["body"]["CTX_AREA_NK200"] == ""
 
@@ -410,6 +410,7 @@ def test_kis_account_summary_request_contract_and_mapping():
     inq_req_vts = [r for r in captured_requests if "/inquire-balance" in r["path"]][0]
     assert inq_req_vts["headers"]["tr_id"] == "VTFO6118R"
     assert inq_req_vts["body"]["ACNT_PRDT_CD"] == "03"
+    assert inq_req_vts["body"]["EXCC_STAT_CD"] == "1"
 
 
 def test_kis_positions_request_contract_and_pagination():
@@ -480,8 +481,10 @@ def test_kis_positions_request_contract_and_pagination():
     inq_calls = [r for r in captured_requests if "/inquire-balance" in r["path"]]
     assert len(inq_calls) == 2
     assert inq_calls[0]["headers"]["tr_id"] == "CTFO6118R"
+    assert inq_calls[0]["body"]["EXCC_STAT_CD"] == "1"
     assert inq_calls[0]["body"]["CTX_AREA_NK200"] == ""
     assert inq_calls[1]["headers"]["tr_id"] == "CTFO6118R"
+    assert inq_calls[1]["body"]["EXCC_STAT_CD"] == "1"
     assert inq_calls[1]["body"]["CTX_AREA_NK200"] == "NK_KEY_01"
 
     # 2. VTS Broker TR ID (VTFO6118R) 검증
@@ -494,6 +497,47 @@ def test_kis_positions_request_contract_and_pagination():
     positions_vts = adapter_vts.get_positions()
     assert len(positions_vts) == 2
     assert captured_requests[-1]["headers"]["tr_id"] == "VTFO6118R"
+
+
+def test_kis_positions_unbounded_pagination_over_five_pages():
+    """Validates that get_positions does not arbitrarily truncate pagination at 5 pages."""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        if "inquire-balance" in path:
+            current_page_idx = len([r for r in captured_requests if "/inquire-balance" in r["path"]])
+            is_last = (current_page_idx >= 7)  # 총 7페이지 시뮬레이션
+            return {
+                "rt_cd": "0",
+                "tr_cont": "F" if is_last else "M",
+                "ctx_area_fk200": f"FK_{current_page_idx}" if not is_last else "",
+                "ctx_area_nk200": f"NK_{current_page_idx}" if not is_last else "",
+                "output1": [
+                    {
+                        "pdno": f"201S033{current_page_idx}0",
+                        "sll_buy_dvsn_cd": "02",
+                        "cclt_qty": str(current_page_idx),
+                        "pchs_avg_pric": "3.50",
+                        "evlu_pfls_amt": "10000",
+                    }
+                ],
+            }
+        return {"rt_cd": "0"}
+
+    config = RealBrokerConfig(account_no="12345678-01", app_key="KEY", app_secret="SEC", is_simulation=True, is_vts=False)
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+    assert adapter.connect() is True
+
+    positions = adapter.get_positions()
+    # 7페이지 전수 수집 검증
+    assert len(positions) == 7
+    inq_calls = [r for r in captured_requests if "/inquire-balance" in r["path"]]
+    assert len(inq_calls) == 7
+
 
 
 

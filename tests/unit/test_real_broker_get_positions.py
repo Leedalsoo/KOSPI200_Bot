@@ -91,11 +91,11 @@ class TestRealBrokerGetPositions:
                     "evlu_pfls_amt": "500000"
                 },
                 {
-                    "prdt_cd": "201V3350",
-                    "hld_qty": "5",
-                    "side": "01",              # SELL
-                    "avg_price": "2.45",
-                    "pnl": "-100000"
+                    "pdno": "201V3350",
+                    "cclt_qty": "5",
+                    "sll_buy_dvsn_cd": "01",  # SELL
+                    "pchs_avg_pric": "2.45",
+                    "evlu_pfls_amt": "-100000"
                 }
             ]
         }

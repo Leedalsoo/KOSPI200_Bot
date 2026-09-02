@@ -10,7 +10,7 @@ Implements Authoritative Real Broker Interface for KOSPI 200 Futures & Options:
 import os
 import time
 import logging
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List, Callable, Set
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -494,10 +494,10 @@ class RealBrokerAdapter(IBrokerAdapter):
             "ORGN_ODNO": broker_order_no,
             "ORD_QTY": str(new_qty),
             "UNIT_PRICE": f"{new_price:.2f}",
-            "NMPR_TYPE_CD": "01",  # 01: 일반
+            "NMPR_TYPE_CD": "01",  # 01: 지정가
             "KRX_NMPR_CNDT_CD": "0",  # 0: 조건없음
             "RMN_QTY_YN": "Y",  # Y: 잔여수량
-            "ORD_DVSN_CD": "01",  # 01: 지정가
+            "ORD_DVSN_CD": "01",  # 01: 개별
             "FUOP_ITEM_DVSN_CD": "",  # 공란 (공식 샘플 및 MCP 스키마 기본값)
         }
         tr_id = "VTTO1103U" if self.config.is_vts else "TTTO1103U"
@@ -515,7 +515,7 @@ class RealBrokerAdapter(IBrokerAdapter):
             "CANO": cano,
             "ACNT_PRDT_CD": acnt_prdt_cd,
             "MGNA_DVSN": "01",
-            "EXCC_STAT_CD": "00",
+            "EXCC_STAT_CD": "1",  # 1: 정산 (공식 최신 샘플 기본값)
             "CTX_AREA_FK200": "",
             "CTX_AREA_NK200": "",
         }
@@ -540,9 +540,10 @@ class RealBrokerAdapter(IBrokerAdapter):
             raise RuntimeError(f"[{self.config.broker_name}] Invalid account response: missing required field 'output1.dnca_tot_amt'")
 
         try:
+            # 공식 KIS inquire-balance 계약 필드 1:1 매핑 (비공식 fallback 제외)
             total_balance = float(out_summary["dnca_tot_amt"])
-            used_margin = float(out_summary.get("mgn_amt", "0") or out_summary.get("tot_mgn_amt", "0") or "0")
-            free_margin = float(out_summary.get("ord_psbl_amt", "0") or out_summary.get("prsm_dpst_amt", "0") or "0")
+            used_margin = float(out_summary.get("mgn_amt", "0") or "0")
+            free_margin = float(out_summary.get("ord_psbl_amt", "0") or "0")
             unrealized = float(out_summary.get("evlu_pfls_smtl_amt", "0") or "0")
             realized = float(out_summary.get("rlzt_pfls", "0") or "0")
         except (ValueError, TypeError) as exc:
@@ -570,14 +571,15 @@ class RealBrokerAdapter(IBrokerAdapter):
         positions: Dict[str, Any] = {}
         ctx_area_fk200 = ""
         ctx_area_nk200 = ""
+        seen_continuation_keys: Set[str] = set()
 
-        # 연속조회 지원 루프 (최대 5페이지 방어)
-        for _ in range(5):
+        # 공식 연속조회(tr_cont) 지원 루프 (임의 상한 없이 전수 수집, 순환 키 방어)
+        while True:
             body = {
                 "CANO": cano,
                 "ACNT_PRDT_CD": acnt_prdt_cd,
                 "MGNA_DVSN": "01",
-                "EXCC_STAT_CD": "00",
+                "EXCC_STAT_CD": "1",  # 1: 정산
                 "CTX_AREA_FK200": ctx_area_fk200,
                 "CTX_AREA_NK200": ctx_area_nk200,
             }
@@ -603,14 +605,16 @@ class RealBrokerAdapter(IBrokerAdapter):
             for item in items:
                 if not isinstance(item, dict):
                     continue
-                symbol = item.get("pdno") or item.get("prdt_cd") or item.get("symbol") or item.get("item_code")
+                # 공식 필드: pdno (단축종목코드)
+                symbol = item.get("pdno")
                 if not symbol:
                     continue
 
-                qty_raw = item.get("cclt_qty") or item.get("hld_qty") or item.get("ord_psbl_qty") or item.get("qty") or "0"
-                side_raw = str(item.get("sll_buy_dvsn_cd") or item.get("side") or "02")
-                avg_price_raw = item.get("pchs_avg_pric") or item.get("avg_price") or "0.0"
-                pnl_raw = item.get("evlu_pfls_amt") or item.get("pnl") or "0.0"
+                # 공식 필드: cclt_qty(청산가능수량), sll_buy_dvsn_cd(01매도/02매수), pchs_avg_pric(매입평균가), evlu_pfls_amt(평가손익)
+                qty_raw = item.get("cclt_qty") or "0"
+                side_raw = str(item.get("sll_buy_dvsn_cd") or "02")
+                avg_price_raw = item.get("pchs_avg_pric") or "0.0"
+                pnl_raw = item.get("evlu_pfls_amt") or "0.0"
 
                 try:
                     qty = int(float(qty_raw))
@@ -629,12 +633,13 @@ class RealBrokerAdapter(IBrokerAdapter):
                         "pnl": pnl
                     }
 
-            # 연속조회 여부 확인 (tr_cont가 M 또는 F이면 연속조회키 갱신)
+            # 연속조회 여부 확인 (tr_cont가 M 또는 F이고 중복되지 않은 신규 키인 경우 계속 조회)
             tr_cont = resp.get("tr_cont") or resp.get("ctx_area_nk200")
-            ctx_fk = resp.get("ctx_area_fk200")
-            ctx_nk = resp.get("ctx_area_nk200")
-            if tr_cont in ["M", "F"] and ctx_nk:
-                ctx_area_fk200 = ctx_fk or ""
+            ctx_fk = resp.get("ctx_area_fk200", "")
+            ctx_nk = resp.get("ctx_area_nk200", "")
+            if tr_cont in ["M", "F"] and ctx_nk and ctx_nk not in seen_continuation_keys:
+                seen_continuation_keys.add(ctx_nk)
+                ctx_area_fk200 = ctx_fk
                 ctx_area_nk200 = ctx_nk
             else:
                 break
