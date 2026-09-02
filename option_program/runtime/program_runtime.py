@@ -505,14 +505,22 @@ class OptionProgramRuntime:
         # 2. Broker 실제 주문 조회 및 대사 (UNKNOWN 및 활성 주문 복구)
         reconciliation_summary: Dict[str, Any] = {}
         if broker_adapter is not None:
-            if hasattr(self.order_router, "reconcile_with_broker"):
-                try:
-                    reconciliation_summary = self.order_router.reconcile_with_broker(broker_adapter)
-                except Exception as exc:
-                    logger.warning(f"[OptionProgramRuntime] reconcile_with_broker warning: {exc}")
-                    reconciliation_summary = {"status": "FAILED", "error": str(exc)}
-            elif hasattr(self.order_router, "recover_unknown_orders"):
-                reconciliation_summary = self.order_router.recover_unknown_orders(broker_adapter)
+            if getattr(broker_adapter, "is_connected", lambda: True)():
+                if hasattr(self.order_router, "reconcile_with_broker"):
+                    try:
+                        reconciliation_summary = self.order_router.reconcile_with_broker(broker_adapter)
+                    except Exception as exc:
+                        logger.error(f"[OptionProgramRuntime] reconcile_with_broker failed: {exc}", exc_info=True)
+                        reconciliation_summary = {"status": "FAILED", "error": str(exc)}
+                elif hasattr(self.order_router, "recover_unknown_orders"):
+                    reconciliation_summary = self.order_router.recover_unknown_orders(broker_adapter)
+
+                # Broker 대사 실패(status == FAILED) 시 정상 완료로 위장하지 않고 recovery_completed를 False로 유지하며 부팅 차단
+                if reconciliation_summary.get("status") == "FAILED":
+                    self.recovery_completed = False
+                    err_msg = reconciliation_summary.get("error", "Reconciliation status FAILED")
+                    logger.critical(f"[OptionProgramRuntime] Broker reconciliation failed during startup recovery: {err_msg}")
+                    raise RuntimeError(f"Startup broker reconciliation failed: {err_msg}")
 
         self.recovery_completed = True
 

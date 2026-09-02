@@ -365,12 +365,20 @@ class OrderRouter:
 
                 order_id_raw = data.get("order_id")
                 client_id = data.get("client_order_id")
+                broker_order_id = data.get("broker_order_id")
                 order_id: Optional[uuid.UUID] = None
                 if order_id_raw:
                     try:
                         order_id = uuid.UUID(str(order_id_raw))
                     except Exception:
                         order_id = None
+
+                if broker_order_id:
+                    if order_id:
+                        self._order_to_broker_id[order_id] = str(broker_order_id)
+                    if client_id:
+                        self._client_to_broker_id[str(client_id)] = str(broker_order_id)
+                        self._broker_to_client_id[str(broker_order_id)] = str(client_id)
 
                 # 1. ORDER_INTENT 복원
                 if event_type == "ORDER_INTENT":
