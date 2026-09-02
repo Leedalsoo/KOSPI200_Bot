@@ -705,33 +705,17 @@ class RealBrokerAdapter(IBrokerAdapter):
         return None
 
     def _map_instrument_code(self, command: CanonicalOrderCommand) -> str:
-        """Canonical DTO ➔ 표준 KRX/KIS 국내선물옵션 단축상품코드(SHTN_PDNO) 검증 및 Passthrough
+        """Canonical DTO ➔ KIS 국내선물옵션 단축상품코드(SHTN_PDNO) 전달
         
         규칙:
-        - metadata(만기월/행사가)를 임의 규칙으로 추측 조합하지 않음.
-        - 공식 KRX/KIS 8자리 영숫자 단축상품코드(PDNO)만 유효성 검증 후 passthrough.
-        - FUTURES: '1'로 시작하는 8자리 영숫자 (예: '101V3000', '105V3000')
-        - OPTION CALL: '2'로 시작하는 8자리 영숫자 (예: '201V3350', '205V3350')
-        - OPTION PUT: '3'로 시작하는 8자리 영숫자 (예: '301V3345', '305V3345')
-        - 미확인/비정상 심볼은 ValueError 발생시켜 안전 차단.
+        - metadata(만기월/행사가)를 임의 규칙으로 추측 조합 생성하지 않음.
+        - 상위 계층에서 지정된 검증된 SHTN_PDNO를 공식 주문 필드로 그대로 전달(Passthrough).
+        - 공식 open-trading-api 예시: 선물 '101W09' (6자리), 옵션 '201S03370' (9자리) 등 다양한 영숫자 단축상품번호 허용.
+        - 비어있거나 비영숫자(공백, 특수문자 등)가 포함된 명백한 계약 오류는 ValueError를 발생시켜 SAFETY_BLOCKED로 사전 차단.
         """
         symbol = str(getattr(command, "symbol", "") or "").strip()
 
-        if not symbol or len(symbol) != 8 or not symbol.isalnum():
-            raise ValueError(f"Invalid KIS PDNO format (must be 8 alphanumeric chars): '{symbol}'")
+        if not symbol or not symbol.isalnum():
+            raise ValueError(f"Invalid KIS SHTN_PDNO symbol (must be non-empty alphanumeric string): '{symbol}'")
 
-        if command.asset_type == CanonicalAssetType.FUTURES:
-            if not symbol.startswith("1"):
-                raise ValueError(f"Futures KIS PDNO must start with '1', got: '{symbol}'")
-            return symbol
-
-        if command.asset_type == CanonicalAssetType.OPTION:
-            if command.option_type == CanonicalOptionType.CALL and not symbol.startswith("2"):
-                raise ValueError(f"Call Option KIS PDNO must start with '2', got: '{symbol}'")
-            if command.option_type == CanonicalOptionType.PUT and not symbol.startswith("3"):
-                raise ValueError(f"Put Option KIS PDNO must start with '3', got: '{symbol}'")
-            if not symbol.startswith(("2", "3")):
-                raise ValueError(f"Option KIS PDNO must start with '2'(Call) or '3'(Put), got: '{symbol}'")
-            return symbol
-
-        raise ValueError(f"Unsupported asset type for KIS PDNO: {command.asset_type}")
+        return symbol

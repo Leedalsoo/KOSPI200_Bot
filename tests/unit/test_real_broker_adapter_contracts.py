@@ -374,8 +374,8 @@ def test_kis_account_summary_zero_balance_vs_failure_separation():
         adapter.get_account_summary()
 
 
-def test_kis_pdno_passthrough_futures_and_options():
-    """Validates that verified KIS PDNO symbols pass through correctly without alteration."""
+def test_kis_pdno_passthrough_official_samples_and_various_lengths():
+    """Validates that verified KIS PDNO symbols (e.g. official samples 101W09, 201S03370) pass through without alteration."""
     captured_requests: List[Dict[str, Any]] = []
 
     def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
@@ -389,9 +389,39 @@ def test_kis_pdno_passthrough_futures_and_options():
     adapter = RealBrokerAdapter(config=config, http_client=client)
     assert adapter.connect() is True
 
-    # 1. 선물 (FUTURES, 101V3000)
-    cmd_fut = CanonicalOrderCommand(
-        client_order_id="ORD-FUT-01",
+    # 1. 선물 공식 예시 (101W09 - 6자리)
+    cmd_fut_official = CanonicalOrderCommand(
+        client_order_id="ORD-FUT-OFFICIAL",
+        track_id="Track1",
+        asset_type=CanonicalAssetType.FUTURES,
+        side=CanonicalOrderSide.BUY,
+        qty=1,
+        price=350.0,
+        symbol="101W09",
+    )
+    res_fut = adapter.send_order(cmd_fut_official)
+    assert res_fut.success is True
+    assert captured_requests[-1]["body"]["SHTN_PDNO"] == "101W09"
+
+    # 2. 옵션 공식 예시 (201S03370 - 9자리)
+    cmd_opt_official = CanonicalOrderCommand(
+        client_order_id="ORD-OPT-OFFICIAL",
+        track_id="Track2",
+        asset_type=CanonicalAssetType.OPTION,
+        side=CanonicalOrderSide.BUY,
+        qty=2,
+        price=1.50,
+        symbol="201S03370",
+        option_type=CanonicalOptionType.CALL,
+        strike=337.5,
+    )
+    res_opt = adapter.send_order(cmd_opt_official)
+    assert res_opt.success is True
+    assert captured_requests[-1]["body"]["SHTN_PDNO"] == "201S03370"
+
+    # 3. 8자리 표준 단축코드 예시 (101V3000, 301V3340)
+    cmd_fut_8 = CanonicalOrderCommand(
+        client_order_id="ORD-FUT-8",
         track_id="Track1",
         asset_type=CanonicalAssetType.FUTURES,
         side=CanonicalOrderSide.BUY,
@@ -399,45 +429,12 @@ def test_kis_pdno_passthrough_futures_and_options():
         price=350.0,
         symbol="101V3000",
     )
-    res_fut = adapter.send_order(cmd_fut)
-    assert res_fut.success is True
+    assert adapter.send_order(cmd_fut_8).success is True
     assert captured_requests[-1]["body"]["SHTN_PDNO"] == "101V3000"
 
-    # 2. 옵션 콜 (OPTION CALL, 201V3355)
-    cmd_call = CanonicalOrderCommand(
-        client_order_id="ORD-CALL-01",
-        track_id="Track2",
-        asset_type=CanonicalAssetType.OPTION,
-        side=CanonicalOrderSide.BUY,
-        qty=2,
-        price=1.50,
-        symbol="201V3355",
-        option_type=CanonicalOptionType.CALL,
-        strike=355.0,
-    )
-    res_call = adapter.send_order(cmd_call)
-    assert res_call.success is True
-    assert captured_requests[-1]["body"]["SHTN_PDNO"] == "201V3355"
 
-    # 3. 옵션 풋 (OPTION PUT, 301V3340)
-    cmd_put = CanonicalOrderCommand(
-        client_order_id="ORD-PUT-01",
-        track_id="Track3",
-        asset_type=CanonicalAssetType.OPTION,
-        side=CanonicalOrderSide.SELL,
-        qty=3,
-        price=2.10,
-        symbol="301V3340",
-        option_type=CanonicalOptionType.PUT,
-        strike=340.0,
-    )
-    res_put = adapter.send_order(cmd_put)
-    assert res_put.success is True
-    assert captured_requests[-1]["body"]["SHTN_PDNO"] == "301V3340"
-
-
-def test_kis_pdno_invalid_or_internal_symbol_safety_blocked():
-    """Validates that unverified or mismatched internal symbols are rejected with SAFETY_BLOCKED."""
+def test_kis_pdno_invalid_symbol_safety_blocked():
+    """Validates that empty or non-alphanumeric internal symbols are rejected with SAFETY_BLOCKED."""
     captured_requests: List[Dict[str, Any]] = []
 
     def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
@@ -451,7 +448,7 @@ def test_kis_pdno_invalid_or_internal_symbol_safety_blocked():
     adapter = RealBrokerAdapter(config=config, http_client=client)
     assert adapter.connect() is True
 
-    # Case A: 내부 미변환 Canonical 심볼 (KOSPI200_OPTION_CALL_350.0) -> SAFETY_BLOCKED
+    # Case A: 내부 미변환 특수문자 포함 Canonical 심볼 (KOSPI200_OPTION_CALL_350.0) -> SAFETY_BLOCKED
     cmd_internal = CanonicalOrderCommand(
         client_order_id="ORD-BAD-01",
         track_id="Track1",
@@ -466,35 +463,35 @@ def test_kis_pdno_invalid_or_internal_symbol_safety_blocked():
     res_internal = adapter.send_order(cmd_internal)
     assert res_internal.success is False
     assert res_internal.status == "SAFETY_BLOCKED"
-    assert "Invalid KIS instrument symbol" in res_internal.message
+    assert "Invalid KIS SHTN_PDNO symbol" in res_internal.message
 
-    # Case B: 비정상 길이 심볼 (101V3) -> SAFETY_BLOCKED
-    cmd_short = CanonicalOrderCommand(
+    # Case B: 빈 문자열 심볼 ("") -> SAFETY_BLOCKED
+    cmd_empty = CanonicalOrderCommand(
         client_order_id="ORD-BAD-02",
         track_id="Track1",
         asset_type=CanonicalAssetType.FUTURES,
         side=CanonicalOrderSide.BUY,
         qty=1,
         price=350.0,
-        symbol="101V3",
+        symbol="",
     )
-    res_short = adapter.send_order(cmd_short)
-    assert res_short.success is False
-    assert res_short.status == "SAFETY_BLOCKED"
+    res_empty = adapter.send_order(cmd_empty)
+    assert res_empty.success is False
+    assert res_empty.status == "SAFETY_BLOCKED"
 
-    # Case C: 선물 자산에 옵션 코드 전달 (201V3350) -> SAFETY_BLOCKED
-    cmd_mismatch = CanonicalOrderCommand(
+    # Case C: 공백 포함 심볼 ("101 W09") -> SAFETY_BLOCKED
+    cmd_space = CanonicalOrderCommand(
         client_order_id="ORD-BAD-03",
         track_id="Track1",
         asset_type=CanonicalAssetType.FUTURES,
         side=CanonicalOrderSide.BUY,
         qty=1,
         price=350.0,
-        symbol="201V3350",
+        symbol="101 W09",
     )
-    res_mismatch = adapter.send_order(cmd_mismatch)
-    assert res_mismatch.success is False
-    assert res_mismatch.status == "SAFETY_BLOCKED"
+    res_space = adapter.send_order(cmd_space)
+    assert res_space.success is False
+    assert res_space.status == "SAFETY_BLOCKED"
 
     # 증권사 주문 엔드포인트(/trading/order)로의 전송이 0건이어야 함
     order_calls = [r for r in captured_requests if "/trading/order" in r["path"]]
@@ -502,7 +499,7 @@ def test_kis_pdno_invalid_or_internal_symbol_safety_blocked():
 
 
 def test_kis_pdno_no_metadata_guess_combination():
-    """Validates that metadata strike/option_type does NOT guess or override the verified symbol."""
+    """Validates that adapter does not guess or alter the symbol based on metadata."""
     captured_requests: List[Dict[str, Any]] = []
 
     def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
@@ -516,7 +513,7 @@ def test_kis_pdno_no_metadata_guess_combination():
     adapter = RealBrokerAdapter(config=config, http_client=client)
     assert adapter.connect() is True
 
-    # symbol이 201V3345로 주어지면, strike가 350.0이어도 임의로 201V3350으로 바꾸지 않고 201V3345를 그대로 전달
+    # symbol이 201S03370으로 주어지면, strike가 350.0이어도 임의로 바꾸지 않고 201S03370을 그대로 전달
     cmd = CanonicalOrderCommand(
         client_order_id="ORD-NO-GUESS",
         track_id="Track1",
@@ -524,12 +521,12 @@ def test_kis_pdno_no_metadata_guess_combination():
         side=CanonicalOrderSide.BUY,
         qty=1,
         price=1.8,
-        symbol="201V3345",
+        symbol="201S03370",
         option_type=CanonicalOptionType.CALL,
         strike=350.0,
     )
     res = adapter.send_order(cmd)
     assert res.success is True
-    assert captured_requests[-1]["body"]["SHTN_PDNO"] == "201V3345"
+    assert captured_requests[-1]["body"]["SHTN_PDNO"] == "201S03370"
 
 
