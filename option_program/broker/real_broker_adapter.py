@@ -505,7 +505,7 @@ class RealBrokerAdapter(IBrokerAdapter):
         return resp.get("rt_cd") == "0"
 
     def get_account_summary(self) -> CanonicalAccountSummary:
-        """실시간 증권사 계좌 잔고 및 증거금 조회 (KIS 국내선물옵션 공식 규격 준수)"""
+        """실시간 증권사 계좌 잔고 및 증거금 조회 (KIS 국내선물옵션 공식 inquire-balance CTFO6118R/VTFO6118R 규격 준수)"""
         if not self._connected:
             raise RuntimeError(f"[{self.config.broker_name}] Broker is disconnected: cannot query account summary")
 
@@ -515,11 +515,11 @@ class RealBrokerAdapter(IBrokerAdapter):
             "CANO": cano,
             "ACNT_PRDT_CD": acnt_prdt_cd,
             "MGNA_DVSN": "01",
-            "EXCC_STAT_CD": "1",
+            "EXCC_STAT_CD": "00",
             "CTX_AREA_FK200": "",
             "CTX_AREA_NK200": "",
         }
-        tr_id = "VTTO1104R" if self.config.is_vts else "TTTO1104R"
+        tr_id = "VTFO6118R" if self.config.is_vts else "CTFO6118R"
         resp = self.client.request(
             "GET",
             "/uapi/domestic-futureoption/v1/trading/inquire-balance",
@@ -531,18 +531,22 @@ class RealBrokerAdapter(IBrokerAdapter):
             msg1 = resp.get("msg1", "Account balance query failed") if isinstance(resp, dict) else "No response"
             raise RuntimeError(f"[{self.config.broker_name}] Account query failed: [{msg_cd}] {msg1}")
 
-        out1 = resp.get("output1")
-        if not isinstance(out1, dict) or "dnca_tot_amt" not in out1:
+        # 공식 응답: output2(계좌요약) 또는 output1(단일객체)
+        out_summary = resp.get("output2") or resp.get("output1")
+        if isinstance(out_summary, list) and len(out_summary) > 0:
+            out_summary = out_summary[0]
+
+        if not isinstance(out_summary, dict) or "dnca_tot_amt" not in out_summary:
             raise RuntimeError(f"[{self.config.broker_name}] Invalid account response: missing required field 'output1.dnca_tot_amt'")
 
         try:
-            total_balance = float(out1["dnca_tot_amt"])
-            used_margin = float(out1.get("mgn_amt", "0") or out1.get("tot_mgn_amt", "0") or "0")
-            free_margin = float(out1.get("ord_psbl_amt", "0") or out1.get("prsm_dpst_amt", "0") or "0")
-            unrealized = float(out1.get("evlu_pfls_smtl_amt", "0") or "0")
-            realized = float(out1.get("rlzt_pfls", "0") or "0")
+            total_balance = float(out_summary["dnca_tot_amt"])
+            used_margin = float(out_summary.get("mgn_amt", "0") or out_summary.get("tot_mgn_amt", "0") or "0")
+            free_margin = float(out_summary.get("ord_psbl_amt", "0") or out_summary.get("prsm_dpst_amt", "0") or "0")
+            unrealized = float(out_summary.get("evlu_pfls_smtl_amt", "0") or "0")
+            realized = float(out_summary.get("rlzt_pfls", "0") or "0")
         except (ValueError, TypeError) as exc:
-            raise RuntimeError(f"[{self.config.broker_name}] Invalid account numeric data in 'output1': {exc}") from exc
+            raise RuntimeError(f"[{self.config.broker_name}] Invalid account numeric data in summary output: {exc}") from exc
 
         return CanonicalAccountSummary(
             account_id=self.config.account_no,
@@ -555,50 +559,85 @@ class RealBrokerAdapter(IBrokerAdapter):
         )
 
     def get_positions(self) -> Dict[str, Any]:
-        """실시간 보유 포지션 조회 및 정규화"""
+        """실시간 보유 포지션 조회 및 정규화 (KIS 국내선물옵션 공식 inquire-balance CTFO6118R/VTFO6118R 규격 준수)"""
         if not self._connected:
             raise RuntimeError(f"[{self.config.broker_name}] Broker is disconnected: cannot query positions")
 
-        resp = self.client.request("GET", "/uapi/domestic-futureoption/v1/trading/inquire-balance", tr_id="TTTO1104R")
-        if not isinstance(resp, dict) or resp.get("rt_cd") != "0":
-            msg_cd = resp.get("msg_cd", "UNKNOWN") if isinstance(resp, dict) else "NO_RESP"
-            msg1 = resp.get("msg1", "Position balance query failed") if isinstance(resp, dict) else "No response"
-            raise RuntimeError(f"[{self.config.broker_name}] Position query failed: [{msg_cd}] {msg1}")
-
-        output2 = resp.get("output2", [])
-        if not isinstance(output2, list):
-            raise RuntimeError(f"[{self.config.broker_name}] Invalid position response: 'output2' must be a list")
+        cano = self.config.account_no.split("-")[0] if self.config.account_no else ""
+        acnt_prdt_cd = self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01"
+        tr_id = "VTFO6118R" if self.config.is_vts else "CTFO6118R"
 
         positions: Dict[str, Any] = {}
-        for item in output2:
-            if not isinstance(item, dict):
-                continue
-            symbol = item.get("pdno") or item.get("prdt_cd") or item.get("symbol") or item.get("item_code")
-            if not symbol:
-                continue
+        ctx_area_fk200 = ""
+        ctx_area_nk200 = ""
 
-            qty_raw = item.get("cclt_qty") or item.get("hld_qty") or item.get("ord_psbl_qty") or item.get("qty") or "0"
-            side_raw = str(item.get("sll_buy_dvsn_cd") or item.get("side") or "02")
-            avg_price_raw = item.get("pchs_avg_pric") or item.get("avg_price") or "0.0"
-            pnl_raw = item.get("evlu_pfls_amt") or item.get("pnl") or "0.0"
+        # 연속조회 지원 루프 (최대 5페이지 방어)
+        for _ in range(5):
+            body = {
+                "CANO": cano,
+                "ACNT_PRDT_CD": acnt_prdt_cd,
+                "MGNA_DVSN": "01",
+                "EXCC_STAT_CD": "00",
+                "CTX_AREA_FK200": ctx_area_fk200,
+                "CTX_AREA_NK200": ctx_area_nk200,
+            }
+            resp = self.client.request(
+                "GET",
+                "/uapi/domestic-futureoption/v1/trading/inquire-balance",
+                body=body,
+                tr_id=tr_id
+            )
+            if not isinstance(resp, dict) or resp.get("rt_cd") != "0":
+                msg_cd = resp.get("msg_cd", "UNKNOWN") if isinstance(resp, dict) else "NO_RESP"
+                msg1 = resp.get("msg1", "Position balance query failed") if isinstance(resp, dict) else "No response"
+                raise RuntimeError(f"[{self.config.broker_name}] Position query failed: [{msg_cd}] {msg1}")
 
-            try:
-                qty = int(float(qty_raw))
-                avg_price = float(avg_price_raw)
-                pnl = float(pnl_raw)
-            except (ValueError, TypeError) as exc:
-                raise RuntimeError(f"[{self.config.broker_name}] Invalid numeric data in position item: {exc}") from exc
+            # output1이 포지션 목록 리스트 (혹은 output2가 리스트인 경우)
+            output1 = resp.get("output1")
+            items: List[Dict[str, Any]] = []
+            if isinstance(output1, list):
+                items = output1
+            elif isinstance(resp.get("output2"), list):
+                items = resp.get("output2", [])
 
-            if qty > 0:
-                side = "SELL" if side_raw in ["01", "SELL"] else "BUY"
-                positions[symbol] = {
-                    "symbol": symbol,
-                    "qty": qty,
-                    "side": side,
-                    "avg_price": avg_price,
-                    "pnl": pnl
-                }
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                symbol = item.get("pdno") or item.get("prdt_cd") or item.get("symbol") or item.get("item_code")
+                if not symbol:
+                    continue
 
+                qty_raw = item.get("cclt_qty") or item.get("hld_qty") or item.get("ord_psbl_qty") or item.get("qty") or "0"
+                side_raw = str(item.get("sll_buy_dvsn_cd") or item.get("side") or "02")
+                avg_price_raw = item.get("pchs_avg_pric") or item.get("avg_price") or "0.0"
+                pnl_raw = item.get("evlu_pfls_amt") or item.get("pnl") or "0.0"
+
+                try:
+                    qty = int(float(qty_raw))
+                    avg_price = float(avg_price_raw)
+                    pnl = float(pnl_raw)
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError(f"[{self.config.broker_name}] Invalid numeric data in position item: {exc}") from exc
+
+                if qty > 0:
+                    side = "SELL" if side_raw in ["01", "SELL"] else "BUY"
+                    positions[symbol] = {
+                        "symbol": symbol,
+                        "qty": qty,
+                        "side": side,
+                        "avg_price": avg_price,
+                        "pnl": pnl
+                    }
+
+            # 연속조회 여부 확인 (tr_cont가 M 또는 F이면 연속조회키 갱신)
+            tr_cont = resp.get("tr_cont") or resp.get("ctx_area_nk200")
+            ctx_fk = resp.get("ctx_area_fk200")
+            ctx_nk = resp.get("ctx_area_nk200")
+            if tr_cont in ["M", "F"] and ctx_nk:
+                ctx_area_fk200 = ctx_fk or ""
+                ctx_area_nk200 = ctx_nk
+            else:
+                break
         return positions
 
     def _reverse_lookup_client_id(self, broker_order_no: str) -> Optional[str]:

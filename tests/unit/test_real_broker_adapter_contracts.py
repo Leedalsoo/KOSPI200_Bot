@@ -332,7 +332,7 @@ def test_kis_failure_categorization_regression():
 
 
 def test_kis_account_summary_request_contract_and_mapping():
-    """Validates get_account_summary query params, TR ID (TTTO1104R/VTTO1104R), and DTO mapping."""
+    """Validates get_account_summary query params, TR ID (CTFO6118R/VTFO6118R), and DTO mapping."""
     import pytest
     captured_requests: List[Dict[str, Any]] = []
 
@@ -361,7 +361,7 @@ def test_kis_account_summary_request_contract_and_mapping():
             }
         return {"rt_cd": "0"}
 
-    # 1. 실전 환경 (is_vts=False -> TTTO1104R)
+    # 1. 실전 환경 (is_vts=False -> CTFO6118R)
     config_real = RealBrokerConfig(
         account_no="50012345-01",
         app_key="TEST_APP_KEY",
@@ -383,15 +383,15 @@ def test_kis_account_summary_request_contract_and_mapping():
 
     inq_req = [r for r in captured_requests if "/inquire-balance" in r["path"]][0]
     assert inq_req["method"] == "GET"
-    assert inq_req["headers"]["tr_id"] == "TTTO1104R"
+    assert inq_req["headers"]["tr_id"] == "CTFO6118R"
     assert inq_req["body"]["CANO"] == "50012345"
     assert inq_req["body"]["ACNT_PRDT_CD"] == "01"
     assert inq_req["body"]["MGNA_DVSN"] == "01"
-    assert inq_req["body"]["EXCC_STAT_CD"] == "1"
+    assert inq_req["body"]["EXCC_STAT_CD"] == "00"
     assert inq_req["body"]["CTX_AREA_FK200"] == ""
     assert inq_req["body"]["CTX_AREA_NK200"] == ""
 
-    # 2. 모의 환경 (is_vts=True -> VTTO1104R)
+    # 2. 모의 환경 (is_vts=True -> VTFO6118R)
     captured_requests.clear()
     config_vts = RealBrokerConfig(
         account_no="50012345-03",
@@ -408,8 +408,93 @@ def test_kis_account_summary_request_contract_and_mapping():
     assert summary_vts.total_balance == 35000000.0
 
     inq_req_vts = [r for r in captured_requests if "/inquire-balance" in r["path"]][0]
-    assert inq_req_vts["headers"]["tr_id"] == "VTTO1104R"
+    assert inq_req_vts["headers"]["tr_id"] == "VTFO6118R"
     assert inq_req_vts["body"]["ACNT_PRDT_CD"] == "03"
+
+
+def test_kis_positions_request_contract_and_pagination():
+    """Validates get_positions official CTFO6118R/VTFO6118R contract, normalization, and pagination."""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        if "inquire-balance" in path:
+            # 1페이지와 2페이지 연속조회 시뮬레이션
+            if not body.get("CTX_AREA_NK200"):
+                return {
+                    "rt_cd": "0",
+                    "tr_cont": "M",
+                    "ctx_area_fk200": "FK_KEY_01",
+                    "ctx_area_nk200": "NK_KEY_01",
+                    "output1": [
+                        {
+                            "pdno": "101W09",
+                            "sll_buy_dvsn_cd": "02",
+                            "cclt_qty": "2",
+                            "pchs_avg_pric": "350.50",
+                            "evlu_pfls_amt": "120000",
+                        }
+                    ],
+                }
+            else:
+                return {
+                    "rt_cd": "0",
+                    "tr_cont": "F",
+                    "ctx_area_fk200": "",
+                    "ctx_area_nk200": "",
+                    "output1": [
+                        {
+                            "pdno": "201S03370",
+                            "sll_buy_dvsn_cd": "01",
+                            "cclt_qty": "5",
+                            "pchs_avg_pric": "2.85",
+                            "evlu_pfls_amt": "-45000",
+                        }
+                    ],
+                }
+        return {"rt_cd": "0"}
+
+    # 1. Real Broker 포지션 및 연속조회 검증
+    config_real = RealBrokerConfig(account_no="12345678-01", app_key="KEY", app_secret="SEC", is_simulation=True, is_vts=False)
+    client_real = RealBrokerHttpClient(config=config_real, transport=mock_transport)
+    adapter_real = RealBrokerAdapter(config=config_real, http_client=client_real)
+    assert adapter_real.connect() is True
+
+    positions = adapter_real.get_positions()
+    assert len(positions) == 2
+    assert "101W09" in positions
+    assert positions["101W09"]["side"] == "BUY"
+    assert positions["101W09"]["qty"] == 2
+    assert positions["101W09"]["avg_price"] == 350.50
+    assert positions["101W09"]["pnl"] == 120000.0
+
+    assert "201S03370" in positions
+    assert positions["201S03370"]["side"] == "SELL"
+    assert positions["201S03370"]["qty"] == 5
+    assert positions["201S03370"]["avg_price"] == 2.85
+    assert positions["201S03370"]["pnl"] == -45000.0
+
+    # 요청 헤더 및 TR ID 확인
+    inq_calls = [r for r in captured_requests if "/inquire-balance" in r["path"]]
+    assert len(inq_calls) == 2
+    assert inq_calls[0]["headers"]["tr_id"] == "CTFO6118R"
+    assert inq_calls[0]["body"]["CTX_AREA_NK200"] == ""
+    assert inq_calls[1]["headers"]["tr_id"] == "CTFO6118R"
+    assert inq_calls[1]["body"]["CTX_AREA_NK200"] == "NK_KEY_01"
+
+    # 2. VTS Broker TR ID (VTFO6118R) 검증
+    captured_requests.clear()
+    config_vts = RealBrokerConfig(account_no="87654321-02", app_key="KEY", app_secret="SEC", is_simulation=True, is_vts=True)
+    client_vts = RealBrokerHttpClient(config=config_vts, transport=mock_transport)
+    adapter_vts = RealBrokerAdapter(config=config_vts, http_client=client_vts)
+    assert adapter_vts.connect() is True
+
+    positions_vts = adapter_vts.get_positions()
+    assert len(positions_vts) == 2
+    assert captured_requests[-1]["headers"]["tr_id"] == "VTFO6118R"
+
 
 
 def test_kis_account_summary_zero_balance_vs_failure_separation():
