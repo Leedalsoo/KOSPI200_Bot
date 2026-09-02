@@ -445,7 +445,7 @@ class RealBrokerAdapter(IBrokerAdapter):
             "KRX_NMPR_CNDT_CD": "0",  # 0: 조건없음
             "RMN_QTY_YN": "Y",  # Y: 잔여수량 전부
             "ORD_DVSN_CD": "01",  # 01: 지정가
-            "FUOP_ITEM_DVSN_CD": "01",  # 01: 지수선물옵션 (KOSPI200)
+            "FUOP_ITEM_DVSN_CD": "",  # 공란 (공식 샘플 및 MCP 스키마 기본값)
         }
         tr_id = "VTTO1103U" if self.config.is_vts else "TTTO1103U"
         resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order-rvsecncl", body=body, tr_id=tr_id)
@@ -477,7 +477,7 @@ class RealBrokerAdapter(IBrokerAdapter):
             "KRX_NMPR_CNDT_CD": "0",  # 0: 조건없음
             "RMN_QTY_YN": "Y",  # Y: 잔여수량
             "ORD_DVSN_CD": "01",  # 01: 지정가
-            "FUOP_ITEM_DVSN_CD": "01",  # 01: 선물옵션
+            "FUOP_ITEM_DVSN_CD": "",  # 공란 (공식 샘플 및 MCP 스키마 기본값)
         }
         tr_id = "VTTO1103U" if self.config.is_vts else "TTTO1103U"
         resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order-rvsecncl", body=body, tr_id=tr_id)

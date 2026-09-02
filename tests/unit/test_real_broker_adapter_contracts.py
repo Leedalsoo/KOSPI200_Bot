@@ -213,7 +213,7 @@ def test_kis_cancel_order_payload_and_tr_id_contract():
     assert body["KRX_NMPR_CNDT_CD"] == "0"
     assert body["RMN_QTY_YN"] == "Y"
     assert body["ORD_DVSN_CD"] == "01"
-    assert body["FUOP_ITEM_DVSN_CD"] == "01"
+    assert body["FUOP_ITEM_DVSN_CD"] == ""
 
 
 def test_kis_modify_order_payload_and_tr_id_contract():
@@ -265,7 +265,7 @@ def test_kis_modify_order_payload_and_tr_id_contract():
     assert body["KRX_NMPR_CNDT_CD"] == "0"
     assert body["RMN_QTY_YN"] == "Y"
     assert body["ORD_DVSN_CD"] == "01"
-    assert body["FUOP_ITEM_DVSN_CD"] == "01"
+    assert body["FUOP_ITEM_DVSN_CD"] == ""
 
 
 def test_kis_cancel_and_modify_unknown_order_blocked():
