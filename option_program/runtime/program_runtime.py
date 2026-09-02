@@ -344,7 +344,8 @@ class OptionProgramRuntime:
                     vol_ratio = condition.volatility_ratio if condition else 1.0
                     base_v6 = condition.baseline_volatility if condition and condition.baseline_volatility > 0.0 else 1.0
                     act_v6 = condition.volatility if condition and condition.volatility > 0.0 else vol_ratio
-                    avail_budget6 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 1000000.0
+                    # 🎯 임의의 1,000,000.0 fallback 제거: 실제 가용증거금(free_margin)을 단일 Source로 직접 반영
+                    avail_budget6 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 0.0
                     ins_res = st.evaluate_insurance_buy(
                         current_price=tick.underlying_price,
                         active_vol=act_v6,
@@ -360,7 +361,8 @@ class OptionProgramRuntime:
 
                 elif st_name == "Track7":
                     act_v7 = condition.volatility if condition and condition.volatility > 0.0 else 1.0
-                    avail_budget7 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 1000000.0
+                    # 🎯 임의의 1,000,000.0 fallback 제거: 실제 가용증거금(free_margin)을 단일 Source로 직접 반영
+                    avail_budget7 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 0.0
                     ins7 = st.evaluate_insurance_buy(
                         current_price=tick.underlying_price,
                         budget=avail_budget7,
@@ -377,7 +379,8 @@ class OptionProgramRuntime:
                 elif st_name == "Track8":
                     # 🎯 임의의 30.0 DTE fallback 제거: calculated_dte가 유효할 때만 진입 평가
                     if calculated_dte is not None:
-                        avail_budget8 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 2000000.0
+                        # 🎯 임의의 2,000,000.0 fallback 제거: 실제 가용증거금(free_margin)을 단일 Source로 직접 반영
+                        avail_budget8 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 0.0
                         ent8 = st.evaluate_entry(
                             dte=calculated_dte,
                             budget=avail_budget8,

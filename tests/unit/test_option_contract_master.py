@@ -3,6 +3,7 @@
 import io
 import unittest
 import zipfile
+from typing import Any, Dict
 
 from shared.calendar.krx_calendar import KrxTradingCalendar
 from shared.calendar.expiry_calculator import calculate_dte
@@ -545,6 +546,115 @@ class TestOptionContractMaster(unittest.TestCase):
         # 3. Track8: 임의의 30.0 fallback으로 인한 오진입(DTE>=15)이 발생하지 않고 STANDBY 유지
         self.assertFalse(t8.strangle_state["is_active"], "Track 8 must not enter when DTE is missing")
         self.assertFalse(any(c.track_id == "Track8" for c in cmds))
+
+    def test_runtime_strategy_budget_positive_free_margin_passed_to_tracks(self) -> None:
+        """[Strategy Budget Source 실측] account_summary.free_margin(3,500,000.0)이 Track6/7/8에 정확히 전달됨을 직접 spy/assertion."""
+        runtime = OptionProgramRuntime()
+        runtime.account_summary.free_margin = 3500000.0
+
+        t6 = runtime.strategies[5]
+        t7 = runtime.strategies[6]
+        t8 = runtime.strategies[7]
+
+        captured_budgets: Dict[str, float] = {}
+
+        orig_t6_eval = t6.evaluate_insurance_buy
+        orig_t7_eval = t7.evaluate_insurance_buy
+        orig_t8_eval = t8.evaluate_entry
+
+        def spy_t6(*args: Any, **kwargs: Any) -> Any:
+            captured_budgets["Track6"] = kwargs.get("budget", 0.0)
+            return orig_t6_eval(*args, **kwargs)
+
+        def spy_t7(*args: Any, **kwargs: Any) -> Any:
+            captured_budgets["Track7"] = kwargs.get("budget", 0.0)
+            return orig_t7_eval(*args, **kwargs)
+
+        def spy_t8(*args: Any, **kwargs: Any) -> Any:
+            captured_budgets["Track8"] = kwargs.get("budget", 0.0)
+            return orig_t8_eval(*args, **kwargs)
+
+        t6.evaluate_insurance_buy = spy_t6  # type: ignore
+        t7.evaluate_insurance_buy = spy_t7  # type: ignore
+        t8.evaluate_entry = spy_t8  # type: ignore
+
+        tick = CanonicalMarketTick(
+            timestamp="2026-09-04 09:30:00",
+            seq_id=401,
+            symbol="201VC350",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="2026-09-10",
+        )
+
+        runtime.process_tick(tick)
+
+        # 🎯 실제 free_margin(3,500,000.0)이 Track6, Track7, Track8에 100% 동일하게 전달되었음을 직접 assertion!
+        self.assertEqual(captured_budgets.get("Track6"), 3500000.0)
+        self.assertEqual(captured_budgets.get("Track7"), 3500000.0)
+        self.assertEqual(captured_budgets.get("Track8"), 3500000.0)
+
+    def test_runtime_strategy_budget_zero_or_negative_free_margin_no_fallback(self) -> None:
+        """[Strategy Budget Source 실측] free_margin이 0.0 또는 음수일 때 1,000,000.0 / 2,000,000.0 fallback이 전달되지 않고 0.0이 전달됨을 검증."""
+        runtime = OptionProgramRuntime()
+
+        t6 = runtime.strategies[5]
+        t7 = runtime.strategies[6]
+        t8 = runtime.strategies[7]
+
+        captured_budgets: Dict[str, float] = {}
+
+        orig_t6_eval = t6.evaluate_insurance_buy
+        orig_t7_eval = t7.evaluate_insurance_buy
+        orig_t8_eval = t8.evaluate_entry
+
+        def spy_t6(*args: Any, **kwargs: Any) -> Any:
+            captured_budgets["Track6"] = kwargs.get("budget", 0.0)
+            return orig_t6_eval(*args, **kwargs)
+
+        def spy_t7(*args: Any, **kwargs: Any) -> Any:
+            captured_budgets["Track7"] = kwargs.get("budget", 0.0)
+            return orig_t7_eval(*args, **kwargs)
+
+        def spy_t8(*args: Any, **kwargs: Any) -> Any:
+            captured_budgets["Track8"] = kwargs.get("budget", 0.0)
+            return orig_t8_eval(*args, **kwargs)
+
+        t6.evaluate_insurance_buy = spy_t6  # type: ignore
+        t7.evaluate_insurance_buy = spy_t7  # type: ignore
+        t8.evaluate_entry = spy_t8  # type: ignore
+
+        # 1. free_margin = 0.0 테스트
+        runtime.account_summary.free_margin = 0.0
+        tick_zero = CanonicalMarketTick(
+            timestamp="2026-09-04 09:30:00",
+            seq_id=501,
+            symbol="201VC350",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="2026-09-10",
+        )
+        runtime.process_tick(tick_zero)
+
+        self.assertEqual(captured_budgets.get("Track6"), 0.0, "Track6 must receive 0.0, not 1,000,000.0 fallback")
+        self.assertEqual(captured_budgets.get("Track7"), 0.0, "Track7 must receive 0.0, not 1,000,000.0 fallback")
+        self.assertEqual(captured_budgets.get("Track8"), 0.0, "Track8 must receive 0.0, not 2,000,000.0 fallback")
+
+        # 2. free_margin = -100,000.0 (음수) 테스트
+        runtime.account_summary.free_margin = -100000.0
+        tick_neg = CanonicalMarketTick(
+            timestamp="2026-09-04 09:30:01",
+            seq_id=502,
+            symbol="201VC350",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="2026-09-10",
+        )
+        runtime.process_tick(tick_neg)
+
+        self.assertEqual(captured_budgets.get("Track6"), 0.0, "Track6 must receive 0.0 when negative free_margin")
+        self.assertEqual(captured_budgets.get("Track7"), 0.0, "Track7 must receive 0.0 when negative free_margin")
+        self.assertEqual(captured_budgets.get("Track8"), 0.0, "Track8 must receive 0.0 when negative free_margin")
 
 
 if __name__ == "__main__":
