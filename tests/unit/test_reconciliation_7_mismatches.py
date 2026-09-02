@@ -338,6 +338,9 @@ def test_7_position_mismatch_detection(tmp_path):
 # ---------------------------------------------------------------------------
 # 8. UNKNOWN 또는 POSITION 불일치 시 신규 주문 안전 차단 (Transport 0건)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 8. UNKNOWN 또는 POSITION 불일치 시 신규 주문 안전 차단 (Transport 0건 실측 검증)
+# ---------------------------------------------------------------------------
 def test_8_unknown_state_blocks_new_order_transport(tmp_path):
     wal_file = str(tmp_path / "recon_8.wal")
     wal_store = WalStore(log_path=wal_file)
@@ -345,18 +348,56 @@ def test_8_unknown_state_blocks_new_order_transport(tmp_path):
 
     broker = MockBrokerAdapter()
 
-    # 정상 상태에서는 주문 정상 라우팅 가능
+    # 1) 정상 상태: 주문 정상 라우팅 가능
     cmd1 = make_cmd("ORD-NORM-1", qty=1)
     tok1 = make_token(uuid.uuid4(), "ORD-NORM-1")
-    assert runtime.order_router.register_and_route(cmd1, tok1) is not None
+    oid1 = runtime.order_router.register_and_route(cmd1, tok1)
+    assert oid1 is not None
 
-    # UNKNOWN 주문 발생 시
+    # 2) UNKNOWN 주문 격리 발생 시: 실제 신규 주문 경로 차단 및 Broker transport 0건 검증
     runtime.mark_order_unknown("ORD-NORM-1", reason="TIMEOUT_ISOLATION")
     assert runtime.has_unresolved_unknown_orders() is True
 
-    # Broker 조회 실패로 인한 포지션 불일치 미해결 시
+    cmd2 = make_cmd("ORD-NORM-2", qty=1)
+    tok2 = make_token(uuid.uuid4(), "ORD-NORM-2")
+    oid2 = runtime.order_router.register_and_route(cmd2, tok2)
+    assert oid2 is None  # OrderRouter 차단
+
+    # Broker 발주 전송 0건 실측
+    if not runtime.has_unresolved_unknown_orders() and not runtime.has_unresolved_position_mismatches():
+        broker.send_order(cmd2)
+    assert len(broker.sent_orders) == 0
+
+    # 3) Broker 조회 실패로 인한 포지션 불일치 미해결 시: 신규 주문 차단 및 Broker transport 0건 검증
+    runtime.order_router._unknown_orders.clear()  # UNKNOWN 해제
+    runtime.order_router.fsm.transition_sync(oid1, OrderStatus.CANCELLED)
+
     runtime.order_router._unresolved_position_mismatches["201V8350"] = {"symbol": "201V8350", "reason": "UNRESOLVED"}
     assert runtime.has_unresolved_position_mismatches() is True
+
+    cmd3 = make_cmd("ORD-NORM-3", qty=1)
+    tok3 = make_token(uuid.uuid4(), "ORD-NORM-3")
+    oid3 = runtime.order_router.register_and_route(cmd3, tok3)
+    assert oid3 is None  # OrderRouter 차단
+
+    if not runtime.has_unresolved_unknown_orders() and not runtime.has_unresolved_position_mismatches():
+        broker.send_order(cmd3)
+    assert len(broker.sent_orders) == 0
+
+    # 4) 내부 포지션이 0개인 상황에서 Broker position 조회 실패 시: 안전 차단 100% 발동 및 transport 0건 검증
+    runtime.order_router._unresolved_position_mismatches.clear()
+    broker_err = MockBrokerAdapter()
+    broker_err.should_raise_query_error = True
+
+    recon_res = runtime.order_router.reconcile_with_broker(broker_err, internal_positions={})
+    assert recon_res["status"] == "FAILED"
+    assert runtime.has_unresolved_position_mismatches() is True
+
+    cmd4 = make_cmd("ORD-NORM-4", qty=1)
+    tok4 = make_token(uuid.uuid4(), "ORD-NORM-4")
+    oid4 = runtime.order_router.register_and_route(cmd4, tok4)
+    assert oid4 is None  # 차단 확인
+    assert len(broker_err.sent_orders) == 0  # Transport 0건 확인
 
 
 # ---------------------------------------------------------------------------
@@ -573,4 +614,84 @@ def test_15_same_symbol_qty_mismatch_reconciliation(tmp_path):
     # 2회차 재대사 불일치 0건 검증
     summary2 = router.reconcile_with_broker(broker, internal_positions=internal_positions)
     assert len([m for m in summary2["mismatches"] if m.get("type") == "POSITION_MISMATCH"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# 16. WAL 저장 실패 시 메모리 변경 방지(WAL-first) 및 안전 차단 검증
+# ---------------------------------------------------------------------------
+def test_16_wal_persistence_failure_prevents_memory_mutation_and_blocks_orders(tmp_path):
+    class FailingWalStore:
+        def save_event_sync(self, event_type, data):
+            if event_type == "RECONCILIATION_CORRECTED":
+                return False  # WAL 저장 실패 시뮬레이션
+            return True
+
+    failing_wal = FailingWalStore()
+    router = OrderRouter(wal_store=failing_wal)
+
+    cmd = make_cmd("ORD-WAL-FAIL", qty=2, price=2.5)
+    oid = uuid.uuid4()
+    tok = make_token(oid, "ORD-WAL-FAIL")
+    router.register_and_route(cmd, tok)
+
+    broker = MockBrokerAdapter()
+    broker.open_orders_list = [{
+        "client_order_id": "ORD-WAL-FAIL",
+        "broker_order_id": "BRK-WAL-FAIL",
+        "status": "OPEN",
+        "executed_qty": 0,
+        "executed_price": 3.0,
+    }]
+    internal_pos = {"201V8350": {"symbol": "201V8350", "qty": 10}}
+    broker.positions_map = {"201V8350": {"symbol": "201V8350", "qty": 5}}
+
+    summary = router.reconcile_with_broker(broker, internal_positions=internal_pos)
+
+    # 1) WAL 저장이 실패했으므로 메모리 상태가 임의로 변경되지 않아야 함
+    assert summary["wal_persisted"] is False
+    assert router.get_executed_price(oid) == 2.5  # 가격 변경 안 됨 (2.5 유지)
+    assert internal_pos["201V8350"]["qty"] == 10  # 포지션 변경 안 됨 (10 유지)
+
+    # 2) 포지션 보정 WAL 실패로 인해 unresolved safety state로 격리되었는지 확인
+    assert router.has_unresolved_position_mismatches() is True
+
+    # 3) 신규 주문 시도 시 안전 차단 발동 확인
+    cmd_new = make_cmd("ORD-NEW-BLOCKED", qty=1)
+    tok_new = make_token(uuid.uuid4(), "ORD-NEW-BLOCKED")
+    res = router.register_and_route(cmd_new, tok_new)
+    assert res is None  # 주문 차단 확인
+
+
+# ---------------------------------------------------------------------------
+# 17. 포지션 0개 상태에서 get_positions 조회 실패 시 Safety Block 및 Transport 0건 검증
+# ---------------------------------------------------------------------------
+def test_17_broker_position_query_failure_empty_positions_blocks_new_orders(tmp_path):
+    class MockBrokerPositionErrorAdapter(MockBrokerAdapter):
+        def get_positions(self):
+            raise ConnectionResetError("Broker get_positions connection reset")
+
+    wal_file = str(tmp_path / "recon_17.wal")
+    wal_store = WalStore(log_path=wal_file)
+    router = OrderRouter(wal_store=wal_store)
+
+    broker = MockBrokerPositionErrorAdapter()
+    internal_pos = {}  # 0개 포지션
+
+    summary = router.reconcile_with_broker(broker, internal_positions=internal_pos)
+
+    assert summary["status"] == "FAILED"
+    assert router.has_unresolved_position_mismatches() is True
+    assert "__GLOBAL_BROKER_POSITION_QUERY_FAILED__" in router._unresolved_position_mismatches
+
+    # 신규 주문 발주 시 OrderRouter 차단 및 Transport 0건 검증
+    cmd = make_cmd("ORD-POS-FAIL-1", qty=1)
+    tok = make_token(uuid.uuid4(), "ORD-POS-FAIL-1")
+    res = router.register_and_route(cmd, tok)
+    assert res is None
+
+    if not router.has_unresolved_unknown_orders() and not router.has_unresolved_position_mismatches():
+        broker.send_order(cmd)
+    assert len(broker.sent_orders) == 0
+
+
 

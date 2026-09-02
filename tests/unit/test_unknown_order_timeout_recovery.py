@@ -180,25 +180,25 @@ async def test_recover_unknown_orders_terminal_states(tmp_path):
     wal_store = WalStore(log_path=wal_file)
     router = OrderRouter(wal_store=wal_store)
 
-    # 1. FILLED 복구
+    # 주문 1, 2, 3 등록 (정상 전송 상태)
     cmd1 = make_cmd("ORD-T-FILL", qty=5)
     oid1 = uuid.uuid4()
     tok1 = make_token(oid1, "ORD-T-FILL")
     router.register_and_route(command=cmd1, token=tok1)
-    router.mark_order_unknown("ORD-T-FILL")
 
-    # 2. CANCELLED 복구
     cmd2 = make_cmd("ORD-T-CAN", qty=3)
     oid2 = uuid.uuid4()
     tok2 = make_token(oid2, "ORD-T-CAN")
     router.register_and_route(command=cmd2, token=tok2)
-    router.mark_order_unknown("ORD-T-CAN")
 
-    # 3. REJECTED 복구
     cmd3 = make_cmd("ORD-T-REJ", qty=2)
     oid3 = uuid.uuid4()
     tok3 = make_token(oid3, "ORD-T-REJ")
     router.register_and_route(command=cmd3, token=tok3)
+
+    # 타임아웃 발생으로 3개 주문 UNKNOWN 전환
+    router.mark_order_unknown("ORD-T-FILL")
+    router.mark_order_unknown("ORD-T-CAN")
     router.mark_order_unknown("ORD-T-REJ")
 
     broker = MockBrokerAdapter()

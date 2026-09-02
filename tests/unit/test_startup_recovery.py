@@ -219,25 +219,25 @@ def test_startup_recovery_terminal_states_cleanup(tmp_path):
     wal_store = WalStore(log_path=wal_file)
     router1 = OrderRouter(wal_store=wal_store)
 
-    # 주문 1: FILLED 대상
+    # 주문 1, 2, 3 등록 (정상 전송 상태)
     cmd1 = make_cmd("ORD-TERM-FILL", qty=5)
     oid1 = uuid.uuid4()
     tok1 = make_token(oid1, "ORD-TERM-FILL")
     router1.register_and_route(command=cmd1, token=tok1)
-    router1.mark_order_unknown("ORD-TERM-FILL")
 
-    # 주문 2: CANCELLED 대상
     cmd2 = make_cmd("ORD-TERM-CAN", qty=3)
     oid2 = uuid.uuid4()
     tok2 = make_token(oid2, "ORD-TERM-CAN")
     router1.register_and_route(command=cmd2, token=tok2)
-    router1.mark_order_unknown("ORD-TERM-CAN")
 
-    # 주문 3: REJECTED 대상
     cmd3 = make_cmd("ORD-TERM-REJ", qty=2)
     oid3 = uuid.uuid4()
     tok3 = make_token(oid3, "ORD-TERM-REJ")
     router1.register_and_route(command=cmd3, token=tok3)
+
+    # 타임아웃 발생으로 3개 주문 UNKNOWN 전환
+    router1.mark_order_unknown("ORD-TERM-FILL")
+    router1.mark_order_unknown("ORD-TERM-CAN")
     router1.mark_order_unknown("ORD-TERM-REJ")
 
     broker = MockBrokerAdapter()

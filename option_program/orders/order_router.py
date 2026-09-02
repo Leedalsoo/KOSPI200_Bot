@@ -103,6 +103,14 @@ class OrderRouter:
     ) -> Optional[uuid.UUID]:
         """RiskApprovalToken 검증 후 주문 FSM 등록 및 브로커 전송 파이프라인"""
         with self._lock:
+            # 0. [안전 차단] 미해결 UNKNOWN 주문 또는 미해결 POSITION 불일치 시 신규 주문 등록 즉시 차단 (Transport 0건 보장)
+            if self.has_unresolved_unknown_orders() or self.has_unresolved_position_mismatches():
+                logger.critical(
+                    f"[OrderRouter] [SAFETY BLOCK] Rejected order {getattr(command, 'client_order_id', 'UNKNOWN')} "
+                    f"due to unresolved UNKNOWN orders or POSITION mismatches."
+                )
+                return None
+
             # 1. RiskApprovalToken 유효성 및 일관성 엄격 검증
             is_valid, reason = self.validate_token(command, token)
             if not is_valid:
@@ -711,7 +719,9 @@ class OrderRouter:
             return True
         try:
             if hasattr(self.wal_store, "save_event_sync"):
-                self.wal_store.save_event_sync(event_type, data)
+                res = self.wal_store.save_event_sync(event_type, data)
+                if res is False:
+                    return False
             return True
         except Exception as exc:
             logger.error(f"[OrderRouter] Failed to persist {event_type} to WAL: {exc}")
@@ -765,14 +775,23 @@ class OrderRouter:
             if hasattr(broker_adapter, "get_open_orders"):
                 try:
                     raw_open = broker_adapter.get_open_orders()
-                    if isinstance(raw_open, list):
-                        open_orders = raw_open
+                    open_orders = raw_open if isinstance(raw_open, list) else []
                     summary["broker_open_orders_count"] = len(open_orders)
                     summary["open_orders_broker_count"] = len(open_orders)
                 except Exception as exc:
                     logger.error(f"[OrderRouter] Failed to fetch open orders from broker during reconcile: {exc}")
+                    self._unresolved_position_mismatches["__GLOBAL_BROKER_QUERY_FAILED__"] = {
+                        "symbol": "__GLOBAL__",
+                        "reason": f"BROKER_OPEN_ORDERS_QUERY_FAILED: {exc}",
+                    }
                     summary["status"] = "FAILED"
+                    summary["has_unresolved_positions"] = True
+                    summary["unresolved_position_mismatches"] = self.get_unresolved_position_mismatches()
                     summary["completed_at"] = time.time()
+                    self._persist_reconciliation_wal(
+                        "RECONCILIATION_FAILED",
+                        {"reconciliation_id": recon_id, "error": str(exc), "timestamp": str(start_time)},
+                    )
                     return summary
 
             broker_open_by_client: Dict[str, Dict[str, Any]] = {}
@@ -814,10 +833,7 @@ class OrderRouter:
                             mismatches.append(id_mismatch)
                             self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", id_mismatch)
 
-                            # 확정 보정
-                            self._order_to_broker_id[order_id] = b_broker_id
-                            self._client_to_broker_id[client_id] = b_broker_id
-                            self._broker_to_client_id[b_broker_id] = client_id
+                            # [WAL-First] ORDER_ID 확정 보정
                             corr_entry = {
                                 "type": "ORDER_ID_CORRECTION",
                                 "order_id": str(order_id),
@@ -825,16 +841,18 @@ class OrderRouter:
                                 "prev_broker_order_id": broker_order_id,
                                 "new_broker_order_id": b_broker_id,
                             }
-                            corrections.append(corr_entry)
-                            self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
-                            broker_order_id = b_broker_id
+                            wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                            if wal_ok:
+                                self._order_to_broker_id[order_id] = b_broker_id
+                                self._client_to_broker_id[client_id] = b_broker_id
+                                self._broker_to_client_id[b_broker_id] = client_id
+                                corrections.append(corr_entry)
+                                broker_order_id = b_broker_id
+                            else:
+                                summary["wal_persisted"] = False
                         elif not broker_order_id:
                             # 최초 Broker Order ID 동기화 및 WAL 영속화
-                            self._order_to_broker_id[order_id] = b_broker_id
-                            self._client_to_broker_id[client_id] = b_broker_id
-                            self._broker_to_client_id[b_broker_id] = client_id
-                            broker_order_id = b_broker_id
-                            self._persist_reconciliation_wal(
+                            sync_wal_ok = self._persist_reconciliation_wal(
                                 "RECONCILIATION_ID_SYNC",
                                 {
                                     "type": "ID_SYNC",
@@ -843,9 +861,20 @@ class OrderRouter:
                                     "broker_order_id": b_broker_id,
                                 },
                             )
+                            if sync_wal_ok:
+                                self._order_to_broker_id[order_id] = b_broker_id
+                                self._client_to_broker_id[client_id] = b_broker_id
+                                self._broker_to_client_id[b_broker_id] = client_id
+                                broker_order_id = b_broker_id
+                            else:
+                                summary["wal_persisted"] = False
 
                     # 2) 가격 불일치 (PRICE_MISMATCH)
-                    b_price_raw = broker_info.get("executed_price", broker_info.get("order_price", broker_info.get("price")))
+                    b_price_raw = broker_info.get("executed_price") if broker_info.get("executed_price") is not None else (
+                        broker_info.get("avg_price") if broker_info.get("avg_price") is not None else (
+                            broker_info.get("order_price") if broker_info.get("executed_qty", 0) == 0 else broker_info.get("price")
+                        )
+                    )
                     b_price = float(b_price_raw or 0.0)
                     if b_price > 0.0 and oms_price > 0.0 and abs(b_price - oms_price) > 1e-4:
                         price_mismatch = {
@@ -858,16 +887,7 @@ class OrderRouter:
                         mismatches.append(price_mismatch)
                         self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", price_mismatch)
 
-                        # 실제 내부 canonical 주문/체결 가격 상태 확정 보정
-                        try:
-                            new_cmd = dataclasses.replace(cmd, price=b_price)
-                            self._active_orders[order_id] = (new_cmd, sub_time)
-                            cmd = new_cmd
-                        except Exception:
-                            pass
-                        self._executed_price_history[order_id] = b_price
-                        self._client_to_executed_price[client_id] = b_price
-
+                        # [WAL-First] 가격 보정 선행 WAL 영속화
                         corr_entry = {
                             "type": "PRICE_CORRECTION",
                             "order_id": str(order_id),
@@ -875,9 +895,20 @@ class OrderRouter:
                             "prev_price": oms_price,
                             "new_price": b_price,
                         }
-                        corrections.append(corr_entry)
-                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
-                        oms_price = b_price
+                        wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        if wal_ok:
+                            try:
+                                new_cmd = dataclasses.replace(cmd, price=b_price)
+                                self._active_orders[order_id] = (new_cmd, sub_time)
+                                cmd = new_cmd
+                            except Exception:
+                                pass
+                            self._executed_price_history[order_id] = b_price
+                            self._client_to_executed_price[client_id] = b_price
+                            corrections.append(corr_entry)
+                            oms_price = b_price
+                        else:
+                            summary["wal_persisted"] = False
 
                     # 3) 상태 불일치 (STATUS_MISMATCH)
                     b_status_raw = broker_info.get("status", "OPEN")
@@ -895,17 +926,20 @@ class OrderRouter:
                         mismatches.append(mismatch_entry)
                         self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", mismatch_entry)
 
-                        # 확정 보정
-                        self.fsm.transition_sync(order_id, OrderStatus.ACCEPTED)
+                        # [WAL-First] 확정 보정
                         corr_entry = {
                             "order_id": str(order_id),
                             "client_order_id": client_id,
                             "prev_status": current_status.value if current_status else "NONE",
                             "new_status": OrderStatus.ACCEPTED.value,
                         }
-                        corrections.append(corr_entry)
-                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
-                        current_status = OrderStatus.ACCEPTED
+                        wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        if wal_ok:
+                            self.fsm.transition_sync(order_id, OrderStatus.ACCEPTED)
+                            corrections.append(corr_entry)
+                            current_status = OrderStatus.ACCEPTED
+                        else:
+                            summary["wal_persisted"] = False
 
                     # 4) 체결 수량 불일치 (EXECUTION_MISMATCH)
                     if b_qty != oms_cum_qty:
@@ -919,21 +953,23 @@ class OrderRouter:
                         mismatches.append(exec_mismatch)
                         self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", exec_mismatch)
 
-                        # 확정 보정 (Broker 체결수량 반영)
-                        self._cum_executed_qty[order_id] = b_qty
-                        self._executed_qty_history[order_id] = b_qty
-                        self._client_to_executed_qty[client_id] = b_qty
-                        if b_qty > 0 and self.fsm.get_status(order_id) not in (OrderStatus.PARTIAL, OrderStatus.FILLED):
-                            self.fsm.transition_sync(order_id, OrderStatus.PARTIAL)
-
+                        # [WAL-First] 확정 보정
                         corr_entry = {
                             "order_id": str(order_id),
                             "client_order_id": client_id,
                             "prev_executed_qty": oms_cum_qty,
                             "new_executed_qty": b_qty,
                         }
-                        corrections.append(corr_entry)
-                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        if wal_ok:
+                            self._cum_executed_qty[order_id] = b_qty
+                            self._executed_qty_history[order_id] = b_qty
+                            self._client_to_executed_qty[client_id] = b_qty
+                            if b_qty > 0 and self.fsm.get_status(order_id) not in (OrderStatus.PARTIAL, OrderStatus.FILLED):
+                                self.fsm.transition_sync(order_id, OrderStatus.PARTIAL)
+                            corrections.append(corr_entry)
+                        else:
+                            summary["wal_persisted"] = False
 
                 # Case B: Broker Open Orders 목록에 없는 경우 -> get_order_status로 종결 상태 확인
                 else:
@@ -983,9 +1019,6 @@ class OrderRouter:
                             mismatches.append(id_mismatch)
                             self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", id_mismatch)
 
-                            self._order_to_broker_id[order_id] = b_broker_id
-                            self._client_to_broker_id[client_id] = b_broker_id
-                            self._broker_to_client_id[b_broker_id] = client_id
                             corr_entry = {
                                 "type": "ORDER_ID_CORRECTION",
                                 "order_id": str(order_id),
@@ -993,15 +1026,17 @@ class OrderRouter:
                                 "prev_broker_order_id": broker_order_id,
                                 "new_broker_order_id": b_broker_id,
                             }
-                            corrections.append(corr_entry)
-                            self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
-                            broker_order_id = b_broker_id
+                            wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                            if wal_ok:
+                                self._order_to_broker_id[order_id] = b_broker_id
+                                self._client_to_broker_id[client_id] = b_broker_id
+                                self._broker_to_client_id[b_broker_id] = client_id
+                                corrections.append(corr_entry)
+                                broker_order_id = b_broker_id
+                            else:
+                                summary["wal_persisted"] = False
                         elif not broker_order_id:
-                            self._order_to_broker_id[order_id] = b_broker_id
-                            self._client_to_broker_id[client_id] = b_broker_id
-                            self._broker_to_client_id[b_broker_id] = client_id
-                            broker_order_id = b_broker_id
-                            self._persist_reconciliation_wal(
+                            sync_wal_ok = self._persist_reconciliation_wal(
                                 "RECONCILIATION_ID_SYNC",
                                 {
                                     "type": "ID_SYNC",
@@ -1010,9 +1045,20 @@ class OrderRouter:
                                     "broker_order_id": b_broker_id,
                                 },
                             )
+                            if sync_wal_ok:
+                                self._order_to_broker_id[order_id] = b_broker_id
+                                self._client_to_broker_id[client_id] = b_broker_id
+                                self._broker_to_client_id[b_broker_id] = client_id
+                                broker_order_id = b_broker_id
+                            else:
+                                summary["wal_persisted"] = False
 
                     # 가격 불일치 검사 및 실제 보정
-                    b_price_raw = status_info.get("executed_price", status_info.get("order_price", status_info.get("price")))
+                    b_price_raw = status_info.get("executed_price") if status_info.get("executed_price") is not None else (
+                        status_info.get("avg_price") if status_info.get("avg_price") is not None else (
+                            status_info.get("order_price") if status_info.get("executed_qty", 0) == 0 else status_info.get("price")
+                        )
+                    )
                     b_price = float(b_price_raw or 0.0)
                     if b_price > 0.0 and oms_price > 0.0 and abs(b_price - oms_price) > 1e-4:
                         price_mismatch = {
@@ -1025,16 +1071,7 @@ class OrderRouter:
                         mismatches.append(price_mismatch)
                         self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", price_mismatch)
 
-                        # 실제 내부 canonical 주문/체결 가격 상태 확정 보정
-                        try:
-                            new_cmd = dataclasses.replace(cmd, price=b_price)
-                            self._active_orders[order_id] = (new_cmd, sub_time)
-                            cmd = new_cmd
-                        except Exception:
-                            pass
-                        self._executed_price_history[order_id] = b_price
-                        self._client_to_executed_price[client_id] = b_price
-
+                        # [WAL-First] 가격 보정
                         corr_entry = {
                             "type": "PRICE_CORRECTION",
                             "order_id": str(order_id),
@@ -1042,9 +1079,20 @@ class OrderRouter:
                             "prev_price": oms_price,
                             "new_price": b_price,
                         }
-                        corrections.append(corr_entry)
-                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
-                        oms_price = b_price
+                        wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        if wal_ok:
+                            try:
+                                new_cmd = dataclasses.replace(cmd, price=b_price)
+                                self._active_orders[order_id] = (new_cmd, sub_time)
+                                cmd = new_cmd
+                            except Exception:
+                                pass
+                            self._executed_price_history[order_id] = b_price
+                            self._client_to_executed_price[client_id] = b_price
+                            corrections.append(corr_entry)
+                            oms_price = b_price
+                        else:
+                            summary["wal_persisted"] = False
 
                     # 정상 확정 응답 수신 시 상태 보정
                     b_status = str(status_info.get("status", "")).upper()
@@ -1062,16 +1110,8 @@ class OrderRouter:
                         mismatches.append(mismatch_entry)
                         self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", mismatch_entry)
 
-                        # 상태 및 수량 보정 후 active 정리
-                        self.fsm.transition_sync(order_id, OrderStatus.FILLED)
                         req_qty = getattr(cmd, "qty", b_qty)
                         final_qty = b_qty if b_qty > 0 else req_qty
-                        self._executed_qty_history[order_id] = final_qty
-                        self._client_to_executed_qty[client_id] = final_qty
-                        self._active_orders.pop(order_id, None)
-                        self._order_brokers.pop(order_id, None)
-                        self._cum_executed_qty.pop(order_id, None)
-
                         corr_entry = {
                             "order_id": str(order_id),
                             "client_order_id": client_id,
@@ -1079,9 +1119,18 @@ class OrderRouter:
                             "new_status": OrderStatus.FILLED.value,
                             "executed_qty": final_qty,
                         }
-                        corrections.append(corr_entry)
-                        summary["synced_orders"] += 1
-                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        if wal_ok:
+                            self.fsm.transition_sync(order_id, OrderStatus.FILLED)
+                            self._executed_qty_history[order_id] = final_qty
+                            self._client_to_executed_qty[client_id] = final_qty
+                            self._active_orders.pop(order_id, None)
+                            self._order_brokers.pop(order_id, None)
+                            self._cum_executed_qty.pop(order_id, None)
+                            corrections.append(corr_entry)
+                            summary["synced_orders"] += 1
+                        else:
+                            summary["wal_persisted"] = False
 
                     # 2) Broker CANCELLED 확정
                     elif b_status == "CANCELLED":
@@ -1095,25 +1144,27 @@ class OrderRouter:
                         mismatches.append(mismatch_entry)
                         self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", mismatch_entry)
 
-                        if current_status == OrderStatus.CANCEL_REQUESTED:
-                            self.confirm_cancel(order_id)
-                        else:
-                            self.fsm.transition_sync(order_id, OrderStatus.CANCEL_REQUESTED)
-                            self.fsm.transition_sync(order_id, OrderStatus.CANCELLED)
-                            self._active_orders.pop(order_id, None)
-                            self._order_brokers.pop(order_id, None)
-                            self._cum_executed_qty.pop(order_id, None)
-
                         corr_entry = {
                             "order_id": str(order_id),
                             "client_order_id": client_id,
                             "prev_status": current_status.value if current_status else "NONE",
                             "new_status": OrderStatus.CANCELLED.value,
                         }
-                        corrections.append(corr_entry)
-                        summary["confirmed_cancelled"] += 1
-                        summary["synced_orders"] += 1
-                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        if wal_ok:
+                            if current_status == OrderStatus.CANCEL_REQUESTED:
+                                self.confirm_cancel(order_id)
+                            else:
+                                self.fsm.transition_sync(order_id, OrderStatus.CANCEL_REQUESTED)
+                                self.fsm.transition_sync(order_id, OrderStatus.CANCELLED)
+                                self._active_orders.pop(order_id, None)
+                                self._order_brokers.pop(order_id, None)
+                                self._cum_executed_qty.pop(order_id, None)
+                            corrections.append(corr_entry)
+                            summary["confirmed_cancelled"] += 1
+                            summary["synced_orders"] += 1
+                        else:
+                            summary["wal_persisted"] = False
 
                     # 3) Broker REJECTED 확정
                     elif b_status == "REJECTED":
@@ -1127,37 +1178,41 @@ class OrderRouter:
                         mismatches.append(mismatch_entry)
                         self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", mismatch_entry)
 
-                        self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
-                        self._active_orders.pop(order_id, None)
-                        self._order_brokers.pop(order_id, None)
-                        self._cum_executed_qty.pop(order_id, None)
-
                         corr_entry = {
                             "order_id": str(order_id),
                             "client_order_id": client_id,
                             "prev_status": current_status.value if current_status else "NONE",
                             "new_status": OrderStatus.REJECTED.value,
                         }
-                        corrections.append(corr_entry)
-                        summary["synced_orders"] += 1
-                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        if wal_ok:
+                            self.fsm.transition_sync(order_id, OrderStatus.REJECTED)
+                            self._active_orders.pop(order_id, None)
+                            self._order_brokers.pop(order_id, None)
+                            self._cum_executed_qty.pop(order_id, None)
+                            corrections.append(corr_entry)
+                            summary["synced_orders"] += 1
+                        else:
+                            summary["wal_persisted"] = False
 
                     elif b_status in ("OPEN", "ACCEPTED", "PENDING"):
-                        # Broker가 정상 접수 상태를 보고한 경우
                         if current_status in (OrderStatus.SENT, OrderStatus.UNKNOWN):
-                            self.fsm.transition_sync(order_id, OrderStatus.ACCEPTED)
-                            self._unknown_orders.pop(order_id, None)
                             corr_entry = {
                                 "order_id": str(order_id),
                                 "client_order_id": client_id,
                                 "prev_status": current_status.value if current_status else "NONE",
                                 "new_status": OrderStatus.ACCEPTED.value,
                             }
-                            corrections.append(corr_entry)
-                            summary["synced_orders"] += 1
-                            if current_status == OrderStatus.UNKNOWN:
-                                summary["recovered"] += 1
-                            self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                            wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                            if wal_ok:
+                                self.fsm.transition_sync(order_id, OrderStatus.ACCEPTED)
+                                self._unknown_orders.pop(order_id, None)
+                                corrections.append(corr_entry)
+                                summary["synced_orders"] += 1
+                                if current_status == OrderStatus.UNKNOWN:
+                                    summary["recovered"] += 1
+                            else:
+                                summary["wal_persisted"] = False
 
                     else:
                         # 알 수 없는 기타 응답 상태 -> 안전 격리
@@ -1196,7 +1251,9 @@ class OrderRouter:
             if hasattr(broker_adapter, "get_positions") and internal_positions is not None:
                 try:
                     broker_positions_raw = broker_adapter.get_positions()
-                    broker_positions = broker_positions_raw if isinstance(broker_positions_raw, dict) else {}
+                    if broker_positions_raw is None or not isinstance(broker_positions_raw, dict):
+                        raise RuntimeError(f"Invalid broker positions response: {broker_positions_raw}")
+                    broker_positions = broker_positions_raw
                     all_symbols = set(internal_positions.keys()) | set(broker_positions.keys())
                     for sym in sorted(all_symbols):
                         pos_data = internal_positions.get(sym, {})
@@ -1213,39 +1270,52 @@ class OrderRouter:
                             mismatches.append(pos_mismatch)
                             self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", pos_mismatch)
 
-                            # 실제 내부 Canonical/Account Position 보정
-                            if isinstance(internal_positions, dict):
-                                if brk_qty == 0:
-                                    internal_positions.pop(sym, None)
-                                elif isinstance(pos_data, dict):
-                                    internal_positions[sym] = dict(pos_data, qty=brk_qty, symbol=sym)
-                                elif hasattr(pos_data, "qty"):
-                                    try:
-                                        pos_data.qty = brk_qty
-                                    except Exception:
-                                        try:
-                                            internal_positions[sym] = dataclasses.replace(pos_data, qty=brk_qty)
-                                        except Exception:
-                                            internal_positions[sym] = {"symbol": sym, "qty": brk_qty, "price": getattr(pos_data, "price", 0.0)}
-                                else:
-                                    internal_positions[sym] = {"symbol": sym, "qty": brk_qty}
-
-                            self._corrected_positions[sym] = brk_qty
-
+                            # [WAL-First] 포지션 보정 선행 WAL 영속화
                             corr_entry = {
                                 "type": "POSITION_CORRECTION",
                                 "symbol": sym,
                                 "prev_qty": int_qty,
                                 "new_qty": brk_qty,
                             }
-                            corrections.append(corr_entry)
-                            self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
-                            logger.info(
-                                f"[OrderRouter] Position mismatch detected & corrected for {sym}: OMS={int_qty} -> Broker={brk_qty}"
-                            )
+                            wal_ok = self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                            if wal_ok:
+                                if isinstance(internal_positions, dict):
+                                    if brk_qty == 0:
+                                        internal_positions.pop(sym, None)
+                                    elif isinstance(pos_data, dict):
+                                        internal_positions[sym] = dict(pos_data, qty=brk_qty, symbol=sym)
+                                    elif hasattr(pos_data, "qty"):
+                                        try:
+                                            pos_data.qty = brk_qty
+                                        except Exception:
+                                            try:
+                                                internal_positions[sym] = dataclasses.replace(pos_data, qty=brk_qty)
+                                            except Exception:
+                                                internal_positions[sym] = {"symbol": sym, "qty": brk_qty, "price": getattr(pos_data, "price", 0.0)}
+                                    else:
+                                        internal_positions[sym] = {"symbol": sym, "qty": brk_qty}
+
+                                self._corrected_positions[sym] = brk_qty
+                                corrections.append(corr_entry)
+                                logger.info(
+                                    f"[OrderRouter] Position mismatch detected & corrected for {sym}: OMS={int_qty} -> Broker={brk_qty}"
+                                )
+                            else:
+                                # WAL 실패 시 메모리 변경 금지 및 unresolved safety state로 격리
+                                self._unresolved_position_mismatches[sym] = {
+                                    "symbol": sym,
+                                    "internal_qty": int_qty,
+                                    "broker_qty": brk_qty,
+                                    "reason": "POSITION_CORRECTION_WAL_FAILED",
+                                }
+                                summary["wal_persisted"] = False
                 except Exception as exc:
                     logger.warning(f"[OrderRouter] Exception querying get_positions for reconciliation: {exc}")
-                    # Broker 조회 실패 시 미해결 불일치로 등록하여 안전 차단 활성화
+                    # Broker 조회 실패 시 포지션 0개 상황 포함하여 글로벌 미해결 불일치로 등록하여 안전 차단 100% 활성화
+                    self._unresolved_position_mismatches["__GLOBAL_BROKER_POSITION_QUERY_FAILED__"] = {
+                        "symbol": "__GLOBAL__",
+                        "reason": f"BROKER_POSITION_QUERY_FAILED: {exc}",
+                    }
                     for sym, pos_data in internal_positions.items():
                         int_qty = int(pos_data.get("qty", 0) if isinstance(pos_data, dict) else getattr(pos_data, "qty", 0))
                         if int_qty != 0:
@@ -1254,6 +1324,7 @@ class OrderRouter:
                                 "internal_qty": int_qty,
                                 "reason": f"BROKER_QUERY_FAILED: {exc}",
                             }
+                    summary["status"] = "FAILED"
 
             if self._unresolved_position_mismatches:
                 summary["has_unresolved_positions"] = True
