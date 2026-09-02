@@ -5,7 +5,7 @@ import unittest
 import zipfile
 
 from shared.calendar.krx_calendar import KrxTradingCalendar
-from shared.contracts.canonical import CanonicalMarketTick
+from shared.contracts.canonical import CanonicalMarketTick, CanonicalOptionType
 from shared.contracts.option_master import (
     IOptionContractMaster,
     InMemoryOptionContractMaster,
@@ -298,6 +298,123 @@ class TestOptionContractMaster(unittest.TestCase):
         ])
         parsed = parse_kis_fo_idx_mst(bad_mst, calendar=self.calendar)
         self.assertEqual(len(parsed), 0)
+
+    def test_market_tick_identity_preserved_in_last_processed_tick(self) -> None:
+        """[Market Tick Identity] process_tick() 실행 후 last_processed_tick에서 핵심 Identity 필드가 변조되지 않고 보존됨을 검증."""
+        runtime = OptionProgramRuntime()
+        tick = CanonicalMarketTick(
+            timestamp="2026-09-04 10:15:30",
+            seq_id=777,
+            symbol="201VC350",
+            underlying_price=352.5,
+            strike_price=350.0,
+            option_type=CanonicalOptionType.CALL,
+            bid_price=3.50,
+            ask_price=3.55,
+            last_price=3.52,
+            volume=50,
+            expiry="2026-09-10",
+        )
+
+        runtime.process_tick(tick)
+
+        processed = runtime.last_processed_tick
+        self.assertIsNotNone(processed)
+        self.assertEqual(processed.timestamp, "2026-09-04 10:15:30")
+        self.assertEqual(processed.seq_id, 777)
+        self.assertEqual(processed.symbol, "201VC350")
+        self.assertEqual(processed.underlying_price, 352.5)
+        self.assertEqual(processed.strike_price, 350.0)
+        self.assertEqual(processed.option_type, CanonicalOptionType.CALL)
+        self.assertEqual(processed.bid_price, 3.50)
+        self.assertEqual(processed.ask_price, 3.55)
+        self.assertEqual(processed.last_price, 3.52)
+        self.assertEqual(processed.volume, 50)
+        self.assertEqual(processed.expiry, "2026-09-10")
+
+    def test_market_tick_identity_explicit_seq_id_in_signal_and_order(self) -> None:
+        """[Market Tick Identity] seq_id > 0인 경우 Signal ID 및 생성되는 Order ID에 seq_id가 그대로 사용됨을 검증."""
+        runtime = OptionProgramRuntime()
+        zip_bytes = create_sample_kis_mst_zip_bytes()
+        runtime.option_master.load_from_zip_bytes(zip_bytes)
+
+        t1 = runtime.strategies[0]
+        t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+
+        explicit_seq_id = 9999
+        tick = CanonicalMarketTick(
+            timestamp="2026-09-04 09:00:01",
+            seq_id=explicit_seq_id,
+            symbol="B01609335",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="2026-09-10",
+        )
+
+        cmds = runtime.process_tick(tick)
+
+        # 1. 수집된 신호의 signal_id에 explicit_seq_id가 그대로 포함되어 있는지 검증
+        self.assertTrue(len(runtime.last_signals) > 0, "Signals should be generated")
+        for sig in runtime.last_signals:
+            sig_id = sig.get("signal_id", "")
+            self.assertIn(f"SIG-{explicit_seq_id}-", sig_id, f"Signal ID must contain seq_id {explicit_seq_id}: {sig_id}")
+
+        # 2. 생성된 주문 명령 client_order_id에 explicit_seq_id가 그대로 포함되어 있는지 검증
+        self.assertTrue(len(cmds) > 0, "Orders should be approved and commanded")
+        for cmd in cmds:
+            self.assertIn(f"ORD-T{explicit_seq_id}-", cmd.client_order_id, f"Order ID must contain seq_id {explicit_seq_id}: {cmd.client_order_id}")
+
+    def test_market_tick_identity_zero_seq_id_tick_counter_fallback_and_increment(self) -> None:
+        """[Market Tick Identity] seq_id=0인 경우 Runtime tick_counter가 fallback으로 사용되며 충돌 없이 단조 증가함을 검증."""
+        runtime = OptionProgramRuntime()
+        zip_bytes = create_sample_kis_mst_zip_bytes()
+        runtime.option_master.load_from_zip_bytes(zip_bytes)
+
+        # 1회차 tick (seq_id=0)
+        t1 = runtime.strategies[0]
+        t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+        tick1 = CanonicalMarketTick(
+            timestamp="2026-09-04 09:00:01",
+            seq_id=0,
+            symbol="B01609335",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="2026-09-10",
+        )
+        cmds1 = runtime.process_tick(tick1)
+        self.assertEqual(runtime.tick_counter, 1)
+        self.assertTrue(any("SIG-1-" in s.get("signal_id", "") for s in runtime.last_signals))
+        self.assertTrue(any("ORD-T1-" in c.client_order_id for c in cmds1))
+
+        # 2회차 tick (seq_id=0)
+        t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+        tick2 = CanonicalMarketTick(
+            timestamp="2026-09-04 09:00:02",
+            seq_id=0,
+            symbol="B01609335",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="2026-09-10",
+        )
+        cmds2 = runtime.process_tick(tick2)
+        self.assertEqual(runtime.tick_counter, 2)
+        self.assertTrue(any("SIG-2-" in s.get("signal_id", "") for s in runtime.last_signals))
+        self.assertTrue(any("ORD-T2-" in c.client_order_id for c in cmds2))
+
+        # 3회차 tick (seq_id=0)
+        t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+        tick3 = CanonicalMarketTick(
+            timestamp="2026-09-04 09:00:03",
+            seq_id=0,
+            symbol="B01609335",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="2026-09-10",
+        )
+        cmds3 = runtime.process_tick(tick3)
+        self.assertEqual(runtime.tick_counter, 3)
+        self.assertTrue(any("SIG-3-" in s.get("signal_id", "") for s in runtime.last_signals))
+        self.assertTrue(any("ORD-T3-" in c.client_order_id for c in cmds3))
 
 
 if __name__ == "__main__":
