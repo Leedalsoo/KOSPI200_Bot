@@ -61,6 +61,7 @@ class CanonicalMarketTick:
     volume: int = 0
     seq_id: int = 0
     expiry: str = ""
+    symbol: str = ""
 
 
 @dataclass(frozen=True)

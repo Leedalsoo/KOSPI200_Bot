@@ -32,6 +32,7 @@ from option_program.market_analysis.market_condition_analyzer import MarketCondi
 from option_program.market_analysis.market_condition_models import MarketConditionSnapshot
 from infra.wal_store import WalStore
 from shared.calendar import KrxTradingCalendar, calculate_dte
+from shared.contracts.option_master import IOptionContractMaster, InMemoryOptionContractMaster
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +44,10 @@ class OptionProgramRuntime:
         account_summary: Optional[CanonicalAccountSummary] = None,
         wal_store: Optional[Any] = None,
         calendar: Optional[KrxTradingCalendar] = None,
+        option_master: Optional[IOptionContractMaster] = None,
     ):
         self.calendar: KrxTradingCalendar = calendar or KrxTradingCalendar()
+        self.option_master: IOptionContractMaster = option_master or InMemoryOptionContractMaster()
         self.regime_detector = RegimeDetector()
         self.strategies: List[Any] = [
             Track1(config={}),
@@ -232,11 +235,15 @@ class OptionProgramRuntime:
                 else:
                     date_str = raw_ts
 
-                # DTE (Days to Expiry) 계산 (실제 tick.expiry 및 캘린더 연동)
+                # DTE (Days to Expiry) 계산 (tick.expiry 또는 OptionContractMaster lookup 연동)
+                resolved_expiry = tick.expiry
+                if not resolved_expiry and getattr(tick, "symbol", ""):
+                    resolved_expiry = self.option_master.get_expiry(tick.symbol) or ""
+
                 calculated_dte: Optional[float] = None
-                if tick.expiry and date_str:
+                if resolved_expiry and date_str:
                     try:
-                        calculated_dte = calculate_dte(current_date=date_str, expiry_date=tick.expiry, calendar=self.calendar)
+                        calculated_dte = calculate_dte(current_date=date_str, expiry_date=resolved_expiry, calendar=self.calendar)
                     except Exception as e:
                         logger.debug(f"DTE calculation note: {e}")
                         calculated_dte = None
