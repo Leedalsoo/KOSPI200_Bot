@@ -383,6 +383,86 @@ class TestRiskDecisionImpactAssertion(unittest.TestCase):
         report = reports[0]
         self.assertEqual(report.executed_qty, 1)
 
+    def test_strategy_runtime_config_propagation_and_fallback_tracing(self):
+        """[11단계-1] OptionProgramRuntime Track 1~9 생성 시 config 전달 경로 및 fallback 사용 추적 검증."""
+        runtime = OptionProgramRuntime()
+
+        # 1. 런타임에 등록된 9개 전략 인스턴스 확인
+        self.assertEqual(len(runtime.strategies), 9)
+
+        # 2. Track 1: Tail Defense
+        t1 = runtime.strategies[0]
+        self.assertEqual(t1.profit_target, 500000.0)
+        self.assertEqual(t1.fence_distance, 7.5)
+        self.assertEqual(t1.max_hedge_allowed, 20)
+
+        # 3. Track 2: Asymmetric Trap
+        t2 = runtime.strategies[1]
+        from decimal import Decimal
+        self.assertEqual(t2.capital_allocation_rate, Decimal("0.10"))
+        self.assertEqual(t2._max_daily_entries, 2)
+
+        # 4. Track 3: Statistical Arbitrage
+        t3 = runtime.strategies[2]
+        self.assertEqual(t3.max_group_limit, 2)
+        self.assertEqual(t3.z_entry_threshold, 2.0)
+        self.assertEqual(t3.z_exit_threshold, 0.2)
+        self.assertEqual(t3.z_stop_loss_threshold, 3.5)
+
+        # 5. Track 5: Gap Protocol
+        t5 = runtime.strategies[4]
+        self.assertEqual(t5.z_threshold, 1.5)
+        self.assertEqual(t5.fence_compress_pt, 2.5)
+
+        # 6. Track 6: Daily 0DTE
+        t6 = runtime.strategies[5]
+        self.assertEqual(t6.vol_trigger_multiplier, 1.3)
+        self.assertEqual(t6.strike_offset, 12.5)
+
+        # 7. Track 7: Weekly Insurance
+        t7 = runtime.strategies[6]
+        self.assertEqual(t7.strike_offset, 15.0)
+        self.assertEqual(t7.expiry_mode, "D-0 CUTOFF")
+
+        # 8. Track 8: Monthly Strangle
+        t8 = runtime.strategies[7]
+        self.assertEqual(t8.profit_target, 300000.0)
+        self.assertEqual(t8.min_budget_requirement, 200000.0)
+
+        # 9. Track 9: Event Driven
+        t9 = runtime.strategies[8]
+        self.assertEqual(t9.strike_offset, 15.0)
+        self.assertEqual(t9.profit_target, 400000.0)
+
+    def test_risk_config_actual_consumption_and_settings_yaml_isolation(self):
+        """[11단계-1] RiskConfig 실제 소비 위치 및 settings.yaml 독립성 추적 검증."""
+        custom_risk = RiskConfig(
+            max_order_qty=25,
+            max_daily_loss_krw=5_000_000.0,
+            max_margin_utilization_ratio=0.70,
+            max_position_per_instrument=50,
+            vol_spike_threshold_multiplier=1.20,
+            margin_diet_active=True,
+            account_stale_timeout_sec=15.0,
+            position_stale_timeout_sec=15.0,
+        )
+        runtime = OptionProgramRuntime(risk_config=custom_risk)
+
+        # 1. OptionProgramRuntime -> RiskEngine / RiskSensor 전달 확인
+        self.assertEqual(runtime.risk_config.max_order_qty, 25)
+        self.assertEqual(runtime.risk_engine.config.max_order_qty, 25)
+        self.assertEqual(runtime.risk_sensor.config.max_margin_utilization_ratio, 0.70)
+        self.assertTrue(runtime.risk_sensor.config.margin_diet_active)
+
+        # 2. ConfigAgent 독립성 확인 (settings.yaml 로드 검증)
+        import os
+        from config.settings import ConfigAgent
+        config_path = os.path.join("config", "settings.yaml")
+        agent = ConfigAgent(config_path=config_path)
+        agent.load_configuration()
+        self.assertIn("strategy_allocation", agent.settings)
+        self.assertIn("risk_limits", agent.settings)
+
 
 if __name__ == "__main__":
     unittest.main()
