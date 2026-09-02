@@ -605,16 +605,16 @@ class RealBrokerAdapter(IBrokerAdapter):
             for item in items:
                 if not isinstance(item, dict):
                     continue
-                # 공식 필드: pdno (단축종목코드), 기존 D-07 호환 fallback 포함
-                symbol = item.get("pdno") or item.get("prdt_cd") or item.get("symbol") or item.get("item_code")
+                # 공식 KIS inquire-balance 계약 필드 (단축종목코드: pdno)
+                symbol = item.get("pdno")
                 if not symbol:
                     continue
 
-                # 공식 필드: cclt_qty(청산가능수량), sll_buy_dvsn_cd(01매도/02매수), pchs_avg_pric(매입평균가), evlu_pfls_amt(평가손익)
-                qty_raw = item.get("cclt_qty") or item.get("hld_qty") or item.get("ord_psbl_qty") or item.get("qty") or "0"
-                side_raw = str(item.get("sll_buy_dvsn_cd") or item.get("side") or "02")
-                avg_price_raw = item.get("pchs_avg_pric") or item.get("avg_price") or "0.0"
-                pnl_raw = item.get("evlu_pfls_amt") or item.get("pnl") or "0.0"
+                # 공식 계약 필드: cclt_qty(청산가능수량), sll_buy_dvsn_cd(01매도/02매수), pchs_avg_pric(매입평균가), evlu_pfls_amt(평가손익)
+                qty_raw = item.get("cclt_qty", "0")
+                side_raw = str(item.get("sll_buy_dvsn_cd", "02"))
+                avg_price_raw = item.get("pchs_avg_pric", "0.0")
+                pnl_raw = item.get("evlu_pfls_amt", "0.0")
 
                 try:
                     qty = int(float(qty_raw))

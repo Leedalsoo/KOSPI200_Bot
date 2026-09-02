@@ -429,7 +429,7 @@ def test_kis_pnl_source_and_valuation_pl_role_separation_contract():
         captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
         if path == "/oauth2/tokenP":
             return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
-        if "inquire-balance" in path:
+        if path == "/uapi/domestic-futureoption/v1/trading/inquire-balance":
             return {
                 "rt_cd": "0",
                 "msg_cd": "APBK0013",
@@ -451,22 +451,28 @@ def test_kis_pnl_source_and_valuation_pl_role_separation_contract():
                     "rlzt_pfls": "-20000",
                 },
             }
-        return {"rt_cd": "0"}
+        return {"rt_cd": "1", "msg1": "Unexpected endpoint"}
 
     config = RealBrokerConfig(account_no="50012345-01", app_key="KEY", app_secret="SEC", is_simulation=True, is_vts=False)
     client = RealBrokerHttpClient(config=config, transport=mock_transport)
     adapter = RealBrokerAdapter(config=config, http_client=client)
     assert adapter.connect() is True
 
-    # 계좌 요약 PnL 검증
+    # 1. 계좌 요약 PnL 검증: inquire-balance output2로부터 직접 파싱
     summary = adapter.get_account_summary()
     assert summary.unrealized_pnl == 500000.0  # output2.evlu_pfls_smtl_amt
     assert summary.realized_pnl == -20000.0    # output2.rlzt_pfls
 
-    # 개별 포지션 평가손익 검증
+    # 2. 개별 포지션 평가손익 검증: inquire-balance output1[0]로부터 직접 파싱
     positions = adapter.get_positions()
     assert "101W09" in positions
     assert positions["101W09"]["pnl"] == 500000.0  # output1[0].evlu_pfls_amt
+
+    # 3. inquire-balance-valuation-pl (CTFO6159R / VTFO6159R) 별도 호출이 발생하지 않음을 명시적 검증
+    # (inquire-balance CTFO6118R이 단일 호출로 잔고, 증거금, 포지션, PnL을 모두 완결적으로 제공함)
+    assert not any("/inquire-balance-valuation-pl" in r["path"] for r in captured_requests)
+    assert not any(r["headers"].get("tr_id") in ["CTFO6159R", "VTFO6159R"] for r in captured_requests)
+    assert all(r["headers"].get("tr_id") == "CTFO6118R" for r in captured_requests if r["path"] != "/oauth2/tokenP")
 
 
 def test_kis_positions_request_contract_and_pagination():
@@ -477,7 +483,7 @@ def test_kis_positions_request_contract_and_pagination():
         captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
         if path == "/oauth2/tokenP":
             return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
-        if "inquire-balance" in path:
+        if path == "/uapi/domestic-futureoption/v1/trading/inquire-balance":
             # 1페이지와 2페이지 연속조회 시뮬레이션
             if not body.get("CTX_AREA_NK200"):
                 return {
@@ -511,7 +517,7 @@ def test_kis_positions_request_contract_and_pagination():
                         }
                     ],
                 }
-        return {"rt_cd": "0"}
+        return {"rt_cd": "1"}
 
     # 1. Real Broker 포지션 및 연속조회 검증
     config_real = RealBrokerConfig(account_no="12345678-01", app_key="KEY", app_secret="SEC", is_simulation=True, is_vts=False)
@@ -538,9 +544,13 @@ def test_kis_positions_request_contract_and_pagination():
     assert len(inq_calls) == 2
     assert inq_calls[0]["headers"]["tr_id"] == "CTFO6118R"
     assert inq_calls[0]["body"]["EXCC_STAT_CD"] == "1"
+    assert inq_calls[0]["body"]["CTX_AREA_FK200"] == ""
     assert inq_calls[0]["body"]["CTX_AREA_NK200"] == ""
+
+    # 직전 응답의 FK/NK 키가 2페이지 요청에 정확히 전달되었는지 검증
     assert inq_calls[1]["headers"]["tr_id"] == "CTFO6118R"
     assert inq_calls[1]["body"]["EXCC_STAT_CD"] == "1"
+    assert inq_calls[1]["body"]["CTX_AREA_FK200"] == "FK_KEY_01"
     assert inq_calls[1]["body"]["CTX_AREA_NK200"] == "NK_KEY_01"
 
     # 2. VTS Broker TR ID (VTFO6118R) 검증
@@ -553,6 +563,47 @@ def test_kis_positions_request_contract_and_pagination():
     positions_vts = adapter_vts.get_positions()
     assert len(positions_vts) == 2
     assert captured_requests[-1]["headers"]["tr_id"] == "VTFO6118R"
+
+
+def test_kis_positions_duplicate_key_safe_termination():
+    """Validates that get_positions terminates safely when encountering circular/duplicate continuation keys."""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        if path == "/uapi/domestic-futureoption/v1/trading/inquire-balance":
+            # 서버가 tr_cont="M"과 함께 동일한 키(NK_DUP)를 계속 반환하는 결함 상황 시뮬레이션
+            return {
+                "rt_cd": "0",
+                "tr_cont": "M",
+                "ctx_area_fk200": "FK_DUP",
+                "ctx_area_nk200": "NK_DUP",
+                "output1": [
+                    {
+                        "pdno": "101W09",
+                        "sll_buy_dvsn_cd": "02",
+                        "cclt_qty": "1",
+                        "pchs_avg_pric": "350.00",
+                        "evlu_pfls_amt": "1000",
+                    }
+                ],
+            }
+        return {"rt_cd": "1"}
+
+    config = RealBrokerConfig(account_no="12345678-01", app_key="KEY", app_secret="SEC", is_simulation=True, is_vts=False)
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+    assert adapter.connect() is True
+
+    # 순환 키 발생 시 2번째 호출 후 무한루프 없이 즉시 안전 종료되어야 함
+    positions = adapter.get_positions()
+    assert len(positions) == 1
+    assert "101W09" in positions
+
+    inq_calls = [r for r in captured_requests if "/inquire-balance" in r["path"]]
+    assert len(inq_calls) == 2  # 1회차(키 없음) -> 2회차(NK_DUP 수신 후 중복 감지) -> 안전 종료
 
 
 def test_kis_positions_unbounded_pagination_over_five_pages():
