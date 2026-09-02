@@ -65,8 +65,7 @@ class MarketConditionAnalyzer:
         confidence: float = 0.0
         try:
             if len(returns) >= 2:
-                regime, _ts = self.regime_detector.detect_regime_sync(np.array(returns, dtype=float))
-                confidence = 1.0 if regime != "NEUTRAL" else 0.0
+                regime, confidence, _ts = self.regime_detector.detect_regime_with_confidence(np.array(returns, dtype=float))
             else:
                 regime, confidence = "NEUTRAL", 0.0
         except Exception:

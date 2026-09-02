@@ -12,6 +12,7 @@ class RegimeDetector:
         self.current_regime: str = "NEUTRAL"
         self._regime_event: asyncio.Event = asyncio.Event()
         self.last_update_ns: int = 0
+        self.last_confidence: float = 0.0
         self.embargo_ns: int = 1_000_000_000  # 🛡️ 엠바고 기간: 1초 (나노초 단위)
 
         # HMM 가우시안 방출 파라미터 (상태 순서: BULL, BEAR, SIDEWAYS, HIGH_VOL)
@@ -35,6 +36,7 @@ class RegimeDetector:
 
         if self.context.get("standby_override", False) or market_data.size == 0:
             self.current_regime = "NEUTRAL"
+            self.last_confidence = 0.0
             return "NEUTRAL", self.last_update_ns
 
         # HMM 벡터 연산
@@ -46,10 +48,22 @@ class RegimeDetector:
         prior = self._pi * emissions
         posterior = prior @ self._A
 
+        post_sum = float(np.sum(posterior))
         best_state = int(np.argmax(posterior))
+        if post_sum > 0:
+            norm_posterior = posterior / post_sum
+            self.last_confidence = float(norm_posterior[best_state])
+        else:
+            self.last_confidence = 0.0
+
         regimes = ["BULL", "BEAR", "SIDEWAYS", "HIGH_VOL"]
         self.current_regime = regimes[best_state]
         return self.current_regime, self.last_update_ns
+
+    def detect_regime_with_confidence(self, market_data: np.ndarray) -> Tuple[str, float, int]:
+        """[동기식 HMM 연산] 시장 시계열(수익률)을 입력받아 (국면, 신뢰도 사후확률, 나노초 타임스탬프) 반환"""
+        regime, ts = self.detect_regime_sync(market_data)
+        return regime, self.last_confidence, ts
 
     async def detect_regime(self, market_data: np.ndarray) -> Tuple[str, int]:
         """HMM 알고리즘을 통한 비동기 국면 판별 및 나노초 타임스탬프 반환"""
