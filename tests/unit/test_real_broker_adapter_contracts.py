@@ -613,3 +613,73 @@ def test_kis_pdno_no_metadata_guess_combination():
     assert captured_requests[-1]["body"]["SHTN_PDNO"] == "201S03370"
 
 
+def test_kis_inquire_ccnl_execution_and_open_orders_contracts():
+    """Validates inquire-ccnl endpoint, real/VTS TR IDs (TTTO5201R/VTTO5201R), and query parameters."""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        if "inquire-ccnl" in path:
+            return {
+                "rt_cd": "0",
+                "output1": [
+                    {
+                        "odno": "00088881",
+                        "ord_tmd": "101530",
+                        "pdno": "201S03370",
+                        "sll_buy_dvsn_cd": "02",
+                        "ord_qty": "10",
+                        "ccld_qty": "4",
+                        "nccs_qty": "6",
+                        "ccld_pric": "3.20",
+                        "ord_unpr": "3.20",
+                    }
+                ],
+            }
+        return {"rt_cd": "0"}
+
+    # 1. Real Broker (TTTO5201R)
+    config_real = RealBrokerConfig(account_no="12345678-01", app_key="KEY", app_secret="SEC", is_simulation=True, is_vts=False)
+    client_real = RealBrokerHttpClient(config=config_real, transport=mock_transport)
+    adapter_real = RealBrokerAdapter(config=config_real, http_client=client_real)
+    assert adapter_real.connect() is True
+
+    # 1-1. 체결 폴링 (CCLD_NCCS_DVSN='01')
+    reports = adapter_real.poll_execution_reports()
+    assert len(reports) == 1
+    req_exec = [r for r in captured_requests if r["body"].get("CCLD_NCCS_DVSN") == "01"][-1]
+    assert req_exec["method"] == "GET"
+    assert "/uapi/domestic-futureoption/v1/trading/inquire-ccnl" in req_exec["path"]
+    assert req_exec["headers"]["tr_id"] == "TTTO5201R"
+    assert req_exec["body"]["CANO"] == "12345678"
+    assert req_exec["body"]["ACNT_PRDT_CD"] == "01"
+    assert req_exec["body"]["CCLD_NCCS_DVSN"] == "01"
+    assert req_exec["body"]["SORT_SQN"] == "DS"
+
+    # 1-2. 미체결 조회 (CCLD_NCCS_DVSN='02')
+    open_orders = adapter_real.get_open_orders()
+    assert len(open_orders) == 1
+    req_open = [r for r in captured_requests if r["body"].get("CCLD_NCCS_DVSN") == "02"][-1]
+    assert req_open["method"] == "GET"
+    assert "/uapi/domestic-futureoption/v1/trading/inquire-ccnl" in req_open["path"]
+    assert req_open["headers"]["tr_id"] == "TTTO5201R"
+    assert req_open["body"]["CCLD_NCCS_DVSN"] == "02"
+
+    # 2. VTS Broker (VTTO5201R)
+    config_vts = RealBrokerConfig(account_no="87654321-02", app_key="KEY", app_secret="SEC", is_simulation=True, is_vts=True)
+    client_vts = RealBrokerHttpClient(config=config_vts, transport=mock_transport)
+    adapter_vts = RealBrokerAdapter(config=config_vts, http_client=client_vts)
+    assert adapter_vts.connect() is True
+
+    adapter_vts.poll_execution_reports()
+    req_vts_exec = captured_requests[-1]
+    assert req_vts_exec["headers"]["tr_id"] == "VTTO5201R"
+
+    adapter_vts.get_open_orders()
+    req_vts_open = captured_requests[-1]
+    assert req_vts_open["headers"]["tr_id"] == "VTTO5201R"
+
+
+

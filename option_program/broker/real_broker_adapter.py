@@ -239,7 +239,7 @@ class RealBrokerAdapter(IBrokerAdapter):
             self._pending_executions.append(report)
 
     def poll_execution_reports(self) -> List[CanonicalExecutionReport]:
-        """[D-11] 실제 증권사 체결 이벤트 수신/폴링 및 CanonicalExecutionReport 정규화"""
+        """[D-11] 실제 증권사 체결 이벤트 수신/폴링 및 CanonicalExecutionReport 정규화 (KIS 국내선물옵션 공식 inquire-ccnl 규격 준수)"""
         if not self._connected:
             return []
 
@@ -250,12 +250,31 @@ class RealBrokerAdapter(IBrokerAdapter):
             rep = self._pending_executions.pop(0)
             reports.append(rep)
 
-        # 2. 증권사 REST 체결 내역 조회 (inquire-ccld)
+        # 2. 증권사 REST 체결 내역 조회 (inquire-ccnl, 체결구분: CCLD_NCCS_DVSN='01')
+        cano = self.config.account_no.split("-")[0] if self.config.account_no else ""
+        acnt_prdt_cd = self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01"
+        today = datetime.now().strftime("%Y%m%d")
+        body = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
+            "STRT_ORD_DT": today,
+            "END_ORD_DT": today,
+            "SLL_BUY_DVSN_CD": "00",  # 00: 전체
+            "CCLD_NCCS_DVSN": "01",   # 01: 체결
+            "SORT_SQN": "DS",         # DS: 내림차순
+            "PDNO": "",
+            "STRT_ODNO": "",
+            "MKET_ID_CD": "",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
+        }
+        tr_id = "VTTO5201R" if self.config.is_vts else "TTTO5201R"
         try:
             resp = self.client.request(
                 "GET",
-                "/uapi/domestic-futureoption/v1/trading/inquire-ccld",
-                tr_id="TTTO1101R"
+                "/uapi/domestic-futureoption/v1/trading/inquire-ccnl",
+                body=body,
+                tr_id=tr_id
             )
             if isinstance(resp, dict) and resp.get("rt_cd") == "0":
                 output1 = resp.get("output1", [])
@@ -295,9 +314,11 @@ class RealBrokerAdapter(IBrokerAdapter):
                             else CanonicalAssetType.FUTURES
                         )
 
+                        client_order_id = self._reverse_lookup_client_id(odno) or item.get("client_order_id") or odno
+
                         report = CanonicalExecutionReport(
                             exec_id=exec_id,
-                            client_order_id=item.get("client_order_id", odno),
+                            client_order_id=client_order_id,
                             track_id=item.get("track_id", "REAL_BROKER"),
                             asset_type=asset_type,
                             side=side,
@@ -588,23 +609,33 @@ class RealBrokerAdapter(IBrokerAdapter):
         return None
 
     def get_open_orders(self) -> List[Dict[str, Any]]:
-        """[D-12] 실제 증권사 미체결 활성 주문 목록 조회 및 정규화 (Recovery / 대사용)"""
+        """[D-12] 실제 증권사 미체결 활성 주문 목록 조회 및 정규화 (KIS 국내선물옵션 공식 inquire-ccnl CCLD_NCCS_DVSN='02' 규격 준수)"""
         if not self._connected:
             raise RuntimeError(f"[{self.config.broker_name}] Broker is disconnected: cannot query open orders")
 
         cano = self.config.account_no.split("-")[0] if self.config.account_no else ""
         acnt_prdt_cd = self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01"
+        today = datetime.now().strftime("%Y%m%d")
         body = {
             "CANO": cano,
             "ACNT_PRDT_CD": acnt_prdt_cd,
-            "FK100": "",
-            "NK100": "",
+            "STRT_ORD_DT": today,
+            "END_ORD_DT": today,
+            "SLL_BUY_DVSN_CD": "00",  # 00: 전체
+            "CCLD_NCCS_DVSN": "02",   # 02: 미체결
+            "SORT_SQN": "DS",         # DS: 내림차순
+            "PDNO": "",
+            "STRT_ODNO": "",
+            "MKET_ID_CD": "",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
         }
+        tr_id = "VTTO5201R" if self.config.is_vts else "TTTO5201R"
         resp = self.client.request(
             "GET",
-            "/uapi/domestic-futureoption/v1/trading/inquire-nccs",
+            "/uapi/domestic-futureoption/v1/trading/inquire-ccnl",
             body=body,
-            tr_id="TTTO1102R"
+            tr_id=tr_id
         )
         if not isinstance(resp, dict) or resp.get("rt_cd") != "0":
             msg_cd = resp.get("msg_cd", "UNKNOWN") if isinstance(resp, dict) else "NO_RESP"
@@ -624,7 +655,7 @@ class RealBrokerAdapter(IBrokerAdapter):
             if not odno:
                 continue
 
-            client_order_id = item.get("client_order_id") or self._reverse_lookup_client_id(odno) or odno
+            client_order_id = self._reverse_lookup_client_id(odno) or item.get("client_order_id") or odno
             symbol = item.get("pdno") or item.get("symbol") or "101V3000"
             side_raw = str(item.get("sll_buy_dvsn_cd") or item.get("side") or "02")
             side = "SELL" if side_raw in ["01", "SELL"] else "BUY"
@@ -658,7 +689,7 @@ class RealBrokerAdapter(IBrokerAdapter):
         return open_orders
 
     def get_order_status(self, order_identifier: str) -> Optional[Dict[str, Any]]:
-        """[D-12] 특정 주문(client_order_id 또는 broker_order_id)의 최신 상태 조회 (Recovery용)"""
+        """[D-12] 특정 주문(client_order_id 또는 broker_order_id)의 최신 상태 조회 (KIS 국내선물옵션 공식 inquire-ccnl 규격 준수)"""
         if not self._connected:
             raise RuntimeError(f"[{self.config.broker_name}] Broker is disconnected: cannot query order status")
 
@@ -667,24 +698,36 @@ class RealBrokerAdapter(IBrokerAdapter):
         broker_order_no = order_info["broker_order_no"] if order_info else target_id
         client_order_id = target_id if order_info else (self._reverse_lookup_client_id(broker_order_no) or broker_order_no)
 
-        # 1. 미체결 목록 우선 확인
+        # 1. 미체결 목록 우선 확인 (inquire-ccnl CCLD_NCCS_DVSN='02')
         open_orders = self.get_open_orders()
         for o in open_orders:
             if o.get("broker_order_id") == broker_order_no or o.get("client_order_id") == target_id:
                 return o
 
-        # 2. 체결 내역(inquire-ccld) 조회하여 체결 완료 확인
+        # 2. 체결 내역(inquire-ccnl CCLD_NCCS_DVSN='01') 조회하여 체결 완료 확인
         cano = self.config.account_no.split("-")[0] if self.config.account_no else ""
         acnt_prdt_cd = self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01"
+        today = datetime.now().strftime("%Y%m%d")
         body = {
             "CANO": cano,
             "ACNT_PRDT_CD": acnt_prdt_cd,
+            "STRT_ORD_DT": today,
+            "END_ORD_DT": today,
+            "SLL_BUY_DVSN_CD": "00",  # 00: 전체
+            "CCLD_NCCS_DVSN": "01",   # 01: 체결
+            "SORT_SQN": "DS",         # DS: 내림차순
+            "PDNO": "",
+            "STRT_ODNO": "",
+            "MKET_ID_CD": "",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
         }
+        tr_id = "VTTO5201R" if self.config.is_vts else "TTTO5201R"
         resp = self.client.request(
             "GET",
-            "/uapi/domestic-futureoption/v1/trading/inquire-ccld",
+            "/uapi/domestic-futureoption/v1/trading/inquire-ccnl",
             body=body,
-            tr_id="TTTO1101R"
+            tr_id=tr_id
         )
         if isinstance(resp, dict) and resp.get("rt_cd") == "0":
             output1 = resp.get("output1", [])

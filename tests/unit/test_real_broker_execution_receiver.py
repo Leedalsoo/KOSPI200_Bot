@@ -38,7 +38,10 @@ class TestRealBrokerExecutionReceiver:
         def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
             if "token" in path:
                 return {"access_token": "TEST_TOKEN", "expires_in": 3600}
-            if "inquire-ccld" in path:
+            if "inquire-ccnl" in path:
+                assert headers.get("tr_id") == "TTTO5201R"
+                assert body.get("CCLD_NCCS_DVSN") == "01"
+                assert body.get("SORT_SQN") == "DS"
                 return {
                     "rt_cd": "0",
                     "output1": [

@@ -125,7 +125,9 @@ class TestBrokerRecoveryInquiry:
         def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
             if "token" in path:
                 return {"access_token": "TEST_TOKEN", "expires_in": 3600}
-            if "inquire-nccs" in path:
+            if "inquire-ccnl" in path:
+                assert headers.get("tr_id") == "TTTO5201R"
+                assert body.get("CCLD_NCCS_DVSN") == "02"
                 return {
                     "rt_cd": "0",
                     "output1": [
@@ -187,34 +189,36 @@ class TestBrokerRecoveryInquiry:
         def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
             if "token" in path:
                 return {"access_token": "TEST_TOKEN", "expires_in": 3600}
-            if "inquire-nccs" in path:
-                return {
-                    "rt_cd": "0",
-                    "output1": [
-                        {
-                            "odno": "BRK-OPEN-01",
-                            "pdno": "201V3350",
-                            "sll_buy_dvsn_cd": "02",
-                            "ord_qty": "5",
-                            "ccld_qty": "0",
-                            "nccs_qty": "5",
-                            "ord_unpr": "2.0",
-                        }
-                    ],
-                }
-            if "inquire-ccld" in path:
-                return {
-                    "rt_cd": "0",
-                    "output1": [
-                        {
-                            "odno": "BRK-FILLED-02",
-                            "pdno": "101V3000",
-                            "sll_buy_dvsn_cd": "01",
-                            "ccld_qty": "4",
-                            "ccld_pric": "355.0",
-                        }
-                    ],
-                }
+            if "inquire-ccnl" in path:
+                assert headers.get("tr_id") == "TTTO5201R"
+                if body.get("CCLD_NCCS_DVSN") == "02":  # 미체결 조회
+                    return {
+                        "rt_cd": "0",
+                        "output1": [
+                            {
+                                "odno": "BRK-OPEN-01",
+                                "pdno": "201V3350",
+                                "sll_buy_dvsn_cd": "02",
+                                "ord_qty": "5",
+                                "ccld_qty": "0",
+                                "nccs_qty": "5",
+                                "ord_unpr": "2.0",
+                            }
+                        ],
+                    }
+                elif body.get("CCLD_NCCS_DVSN") == "01":  # 체결 조회
+                    return {
+                        "rt_cd": "0",
+                        "output1": [
+                            {
+                                "odno": "BRK-FILLED-02",
+                                "pdno": "101V3000",
+                                "sll_buy_dvsn_cd": "01",
+                                "ccld_qty": "4",
+                                "ccld_pric": "355.0",
+                            }
+                        ],
+                    }
             return {"rt_cd": "0"}
 
         client = make_mock_client(mock_transport)
@@ -407,7 +411,7 @@ class TestBrokerRecoveryInquiry:
         def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
             if "token" in path:
                 return {"access_token": "TEST_TOKEN", "expires_in": 3600}
-            if "inquire-nccs" in path:
+            if "inquire-ccnl" in path:
                 return {"rt_cd": "0", "output1": [{"odno": "001", "ord_qty": "5", "ccld_qty": "0", "nccs_qty": "5"}]}
             return {"rt_cd": "0", "output1": []}
 
