@@ -624,8 +624,8 @@ class OrderRouter:
             logger.error(f"[OrderRouter] Failed to persist {event_type} to WAL: {exc}")
             return False
 
-    def reconcile_with_broker(self, broker_adapter: Any) -> Dict[str, Any]:
-        """[D-13] Broker 실제 주문 상태와 내부 OMS 간의 종합 Reconciliation (대사, 불일치 감지, 확정 상태 보정, WAL 영속화)"""
+    def reconcile_with_broker(self, broker_adapter: Any, internal_positions: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """[D-13 / D-16] Broker 실제 주문/포지션 상태와 내부 OMS 간의 종합 Reconciliation (7대 불일치 감지, 확정 보정, UNKNOWN 격리, WAL 영속화)"""
         with self._lock:
             recon_id = f"RECON-{uuid.uuid4().hex[:8]}"
             start_time = time.time()
@@ -699,6 +699,7 @@ class OrderRouter:
                 broker_order_id = self._order_to_broker_id.get(order_id) or self._client_to_broker_id.get(client_id, "")
                 current_status = self.fsm.get_status(order_id)
                 oms_cum_qty = self.get_executed_qty(order_id)
+                oms_price = float(getattr(cmd, "price", 0.0) or 0.0)
 
                 # Case A: Broker Open Orders 목록에 존재하는 경우
                 broker_info = broker_open_by_client.get(client_id) or (
@@ -706,12 +707,70 @@ class OrderRouter:
                 )
 
                 if broker_info is not None:
-                    # 상태 비교
+                    # 1) Broker Order ID 불일치 (ORDER_ID_MISMATCH)
+                    b_broker_id = str(broker_info.get("broker_order_id", "")).strip()
+                    if b_broker_id:
+                        if broker_order_id and broker_order_id != b_broker_id:
+                            id_mismatch = {
+                                "type": "ORDER_ID_MISMATCH",
+                                "order_id": str(order_id),
+                                "client_order_id": client_id,
+                                "oms_broker_order_id": broker_order_id,
+                                "broker_order_id": b_broker_id,
+                            }
+                            mismatches.append(id_mismatch)
+                            self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", id_mismatch)
+
+                            # 확정 보정
+                            self._order_to_broker_id[order_id] = b_broker_id
+                            self._client_to_broker_id[client_id] = b_broker_id
+                            self._broker_to_client_id[b_broker_id] = client_id
+                            corr_entry = {
+                                "type": "ORDER_ID_CORRECTION",
+                                "order_id": str(order_id),
+                                "client_order_id": client_id,
+                                "prev_broker_order_id": broker_order_id,
+                                "new_broker_order_id": b_broker_id,
+                            }
+                            corrections.append(corr_entry)
+                            self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                            broker_order_id = b_broker_id
+                        elif not broker_order_id:
+                            # 최초 Broker Order ID 동기화
+                            self._order_to_broker_id[order_id] = b_broker_id
+                            self._client_to_broker_id[client_id] = b_broker_id
+                            self._broker_to_client_id[b_broker_id] = client_id
+                            broker_order_id = b_broker_id
+
+                    # 2) 가격 불일치 (PRICE_MISMATCH)
+                    b_price = float(broker_info.get("executed_price", broker_info.get("price", 0.0)) or 0.0)
+                    if b_price > 0.0 and oms_price > 0.0 and abs(b_price - oms_price) > 1e-4:
+                        price_mismatch = {
+                            "type": "PRICE_MISMATCH",
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "oms_price": oms_price,
+                            "broker_price": b_price,
+                        }
+                        mismatches.append(price_mismatch)
+                        self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", price_mismatch)
+
+                        corr_entry = {
+                            "type": "PRICE_CORRECTION",
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "prev_price": oms_price,
+                            "new_price": b_price,
+                        }
+                        corrections.append(corr_entry)
+                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+
+                    # 3) 상태 불일치 (STATUS_MISMATCH)
                     b_status_raw = broker_info.get("status", "OPEN")
+                    b_status_upper = str(b_status_raw.value if hasattr(b_status_raw, "value") else b_status_raw).upper()
                     b_qty = int(broker_info.get("executed_qty", 0))
 
-                    # 1) 상태 불일치 (STATUS_MISMATCH: Broker가 명시적으로 ACCEPTED를 보고한 경우)
-                    if current_status == OrderStatus.SENT and str(b_status_raw).upper() == "ACCEPTED":
+                    if current_status == OrderStatus.SENT and b_status_upper == "ACCEPTED":
                         mismatch_entry = {
                             "type": "STATUS_MISMATCH",
                             "order_id": str(order_id),
@@ -732,8 +791,9 @@ class OrderRouter:
                         }
                         corrections.append(corr_entry)
                         self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                        current_status = OrderStatus.ACCEPTED
 
-                    # 2) 체결 수량 불일치 (EXECUTION_MISMATCH)
+                    # 4) 체결 수량 불일치 (EXECUTION_MISMATCH)
                     if b_qty != oms_cum_qty:
                         exec_mismatch = {
                             "type": "EXECUTION_MISMATCH",
@@ -763,13 +823,15 @@ class OrderRouter:
 
                 # Case B: Broker Open Orders 목록에 없는 경우 -> get_order_status로 종결 상태 확인
                 else:
-                    target_id = broker_order_id if broker_order_id else client_id
                     status_info: Optional[Dict[str, Any]] = None
                     if hasattr(broker_adapter, "get_order_status"):
                         try:
-                            status_info = broker_adapter.get_order_status(target_id)
+                            if broker_order_id:
+                                status_info = broker_adapter.get_order_status(broker_order_id)
+                            if status_info is None and client_id:
+                                status_info = broker_adapter.get_order_status(client_id)
                         except Exception as exc:
-                            logger.warning(f"[OrderRouter] Exception querying get_order_status for {target_id}: {exc}")
+                            logger.warning(f"[OrderRouter] Exception querying get_order_status for {client_id}: {exc}")
                             status_info = None
 
                     # 조회 실패 / None / 불명확 -> 불확실 불일치로 안전 격리 (임의 추정 금지)
@@ -793,7 +855,63 @@ class OrderRouter:
                         })
                         continue
 
-                    # 정상 확정 응답 수신 시 보정
+                    # Broker Order ID 불일치 검사
+                    b_broker_id = str(status_info.get("broker_order_id", "")).strip()
+                    if b_broker_id:
+                        if broker_order_id and broker_order_id != b_broker_id:
+                            id_mismatch = {
+                                "type": "ORDER_ID_MISMATCH",
+                                "order_id": str(order_id),
+                                "client_order_id": client_id,
+                                "oms_broker_order_id": broker_order_id,
+                                "broker_order_id": b_broker_id,
+                            }
+                            mismatches.append(id_mismatch)
+                            self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", id_mismatch)
+
+                            self._order_to_broker_id[order_id] = b_broker_id
+                            self._client_to_broker_id[client_id] = b_broker_id
+                            self._broker_to_client_id[b_broker_id] = client_id
+                            corr_entry = {
+                                "type": "ORDER_ID_CORRECTION",
+                                "order_id": str(order_id),
+                                "client_order_id": client_id,
+                                "prev_broker_order_id": broker_order_id,
+                                "new_broker_order_id": b_broker_id,
+                            }
+                            corrections.append(corr_entry)
+                            self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+                            broker_order_id = b_broker_id
+                        elif not broker_order_id:
+                            self._order_to_broker_id[order_id] = b_broker_id
+                            self._client_to_broker_id[client_id] = b_broker_id
+                            self._broker_to_client_id[b_broker_id] = client_id
+                            broker_order_id = b_broker_id
+
+                    # 가격 불일치 검사
+                    b_price = float(status_info.get("executed_price", status_info.get("price", 0.0)) or 0.0)
+                    if b_price > 0.0 and oms_price > 0.0 and abs(b_price - oms_price) > 1e-4:
+                        price_mismatch = {
+                            "type": "PRICE_MISMATCH",
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "oms_price": oms_price,
+                            "broker_price": b_price,
+                        }
+                        mismatches.append(price_mismatch)
+                        self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", price_mismatch)
+
+                        corr_entry = {
+                            "type": "PRICE_CORRECTION",
+                            "order_id": str(order_id),
+                            "client_order_id": client_id,
+                            "prev_price": oms_price,
+                            "new_price": b_price,
+                        }
+                        corrections.append(corr_entry)
+                        self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
+
+                    # 정상 확정 응답 수신 시 상태 보정
                     b_status = str(status_info.get("status", "")).upper()
                     b_qty = int(status_info.get("executed_qty", 0))
 
@@ -891,8 +1009,20 @@ class OrderRouter:
 
                     elif b_status in ("OPEN", "ACCEPTED", "PENDING"):
                         # Broker가 정상 접수 상태를 보고한 경우
-                        if current_status == OrderStatus.SENT and b_status == "ACCEPTED":
+                        if current_status in (OrderStatus.SENT, OrderStatus.UNKNOWN):
                             self.fsm.transition_sync(order_id, OrderStatus.ACCEPTED)
+                            self._unknown_orders.pop(order_id, None)
+                            corr_entry = {
+                                "order_id": str(order_id),
+                                "client_order_id": client_id,
+                                "prev_status": current_status.value if current_status else "NONE",
+                                "new_status": OrderStatus.ACCEPTED.value,
+                            }
+                            corrections.append(corr_entry)
+                            summary["synced_orders"] += 1
+                            if current_status == OrderStatus.UNKNOWN:
+                                summary["recovered"] += 1
+                            self._persist_reconciliation_wal("RECONCILIATION_CORRECTED", corr_entry)
 
                     else:
                         # 알 수 없는 기타 응답 상태 -> 안전 격리
@@ -926,7 +1056,31 @@ class OrderRouter:
                             f"[OrderRouter] Detected Broker-only open order (Client: {cid}, BrokerID: {bid})"
                         )
 
-            # 4. UNKNOWN 주문 복구도 동시 연계
+            # 4. 포지션 대사 (POSITION_MISMATCH)
+            if hasattr(broker_adapter, "get_positions") and internal_positions is not None:
+                try:
+                    broker_positions_raw = broker_adapter.get_positions()
+                    broker_positions = broker_positions_raw if isinstance(broker_positions_raw, dict) else {}
+                    for sym, pos_data in internal_positions.items():
+                        int_qty = int(pos_data.get("qty", 0) if isinstance(pos_data, dict) else getattr(pos_data, "qty", 0))
+                        brk_pos = broker_positions.get(sym, {})
+                        brk_qty = int(brk_pos.get("qty", 0) if isinstance(brk_pos, dict) else getattr(brk_pos, "qty", 0))
+                        if int_qty != brk_qty:
+                            pos_mismatch = {
+                                "type": "POSITION_MISMATCH",
+                                "symbol": sym,
+                                "internal_qty": int_qty,
+                                "broker_qty": brk_qty,
+                            }
+                            mismatches.append(pos_mismatch)
+                            self._persist_reconciliation_wal("RECONCILIATION_MISMATCH", pos_mismatch)
+                            logger.warning(
+                                f"[OrderRouter] Position mismatch detected for {sym}: OMS={int_qty}, Broker={brk_qty}"
+                            )
+                except Exception as exc:
+                    logger.warning(f"[OrderRouter] Exception querying get_positions for reconciliation: {exc}")
+
+            # 5. UNKNOWN 주문 복구도 동시 연계
             if self._unknown_orders:
                 unk_res = self.recover_unknown_orders(broker_adapter)
                 summary["unknown_recovery_summary"] = unk_res

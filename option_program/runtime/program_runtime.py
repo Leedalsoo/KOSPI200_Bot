@@ -508,7 +508,8 @@ class OptionProgramRuntime:
             if getattr(broker_adapter, "is_connected", lambda: True)():
                 if hasattr(self.order_router, "reconcile_with_broker"):
                     try:
-                        reconciliation_summary = self.order_router.reconcile_with_broker(broker_adapter)
+                        positions = getattr(self.account_summary, "positions", {})
+                        reconciliation_summary = self.order_router.reconcile_with_broker(broker_adapter, internal_positions=positions)
                     except Exception as exc:
                         logger.error(f"[OptionProgramRuntime] reconcile_with_broker failed: {exc}", exc_info=True)
                         reconciliation_summary = {"status": "FAILED", "error": str(exc)}
@@ -537,9 +538,10 @@ class OptionProgramRuntime:
         logger.info(f"[OptionProgramRuntime] Startup recovery completed: {summary}")
         return summary
 
-    def reconcile_with_broker(self, broker_adapter: Any) -> Dict[str, Any]:
+    def reconcile_with_broker(self, broker_adapter: Any, internal_positions: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """[D-13] Broker ↔ 내부 OMS Reconciliation 수동/주기적 실행 진입점"""
-        return self.order_router.reconcile_with_broker(broker_adapter)
+        positions = internal_positions if internal_positions is not None else getattr(self.account_summary, "positions", {})
+        return self.order_router.reconcile_with_broker(broker_adapter, internal_positions=positions)
 
 
 
