@@ -230,7 +230,8 @@ class TestTrackPathwaysAll(unittest.TestCase):
             ask_price=2.55,
             last_price=2.50,
             volume=100,
-            seq_id=801
+            seq_id=801,
+            expiry="2026-10-08"
         )
         commands = self.runtime.process_tick(tick)
         self.assertEqual(len(commands), 1, "Track 8 must trigger monthly wide strangle")

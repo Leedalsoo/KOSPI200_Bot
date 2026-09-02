@@ -90,6 +90,7 @@ class OptionProgramRuntime:
         self.last_risk_snapshot = None
         self.last_orders: List[Dict[str, Any]] = []
         self.last_signals: List[Any] = []
+        self.last_processed_tick: Optional[CanonicalMarketTick] = None
         self.enabled_strategies: Dict[str, bool] = {f"Track{i}": True for i in range(1, 10)}
         
         self.account_summary: CanonicalAccountSummary = account_summary or CanonicalAccountSummary(
@@ -251,6 +252,7 @@ class OptionProgramRuntime:
                 # 🎯 Master lookup으로 만기일을 획득했으면 CanonicalMarketTick.expiry에 실제 공급
                 if resolved_expiry and tick.expiry != resolved_expiry:
                     tick = dataclasses.replace(tick, expiry=resolved_expiry)
+                self.last_processed_tick = tick
 
                 calculated_dte: Optional[float] = None
                 if resolved_expiry and date_str:
@@ -260,9 +262,7 @@ class OptionProgramRuntime:
                         logger.debug(f"DTE calculation note: {e}")
                         calculated_dte = None
 
-                # 🎯 임의의 30.0 DTE fallback 제거: expiry/DTE가 없으면 None 유지
-                t1_dte = calculated_dte
-
+                # 🎯 임의의 30.0 / 999.0 DTE fallback 완전 제거 (calculated_dte가 None이면 None 유지)
                 if st_name == "Track1":
                     if st.active_fence is None:
                         atm = round(tick.underlying_price / 2.5) * 2.5
@@ -273,7 +273,7 @@ class OptionProgramRuntime:
                     raw_signals = st.on_tick(
                         current_price=tick.underlying_price,
                         trend_signal=is_bull,
-                        days_to_expiry=t1_dte if t1_dte is not None else 999.0,
+                        days_to_expiry=calculated_dte,
                         current_date=date_str
                     )
                     if isinstance(raw_signals, list):
@@ -375,19 +375,20 @@ class OptionProgramRuntime:
                         signals_dicts.append(ins7)
 
                 elif st_name == "Track8":
-                    t8_dte = calculated_dte if calculated_dte is not None else 30.0
-                    avail_budget8 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 2000000.0
-                    ent8 = st.evaluate_entry(
-                        dte=t8_dte,
-                        budget=avail_budget8,
-                        current_price=tick.underlying_price,
-                        current_regime=self.current_regime,
-                        date_str=date_str
-                    )
-                    if ent8.get("signals"):
-                        signals_dicts.extend(ent8["signals"])
-                    elif ent8.get("action") in ["ENTER", "BUY", "SELL"]:
-                        signals_dicts.append(ent8)
+                    # 🎯 임의의 30.0 DTE fallback 제거: calculated_dte가 유효할 때만 진입 평가
+                    if calculated_dte is not None:
+                        avail_budget8 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 2000000.0
+                        ent8 = st.evaluate_entry(
+                            dte=calculated_dte,
+                            budget=avail_budget8,
+                            current_price=tick.underlying_price,
+                            current_regime=self.current_regime,
+                            date_str=date_str
+                        )
+                        if ent8.get("signals"):
+                            signals_dicts.extend(ent8["signals"])
+                        elif ent8.get("action") in ["ENTER", "BUY", "SELL"]:
+                            signals_dicts.append(ent8)
 
                 elif st_name == "Track9":
                     t1_st = self.strategies[0] if self.strategies else None
