@@ -209,7 +209,7 @@ def test_kis_cancel_order_payload_and_tr_id_contract():
     assert body["ORGN_ODNO"] == "00055555"
     assert body["ORD_QTY"] == "0"
     assert body["UNIT_PRICE"] == "0"
-    assert body["NMPR_TYPE_CD"] == "01"
+    assert body["NMPR_TYPE_CD"] == "02"  # 02: 시장가/취소호가
     assert body["KRX_NMPR_CNDT_CD"] == "0"
     assert body["RMN_QTY_YN"] == "Y"
     assert body["ORD_DVSN_CD"] == "01"

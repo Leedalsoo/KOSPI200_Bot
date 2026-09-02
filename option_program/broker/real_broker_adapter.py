@@ -441,11 +441,11 @@ class RealBrokerAdapter(IBrokerAdapter):
             "ORGN_ODNO": broker_order_no,
             "ORD_QTY": "0",  # 0: 잔량 전부 취소
             "UNIT_PRICE": "0",
-            "NMPR_TYPE_CD": "01",  # 01: 일반
+            "NMPR_TYPE_CD": "02",  # 02: 시장가/취소호가 (공식 취소 샘플 규격)
             "KRX_NMPR_CNDT_CD": "0",  # 0: 조건없음
             "RMN_QTY_YN": "Y",  # Y: 잔여수량 전부
             "ORD_DVSN_CD": "01",  # 01: 지정가
-            "FUOP_ITEM_DVSN_CD": "01",  # 01: 선물옵션
+            "FUOP_ITEM_DVSN_CD": "01",  # 01: 지수선물옵션 (KOSPI200)
         }
         tr_id = "VTTO1103U" if self.config.is_vts else "TTTO1103U"
         resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order-rvsecncl", body=body, tr_id=tr_id)
