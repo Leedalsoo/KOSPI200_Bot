@@ -93,21 +93,27 @@ class TestOptionContractMaster(unittest.TestCase):
         self.assertNotIn("A01609", contracts)
 
     def test_actual_kis_online_master_download_and_parsing(self) -> None:
-        """[핵심 요구 1] 실제 공식 KIS MST URL(fo_idx_code_mts.mst.zip) 다운로드 및 파싱 실측 검증."""
+        """[실제 외부 Source 검증] 공식 KIS MST URL(fo_idx_code_mts.mst.zip) 실제 다운로드 및 파싱 실측.
+
+        네트워크 연결 불가 환경에서는 unittest skipTest로 명시적이고 검증 가능한 사유를 기록하며,
+        데이터 파싱 오류나 계약 누락은 절대로 은폐하지 않고 즉시 테스트 실패로 처리한다.
+        """
+        import urllib.error
         try:
             contracts = KisOptionMasterLoader.load_from_url(
                 url=KIS_FO_IDX_MASTER_URL,
                 timeout=10.0,
                 calendar=self.calendar,
             )
-            # 온라인 다운로드 성공 시 수천 개의 실제 파생옵션 계약이 파싱됨을 확인
-            self.assertGreater(len(contracts), 1000)
-            # 코스피200 옵션 심볼(B 또는 C로 시작)이 적어도 1개 이상 존재함을 확인
-            has_kospi_options = any(sym.startswith(("B", "C", "2", "3")) for sym in contracts.keys())
-            self.assertTrue(has_kospi_options)
-        except Exception as e:
-            # 네트워크가 차단된 오프라인 환경일 경우 로깅 및 건너뜀
-            print(f"[NOTE] Online KIS master download skipped due to offline environment: {e}")
+        except (urllib.error.URLError, TimeoutError, OSError) as net_err:
+            self.skipTest(f"KIS Master Source network unreachable in test environment: {net_err}")
+            return
+
+        # 온라인 다운로드 성공 시 수천 개의 실제 파생옵션 계약이 파싱되어야 함 (실패 시 즉시 FAIL)
+        self.assertGreater(len(contracts), 1000, "Real KIS MST must contain at least 1,000 contracts")
+        # 코스피200 옵션 심볼(B 또는 C로 시작)이 반드시 존재해야 함
+        has_kospi_options = any(sym.startswith(("B", "C", "2", "3")) for sym in contracts.keys())
+        self.assertTrue(has_kospi_options, "Real KIS MST must contain valid KOSPI200 option symbols")
 
     def test_process_tick_e2e_canonical_expiry_propagation(self) -> None:
         """[핵심 요구 2] process_tick() 실행을 포함한 Master expiry ➔ CanonicalMarketTick.expiry E2E assertion."""

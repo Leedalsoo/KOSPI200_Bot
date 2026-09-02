@@ -246,7 +246,7 @@ class OptionProgramRuntime:
 
                 # DTE (Days to Expiry) 계산 (tick.expiry 또는 OptionContractMaster lookup 연동)
                 resolved_expiry = tick.expiry
-                if not resolved_expiry and getattr(tick, "symbol", ""):
+                if not resolved_expiry and tick.symbol:
                     resolved_expiry = self.option_master.get_expiry(tick.symbol) or ""
 
                 # 🎯 Master lookup으로 만기일을 획득했으면 CanonicalMarketTick.expiry에 실제 공급
@@ -270,12 +270,14 @@ class OptionProgramRuntime:
                         if t1_init.get("signals"):
                             signals_dicts.extend(t1_init["signals"])
                     is_bull = (condition.regime == "BULL") if condition else False
-                    raw_signals = st.on_tick(
-                        current_price=tick.underlying_price,
-                        trend_signal=is_bull,
-                        days_to_expiry=calculated_dte,
-                        current_date=date_str
-                    )
+                    t1_kwargs: Dict[str, Any] = {
+                        "current_price": tick.underlying_price,
+                        "trend_signal": is_bull,
+                        "current_date": date_str,
+                    }
+                    if calculated_dte is not None:
+                        t1_kwargs["days_to_expiry"] = calculated_dte
+                    raw_signals = st.on_tick(**t1_kwargs)
                     if isinstance(raw_signals, list):
                         signals_dicts.extend(raw_signals)
 
