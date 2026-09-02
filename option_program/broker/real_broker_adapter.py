@@ -453,6 +453,41 @@ class RealBrokerAdapter(IBrokerAdapter):
         resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order-rvsecncl", body=body, tr_id=tr_id)
         return resp.get("rt_cd") == "0"
 
+    def modify_order(self, client_order_id: str, new_qty: int, new_price: float) -> bool:
+        """주문 정정 API 호출 (KIS 국내선물옵션 공식 규격 order_rvsecncl RVSE_CNCL_DVSN_CD='01' 준수)"""
+        if not self._connected:
+            return False
+        if new_qty <= 0 or new_price <= 0.0:
+            logger.error(f"[{self.config.broker_name}] Invalid modify parameters: qty={new_qty}, price={new_price}")
+            return False
+
+        order_info = self._orders_history.get(client_order_id)
+        if not order_info:
+            logger.warning(f"[{self.config.broker_name}] Cannot modify unknown order {client_order_id}")
+            return False
+
+        broker_order_no = order_info["broker_order_no"]
+        cmd = order_info.get("command")
+        try:
+            prod_code = self._map_instrument_code(cmd) if cmd else ""
+        except ValueError as val_err:
+            logger.error(f"[{self.config.broker_name}] Cannot modify order {client_order_id} due to invalid symbol: {val_err}")
+            return False
+
+        body = {
+            "CANO": self.config.account_no.split("-")[0],
+            "ACNT_PRDT_CD": self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01",
+            "ORGN_ODNO": broker_order_no,
+            "SHTN_PDNO": prod_code,
+            "RVSE_CNCL_DVSN_CD": "01",  # 01: 정정
+            "ORD_DVSN_CD": "00",  # 00: 지정가
+            "ORD_QTY": str(new_qty),
+            "UNIT_PRICE": f"{new_price:.2f}",
+        }
+        tr_id = "VTTO1103U" if self.config.is_vts else "TTTO1103U"
+        resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order-rvsecncl", body=body, tr_id=tr_id)
+        return resp.get("rt_cd") == "0"
+
     def get_account_summary(self) -> CanonicalAccountSummary:
         """실시간 증권사 계좌 잔고 및 증거금 조회 (KIS 국내선물옵션 공식 규격 준수)"""
         if not self._connected:

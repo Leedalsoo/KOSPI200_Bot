@@ -211,6 +211,79 @@ def test_kis_cancel_order_payload_and_tr_id_contract():
     assert body["UNIT_PRICE"] == "0"
 
 
+def test_kis_modify_order_payload_and_tr_id_contract():
+    """Validates modify_order payload fields, RVSE_CNCL_DVSN_CD='01', and VTS TR ID VTTO1103U."""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        elif "/trading/order" in path and "order-rvsecncl" not in path:
+            return {"rt_cd": "0", "output": {"ODNO": "00077777"}}
+        elif "order-rvsecncl" in path:
+            return {"rt_cd": "0", "msg_cd": "APBK0013", "output": {"ODNO": "00077778"}}
+        return {"rt_cd": "0"}
+
+    config = RealBrokerConfig(
+        account_no="87654321-03",
+        app_key="TEST_APP_KEY",
+        app_secret="TEST_APP_SECRET",
+        is_simulation=True,
+        is_vts=True,  # VTS mode -> VTTO1103U
+    )
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+    assert adapter.connect() is True
+
+    cmd = make_test_command(client_id="ORD-TO-MODIFY", qty=10, price=3.00, symbol="201S03370")
+    adapter.send_order(cmd)
+
+    # 1. Modify the placed order (new_qty=7, new_price=3.25)
+    modify_res = adapter.modify_order("ORD-TO-MODIFY", new_qty=7, new_price=3.25)
+    assert modify_res is True
+
+    modify_req = [r for r in captured_requests if "/trading/order-rvsecncl" in r["path"]][0]
+    assert modify_req["method"] == "POST"
+    assert modify_req["headers"]["tr_id"] == "VTTO1103U"
+
+    body = modify_req["body"]
+    assert body["CANO"] == "87654321"
+    assert body["ACNT_PRDT_CD"] == "03"
+    assert body["ORGN_ODNO"] == "00077777"
+    assert body["SHTN_PDNO"] == "201S03370"
+    assert body["RVSE_CNCL_DVSN_CD"] == "01"  # 01: 정정
+    assert body["ORD_DVSN_CD"] == "00"
+    assert body["ORD_QTY"] == "7"
+    assert body["UNIT_PRICE"] == "3.25"
+
+
+def test_kis_cancel_and_modify_unknown_order_blocked():
+    """Validates that cancelling or modifying unknown/untracked orders returns False without API call."""
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        return {"rt_cd": "0"}
+
+    config = RealBrokerConfig(account_no="12345678-01", app_key="KEY", app_secret="SEC", is_simulation=True)
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+    assert adapter.connect() is True
+
+    # 1. 미추적 주문 취소 시도 -> False
+    assert adapter.cancel_order("NON_EXISTENT_ORD") is False
+
+    # 2. 미추적 주문 정정 시도 -> False
+    assert adapter.modify_order("NON_EXISTENT_ORD", new_qty=5, new_price=2.0) is False
+
+    # 증권사 취소/정정 엔드포인트 호출 0건이어야 함
+    rvsecncl_calls = [r for r in captured_requests if "order-rvsecncl" in r["path"]]
+    assert len(rvsecncl_calls) == 0
+
+
 def test_kis_failure_categorization_regression():
     """Validates failure status categorization for various KIS API error scenarios."""
     current_resp = {}
