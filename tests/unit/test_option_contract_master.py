@@ -5,6 +5,7 @@ import unittest
 import zipfile
 
 from shared.calendar.krx_calendar import KrxTradingCalendar
+from shared.calendar.expiry_calculator import calculate_dte
 from shared.contracts.canonical import CanonicalMarketTick, CanonicalOptionType
 from shared.contracts.option_master import (
     IOptionContractMaster,
@@ -415,6 +416,135 @@ class TestOptionContractMaster(unittest.TestCase):
         self.assertEqual(runtime.tick_counter, 3)
         self.assertTrue(any("SIG-3-" in s.get("signal_id", "") for s in runtime.last_signals))
         self.assertTrue(any("ORD-T3-" in c.client_order_id for c in cmds3))
+
+    def test_e2e_real_dte_pathway_direct_expiry_to_track1_and_track8(self) -> None:
+        """[DTE E2E 실측] 운영 timestamp -> date_str -> 실제 calculate_dte() -> Track1/Track8 소비 경계 검증.
+        1. DTE <= 4.0 (만기 임박 2026-09-04 -> 2026-09-10):
+           - calculate_dte()가 정확히 4.0을 반환
+           - Track1 D-4 만기 컷오프(FENCE_CLEAR) 발동
+           - Track8 월물 초입 진입(DTE>=15) 미발동 (STANDBY 유지)
+        2. DTE >= 15.0 (월물 초입 2026-08-14 -> 2026-09-10):
+           - calculate_dte()가 정확히 19.0을 반환
+           - Track8 월물 초입 양매수 진입(TRIGGERED) 발동 및 reason에 DTE 19.0 명시
+           - Track1 active_fence 보존 (DTE > 4.0)
+        """
+        runtime = OptionProgramRuntime()
+        t1 = runtime.strategies[0]
+        t8 = runtime.strategies[7]
+
+        # 1. 만기 임박 시나리오: 2026-09-04 (금) -> 만기 2026-09-10 (목)
+        # 실제 KRX 거래일: 9/7(월), 9/8(화), 9/9(수), 9/10(목) -> 4거래일
+        expected_dte_near = calculate_dte("2026-09-04", "2026-09-10", calendar=runtime.calendar)
+        self.assertEqual(expected_dte_near, 4.0)
+
+        t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+        t8.reset_state()
+
+        tick_near = CanonicalMarketTick(
+            timestamp="2026-09-04 09:30:00",
+            seq_id=101,
+            symbol="201VC350",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="2026-09-10",
+        )
+        cmds_near = runtime.process_tick(tick_near)
+
+        # Track1: DTE=4.0 <= 4.0 이므로 만기 컷오프 발동 확인
+        self.assertIsNone(t1.active_fence, "Track 1 active fence must be cleared when DTE <= 4.0")
+        self.assertTrue(any(c.track_id == "Track1" and "ORD-T101-" in c.client_order_id for c in cmds_near))
+
+        # Track8: DTE=4.0 < 15.0 이므로 진입하지 않음
+        self.assertFalse(t8.strangle_state["is_active"], "Track 8 must not enter when DTE < 15.0")
+
+        # 2. 월물 초입 시나리오: 2026-08-14 (금) -> 만기 2026-09-10 (목)
+        # 실제 KRX 거래일: 19거래일 (광복절 연휴 등 달력 반영)
+        expected_dte_far = calculate_dte("2026-08-14", "2026-09-10", calendar=runtime.calendar)
+        self.assertEqual(expected_dte_far, 19.0)
+
+        t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+        t8.reset_state()
+        runtime.account_summary.free_margin = 10000000.0
+
+        tick_far = CanonicalMarketTick(
+            timestamp="2026-08-14 09:30:00",
+            seq_id=102,
+            symbol="201VC350",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="2026-09-10",
+        )
+        cmds_far = runtime.process_tick(tick_far)
+
+        # Track1: DTE=19.0 > 4.0 이므로 active_fence 안전하게 보존
+        self.assertIsNotNone(t1.active_fence, "Track 1 active fence must remain active when DTE=19.0")
+
+        # Track8: DTE=19.0 >= 15.0 이므로 월물 초입 양매수 진입 발동 확인
+        self.assertTrue(t8.strangle_state["is_active"], "Track 8 must enter when DTE >= 15.0")
+        self.assertEqual(t8.strangle_state["entry_date"], "2026-08-14")
+        self.assertGreater(t8.strangle_state["premium_spent"], 0.0)
+        self.assertTrue(any(c.track_id == "Track8" for c in cmds_far))
+
+    def test_e2e_real_dte_pathway_master_lookup_expiry_to_track1_and_track8(self) -> None:
+        """[DTE E2E 실측] tick.expiry가 빈 상태일 때 OptionContractMaster lookup을 통해 실제 DTE가 계산·소비되는 경로 검증."""
+        runtime = OptionProgramRuntime()
+        zip_bytes = create_sample_kis_mst_zip_bytes()
+        runtime.option_master.load_from_zip_bytes(zip_bytes)
+
+        t1 = runtime.strategies[0]
+        t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+
+        # B01609335는 마스터에 '2026-09-10'으로 매핑되어 있음
+        tick = CanonicalMarketTick(
+            timestamp="2026-09-04 09:15:00",
+            seq_id=201,
+            symbol="B01609335",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="",
+        )
+
+        cmds = runtime.process_tick(tick)
+
+        # 1. Master lookup으로 만기일 보충 확인
+        self.assertIsNotNone(runtime.last_processed_tick)
+        self.assertEqual(runtime.last_processed_tick.expiry, "2026-09-10")
+
+        # 2. 보충된 만기일로 실제 DTE=4.0 계산되어 Track 1 만기 컷오프 발동 확인
+        self.assertIsNone(t1.active_fence, "Track 1 active fence cleared via Master lookup expiry DTE")
+        self.assertTrue(any(c.track_id == "Track1" for c in cmds))
+
+    def test_e2e_real_dte_pathway_missing_dte_eliminates_arbitrary_fallbacks(self) -> None:
+        """[DTE E2E 실측] DTE 계산 불가 시 임의의 30.0이나 999.0 숫자가 주입되지 않고 None 계약이 유지됨을 검증."""
+        runtime = OptionProgramRuntime()
+        t1 = runtime.strategies[0]
+        t8 = runtime.strategies[7]
+
+        t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+        t8.reset_state()
+        runtime.account_summary.free_margin = 10000000.0
+
+        # 마스터에 없는 종목 + expiry 없는 tick
+        tick_no_dte = CanonicalMarketTick(
+            timestamp="2026-09-04 09:30:00",
+            seq_id=301,
+            symbol="NONEXISTENT_SYMBOL",
+            underlying_price=350.0,
+            last_price=350.0,
+            expiry="",
+        )
+
+        cmds = runtime.process_tick(tick_no_dte)
+
+        # 1. last_processed_tick.expiry는 빈 문자열
+        self.assertEqual(runtime.last_processed_tick.expiry, "")
+
+        # 2. Track1: 30.0/999.0 등의 임의 fallback이 없어 active_fence가 오작동으로 청산되지 않고 안전하게 보존됨
+        self.assertIsNotNone(t1.active_fence, "Active fence must be preserved without arbitrary DTE fallback")
+
+        # 3. Track8: 임의의 30.0 fallback으로 인한 오진입(DTE>=15)이 발생하지 않고 STANDBY 유지
+        self.assertFalse(t8.strangle_state["is_active"], "Track 8 must not enter when DTE is missing")
+        self.assertFalse(any(c.track_id == "Track8" for c in cmds))
 
 
 if __name__ == "__main__":
