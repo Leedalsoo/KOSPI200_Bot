@@ -485,6 +485,7 @@ class OptionProgramRuntime:
 
     def startup_recovery(self, broker_adapter: Any = None) -> Dict[str, Any]:
         """[D-13] 프로그램 시작 시 WAL 로드 -> OMS/FSM 복원 -> Broker 실제 주문 대사 -> Recovery 완료 오케스트레이션"""
+        self.recovery_completed = False
         wal_events: List[Dict[str, Any]] = []
         if self.wal_store is not None:
             try:

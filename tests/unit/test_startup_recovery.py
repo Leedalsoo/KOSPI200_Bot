@@ -324,3 +324,75 @@ def test_startup_wal_failure_aborts_safely():
         runtime.startup_recovery(broker_adapter=broker)
 
     assert runtime.recovery_completed is False
+
+
+@pytest.mark.asyncio
+async def test_10_repeated_startup_recovery_lifecycle_and_run_loop_blocking(tmp_path):
+    """테스트 10: 동일 Runtime 기준 반복 복구 라이프사이클 (성공 -> 실패 -> 거래차단 -> 재성공 -> 멱등성) 검증."""
+    wal_file = str(tmp_path / "repeated_rec.wal")
+    wal_store = WalStore(log_path=wal_file)
+
+    # 초기 주문 생성 및 WAL 영속화
+    router0 = OrderRouter(wal_store=wal_store)
+    cmd = make_cmd("ORD-REPEAT-1", qty=10, price=2.5)
+    oid = uuid.uuid4()
+    tok = make_token(oid, "ORD-REPEAT-1")
+    router0.register_and_route(cmd, tok)
+
+    # 체결 이벤트 1회 영속화
+    rep = make_report(oid, "ORD-REPEAT-1", "EXEC-REP-01", exec_qty=4, price=2.5)
+    router0.handle_execution_report(oid, rep)
+
+    broker = MockBrokerAdapter()
+    broker.status_map["ORD-REPEAT-1"] = {"status": "PARTIAL", "executed_qty": 4}
+
+    # 동일 Runtime 인스턴스 생성
+    runtime = OptionProgramRuntime(wal_store=wal_store)
+
+    # -------------------------------------------------------------
+    # A. 1차 Recovery 성공 -> recovery_completed is True
+    # -------------------------------------------------------------
+    summary1 = runtime.startup_recovery(broker_adapter=broker)
+    assert summary1["recovery_completed"] is True
+    assert runtime.recovery_completed is True
+    assert runtime.order_router.get_executed_qty(oid) == 4
+    assert runtime.order_router.fsm.get_status(oid) == OrderStatus.PARTIAL
+
+    # -------------------------------------------------------------
+    # B. 2차 Recovery에서 실패 주입 -> 예외 발생 및 recovery_completed is False
+    # -------------------------------------------------------------
+    failing_wal = MagicMock()
+    failing_wal.load_history_sync.side_effect = IOError("Disk I/O error during repeated recovery")
+    runtime.wal_store = failing_wal
+
+    with pytest.raises(RuntimeError, match="Startup WAL load failed"):
+        runtime.startup_recovery(broker_adapter=broker)
+
+    # [핵심 검증] 이전 True가 남지 않고 반드시 False로 리셋되어야 함
+    assert runtime.recovery_completed is False
+
+    # -------------------------------------------------------------
+    # C. 실패 상태에서 run_loop 호출 시 거래 차단 검증 (Transport 0건)
+    # -------------------------------------------------------------
+    ts = TradingSystem(config={"mode": "PAPER"})
+    await ts.initialize()
+    ts.op_runtime = runtime
+    ts.broker = broker
+
+    with pytest.raises(RuntimeError, match="startup recovery must be completed before starting run_loop"):
+        await ts.run_loop(max_ticks=1)
+
+    # -------------------------------------------------------------
+    # D. 실패 원인 제거 후 3차 Recovery 재성공 -> recovery_completed is True
+    # -------------------------------------------------------------
+    runtime.wal_store = wal_store
+    summary3 = runtime.startup_recovery(broker_adapter=broker)
+
+    assert summary3["recovery_completed"] is True
+    assert runtime.recovery_completed is True
+
+    # -------------------------------------------------------------
+    # E. 반복 상태 멱등성 검증: 체결 수량 중복 증가 없음 & FSM 일관성 유지
+    # -------------------------------------------------------------
+    assert runtime.order_router.get_executed_qty(oid) == 4
+    assert runtime.order_router.fsm.get_status(oid) == OrderStatus.PARTIAL
