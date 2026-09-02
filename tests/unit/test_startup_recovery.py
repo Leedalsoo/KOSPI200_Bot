@@ -110,6 +110,18 @@ class MockBrokerAdapter:
     def get_positions(self):
         return {}
 
+    def send_order(self, order_command):
+        from option_program.broker.broker_interface import BrokerOrderResponse
+        return BrokerOrderResponse(
+            success=True,
+            status="ACCEPTED",
+            client_order_id=getattr(order_command, "client_order_id", ""),
+            broker_order_id=f"B-{getattr(order_command, 'client_order_id', '')}",
+        )
+
+    def poll_execution_reports(self):
+        return []
+
 
 @pytest.mark.asyncio
 async def test_startup_wal_recovery_restores_state_and_exec_ids(tmp_path):
@@ -396,3 +408,89 @@ async def test_10_repeated_startup_recovery_lifecycle_and_run_loop_blocking(tmp_
     # -------------------------------------------------------------
     assert runtime.order_router.get_executed_qty(oid) == 4
     assert runtime.order_router.fsm.get_status(oid) == OrderStatus.PARTIAL
+
+
+@pytest.mark.asyncio
+async def test_11_long_running_wal_accumulation_and_idempotent_recovery(tmp_path):
+    """테스트 11: [10단계-5] 장시간 운영 모사 대량 WAL 누적, 정확한 복원, 반복 멱등성 및 런타임 안전 인터록 검증."""
+    wal_file = str(tmp_path / "long_running.wal")
+    wal_store = WalStore(log_path=wal_file)
+
+    # 1. 1차 세션: 2개 주문에 대해 100건의 고유 체결 이벤트 대량 생성 및 WAL 영속화
+    router0 = OrderRouter(wal_store=wal_store)
+
+    # 주문 1: Qty 100 (50회 부분 체결 -> 누적 50, PARTIAL)
+    cmd1 = make_cmd("ORD-LONG-01", qty=100, price=3.5)
+    oid1 = uuid.uuid4()
+    tok1 = make_token(oid1, "ORD-LONG-01")
+    router0.register_and_route(cmd1, tok1)
+
+    for i in range(1, 51):
+        rep = make_report(oid1, "ORD-LONG-01", f"EXEC-LONG-1-{i:04d}", exec_qty=1, price=3.5)
+        router0.handle_execution_report(oid1, rep)
+
+    # 주문 2: Qty 50 (50회 체결 -> 누적 50, FILLED)
+    cmd2 = make_cmd("ORD-LONG-02", qty=50, price=2.0)
+    oid2 = uuid.uuid4()
+    tok2 = make_token(oid2, "ORD-LONG-02")
+    router0.register_and_route(cmd2, tok2)
+
+    for i in range(1, 51):
+        rep = make_report(oid2, "ORD-LONG-02", f"EXEC-LONG-2-{i:04d}", exec_qty=1, price=2.0)
+        router0.handle_execution_report(oid2, rep)
+
+    assert router0.get_executed_qty(oid1) == 50
+    assert router0.fsm.get_status(oid1) == OrderStatus.PARTIAL
+    assert router0.get_executed_qty(oid2) == 50
+    assert router0.fsm.get_status(oid2) == OrderStatus.FILLED
+    assert len(router0._processed_exec_ids) == 100
+
+    # 2. 신규 세션(새 Runtime 인스턴스)에서 장시간 누적 WAL 로드 및 Recovery 수행
+    runtime_fresh = OptionProgramRuntime(wal_store=wal_store)
+    broker = MockBrokerAdapter()
+    broker.open_orders_list = [{
+        "client_order_id": "ORD-LONG-01",
+        "status": "PARTIAL",
+        "executed_qty": 50,
+    }]
+    broker.status_map["ORD-LONG-02"] = {"status": "FILLED", "executed_qty": 50}
+
+    summary1 = runtime_fresh.startup_recovery(broker_adapter=broker)
+
+    # 3. 1차 복구 결과 검증
+    # WAL 이벤트 수: ORDER_INTENT (2건) + PARTIAL/FILLED_EXECUTION (100건) = 102건
+    assert summary1["wal_events_count"] == 102
+    assert summary1["recovery_completed"] is True
+    assert runtime_fresh.recovery_completed is True
+    assert runtime_fresh.get_order_executed_qty("ORD-LONG-01") == 50
+    assert runtime_fresh.order_router.fsm.get_status(oid1) == OrderStatus.PARTIAL
+    assert runtime_fresh.get_order_executed_qty("ORD-LONG-02") == 50
+    assert runtime_fresh.order_router.fsm.get_status(oid2) == OrderStatus.FILLED
+    assert len(runtime_fresh.order_router._processed_exec_ids) == 100
+
+    # 4. 동일 Runtime에서 2차 Recovery 재수행 (반복 복구 멱등성 검증)
+    summary2 = runtime_fresh.startup_recovery(broker_adapter=broker)
+    assert summary2["recovery_completed"] is True
+    assert runtime_fresh.recovery_completed is True
+    assert runtime_fresh.get_order_executed_qty("ORD-LONG-01") == 50
+    assert runtime_fresh.order_router.fsm.get_status(oid1) == OrderStatus.PARTIAL
+    assert runtime_fresh.get_order_executed_qty("ORD-LONG-02") == 50
+    assert runtime_fresh.order_router.fsm.get_status(oid2) == OrderStatus.FILLED
+    assert len(runtime_fresh.order_router._processed_exec_ids) == 100
+
+    # 5. 과거 체결 이벤트 재유입 시 멱등성 방어 검증 (중복 누적 0건)
+    dup_rep = make_report(oid1, "ORD-LONG-01", "EXEC-LONG-1-0025", exec_qty=1, price=3.5)
+    ok_dup = runtime_fresh.consume_execution_report(dup_rep)
+    assert ok_dup is True
+    assert runtime_fresh.get_order_executed_qty("ORD-LONG-01") == 50
+    assert len(runtime_fresh.order_router._processed_exec_ids) == 100
+
+    # 6. Recovery 완료 후 TradingSystem 안전 인터록 검증
+    ts = TradingSystem(config={"mode": "PAPER"})
+    await ts.initialize()
+    ts.op_runtime = runtime_fresh
+    ts.broker = broker
+
+    # recovery_completed=True 이므로 run_loop 진입 가능 확인 (1틱 정상 실행 검증)
+    await ts.run_loop(max_ticks=1)
+    assert ts.last_tick is not None
