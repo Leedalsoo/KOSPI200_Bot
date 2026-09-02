@@ -31,6 +31,7 @@ from option_program.orders.order_router import OrderRouter
 from option_program.market_analysis.market_condition_analyzer import MarketConditionAnalyzer
 from option_program.market_analysis.market_condition_models import MarketConditionSnapshot
 from infra.wal_store import WalStore
+from shared.calendar import KrxTradingCalendar, calculate_dte
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ class OptionProgramRuntime:
         risk_config: Optional[RiskConfig] = None,
         account_summary: Optional[CanonicalAccountSummary] = None,
         wal_store: Optional[Any] = None,
+        calendar: Optional[KrxTradingCalendar] = None,
     ):
+        self.calendar: KrxTradingCalendar = calendar or KrxTradingCalendar()
         self.regime_detector = RegimeDetector()
         self.strategies: List[Any] = [
             Track1(config={}),
@@ -229,6 +232,17 @@ class OptionProgramRuntime:
                 else:
                     date_str = raw_ts
 
+                # DTE (Days to Expiry) 계산 (실제 tick.expiry 및 캘린더 연동)
+                calculated_dte: Optional[float] = None
+                if tick.expiry and date_str:
+                    try:
+                        calculated_dte = calculate_dte(current_date=date_str, expiry_date=tick.expiry, calendar=self.calendar)
+                    except Exception as e:
+                        logger.debug(f"DTE calculation note: {e}")
+                        calculated_dte = None
+
+                t1_dte = calculated_dte if calculated_dte is not None else 30.0
+
                 if st_name == "Track1":
                     if st.active_fence is None:
                         atm = round(tick.underlying_price / 2.5) * 2.5
@@ -239,7 +253,7 @@ class OptionProgramRuntime:
                     raw_signals = st.on_tick(
                         current_price=tick.underlying_price,
                         trend_signal=is_bull,
-                        days_to_expiry=30.0,
+                        days_to_expiry=t1_dte,
                         current_date=date_str
                     )
                     if isinstance(raw_signals, list):
@@ -341,9 +355,10 @@ class OptionProgramRuntime:
                         signals_dicts.append(ins7)
 
                 elif st_name == "Track8":
+                    t8_dte = calculated_dte if calculated_dte is not None else 30.0
                     avail_budget8 = float(self.account_summary.free_margin) if self.account_summary.free_margin > 0 else 2000000.0
                     ent8 = st.evaluate_entry(
-                        dte=30.0,
+                        dte=t8_dte,
                         budget=avail_budget8,
                         current_price=tick.underlying_price,
                         current_regime=self.current_regime,

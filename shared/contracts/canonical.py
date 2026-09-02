@@ -60,6 +60,7 @@ class CanonicalMarketTick:
     last_price: float = 0.0
     volume: int = 0
     seq_id: int = 0
+    expiry: str = ""
 
 
 @dataclass(frozen=True)

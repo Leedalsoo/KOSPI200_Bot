@@ -120,6 +120,58 @@ class TestKrxTradingCalendar(unittest.TestCase):
         # 일요일 -> False
         self.assertFalse(bare_cal.is_trading_day("2026-08-30"))
 
+    def test_calculate_dte_exact_trading_days(self):
+        """DTE 계산 계약: 실제 KRX 거래일 기준 DTE 산출 검증."""
+        from shared.calendar.expiry_calculator import calculate_dte
+
+        # 1. 2026-08-24(월) 기준 만기일 2026-08-28(금) -> 4거래일 남음 (화, 수, 목, 금)
+        dte = calculate_dte("2026-08-24", "2026-08-28", calendar=self.calendar)
+        self.assertEqual(dte, 4.0)
+
+        # 2. 공휴일이 포함된 기간: 2026-08-28(금) 기준 만기일 2026-09-04(금)
+        # 8/31(월), 9/1(화) 공휴일 -> 남은 거래일: 9/2(수), 9/3(목), 9/4(금) = 3거래일
+        dte_hol = calculate_dte("2026-08-28", "2026-09-04", calendar=self.calendar)
+        self.assertEqual(dte_hol, 3.0)
+
+        # 3. 당일 만기 (current == expiry) -> 0.0
+        self.assertEqual(calculate_dte("2026-08-28", "2026-08-28", calendar=self.calendar), 0.0)
+
+        # 4. 만기 경과 (current > expiry) -> 0.0
+        self.assertEqual(calculate_dte("2026-08-29", "2026-08-28", calendar=self.calendar), 0.0)
+
+        # 5. 달력일 기준 옵션 (use_trading_days=False)
+        cal_dte = calculate_dte("2026-08-24", "2026-08-28", use_trading_days=False)
+        self.assertEqual(cal_dte, 4.0)
+
+    def test_option_program_runtime_dte_wiring(self):
+        """Runtime process_tick에서 CanonicalMarketTick.expiry 기반 DTE 계산 및 Track 1 연동 검증."""
+        from shared.contracts.canonical import CanonicalMarketTick
+        from option_program.runtime.program_runtime import OptionProgramRuntime
+
+        runtime = OptionProgramRuntime(calendar=self.calendar)
+
+        # 1. Track 1에 가두리 활성화 세팅
+        t1 = runtime.strategies[0]
+        t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+
+        # 2. 만기일이 3거래일 남은 틱 주입 (DTE <= 4.0 조건 충족 -> Track 1 FENCE_CLEAR 조기청산 유발)
+        # 2026-08-28(금)에 만기일이 2026-09-04(금)인 틱 주입 (중간에 월/화 공휴일로 DTE=3.0)
+        tick_d3 = CanonicalMarketTick(
+            timestamp="2026-08-28 09:00:01",
+            underlying_price=350.0,
+            bid_price=349.9,
+            ask_price=350.1,
+            last_price=350.0,
+            volume=10,
+            seq_id=1,
+            expiry="2026-09-04",
+        )
+
+        cmds = runtime.process_tick(tick_d3)
+        # Track 1의 만기 D-4 컷오프 프로토콜로 인해 가두리 청산 주문이 생성됨을 확인
+        self.assertIsNone(t1.active_fence, "Track 1 active fence should be cleared on DTE <= 4.0")
+        self.assertTrue(any(c.track_id == "Track1" and c.side.value == "BUY" for c in cmds))
+
 
 if __name__ == "__main__":
     unittest.main()
