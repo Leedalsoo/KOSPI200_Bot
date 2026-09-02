@@ -424,7 +424,7 @@ class RealBrokerAdapter(IBrokerAdapter):
         )
 
     def cancel_order(self, client_order_id: str) -> bool:
-        """주문 취소 API 호출 (KIS 국내선물옵션 공식 규격 준수)"""
+        """주문 취소 API 호출 (KIS 국내선물옵션 공식 order_rvsecncl 규격 준수)"""
         if not self._connected:
             return False
         order_info = self._orders_history.get(client_order_id)
@@ -433,28 +433,26 @@ class RealBrokerAdapter(IBrokerAdapter):
             return False
 
         broker_order_no = order_info["broker_order_no"]
-        cmd = order_info.get("command")
-        try:
-            prod_code = self._map_instrument_code(cmd) if cmd else ""
-        except ValueError as val_err:
-            logger.error(f"[{self.config.broker_name}] Cannot cancel order {client_order_id} due to invalid symbol: {val_err}")
-            return False
         body = {
+            "ORD_PRCS_DVSN_CD": "02",  # 02: 주문처리구분
             "CANO": self.config.account_no.split("-")[0],
             "ACNT_PRDT_CD": self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01",
-            "ORGN_ODNO": broker_order_no,
-            "SHTN_PDNO": prod_code,
             "RVSE_CNCL_DVSN_CD": "02",  # 02: 취소
-            "ORD_DVSN_CD": "00",  # 00: 지정가
+            "ORGN_ODNO": broker_order_no,
             "ORD_QTY": "0",  # 0: 잔량 전부 취소
             "UNIT_PRICE": "0",
+            "NMPR_TYPE_CD": "01",  # 01: 일반
+            "KRX_NMPR_CNDT_CD": "0",  # 0: 조건없음
+            "RMN_QTY_YN": "Y",  # Y: 잔여수량 전부
+            "ORD_DVSN_CD": "01",  # 01: 지정가
+            "FUOP_ITEM_DVSN_CD": "01",  # 01: 선물옵션
         }
         tr_id = "VTTO1103U" if self.config.is_vts else "TTTO1103U"
         resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order-rvsecncl", body=body, tr_id=tr_id)
         return resp.get("rt_cd") == "0"
 
     def modify_order(self, client_order_id: str, new_qty: int, new_price: float) -> bool:
-        """주문 정정 API 호출 (KIS 국내선물옵션 공식 규격 order_rvsecncl RVSE_CNCL_DVSN_CD='01' 준수)"""
+        """주문 정정 API 호출 (KIS 국내선물옵션 공식 order_rvsecncl RVSE_CNCL_DVSN_CD='01' 준수)"""
         if not self._connected:
             return False
         if new_qty <= 0 or new_price <= 0.0:
@@ -467,22 +465,19 @@ class RealBrokerAdapter(IBrokerAdapter):
             return False
 
         broker_order_no = order_info["broker_order_no"]
-        cmd = order_info.get("command")
-        try:
-            prod_code = self._map_instrument_code(cmd) if cmd else ""
-        except ValueError as val_err:
-            logger.error(f"[{self.config.broker_name}] Cannot modify order {client_order_id} due to invalid symbol: {val_err}")
-            return False
-
         body = {
+            "ORD_PRCS_DVSN_CD": "02",  # 02: 주문처리구분
             "CANO": self.config.account_no.split("-")[0],
             "ACNT_PRDT_CD": self.config.account_no.split("-")[1] if "-" in self.config.account_no else "01",
-            "ORGN_ODNO": broker_order_no,
-            "SHTN_PDNO": prod_code,
             "RVSE_CNCL_DVSN_CD": "01",  # 01: 정정
-            "ORD_DVSN_CD": "00",  # 00: 지정가
+            "ORGN_ODNO": broker_order_no,
             "ORD_QTY": str(new_qty),
             "UNIT_PRICE": f"{new_price:.2f}",
+            "NMPR_TYPE_CD": "01",  # 01: 일반
+            "KRX_NMPR_CNDT_CD": "0",  # 0: 조건없음
+            "RMN_QTY_YN": "Y",  # Y: 잔여수량
+            "ORD_DVSN_CD": "01",  # 01: 지정가
+            "FUOP_ITEM_DVSN_CD": "01",  # 01: 선물옵션
         }
         tr_id = "VTTO1103U" if self.config.is_vts else "TTTO1103U"
         resp = self.client.request("POST", "/uapi/domestic-futureoption/v1/trading/order-rvsecncl", body=body, tr_id=tr_id)

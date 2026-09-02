@@ -201,14 +201,19 @@ def test_kis_cancel_order_payload_and_tr_id_contract():
     assert cancel_req["headers"]["tr_id"] == "TTTO1103U"
 
     body = cancel_req["body"]
+    assert "SHTN_PDNO" not in body, "Official KIS order_rvsecncl DTO must not contain SHTN_PDNO"
+    assert body["ORD_PRCS_DVSN_CD"] == "02"
     assert body["CANO"] == "12345678"
     assert body["ACNT_PRDT_CD"] == "01"
+    assert body["RVSE_CNCL_DVSN_CD"] == "02"  # 02: 취소
     assert body["ORGN_ODNO"] == "00055555"
-    assert body["SHTN_PDNO"] == "201V3350"
-    assert body["RVSE_CNCL_DVSN_CD"] == "02"
-    assert body["ORD_DVSN_CD"] == "00"
     assert body["ORD_QTY"] == "0"
     assert body["UNIT_PRICE"] == "0"
+    assert body["NMPR_TYPE_CD"] == "01"
+    assert body["KRX_NMPR_CNDT_CD"] == "0"
+    assert body["RMN_QTY_YN"] == "Y"
+    assert body["ORD_DVSN_CD"] == "01"
+    assert body["FUOP_ITEM_DVSN_CD"] == "01"
 
 
 def test_kis_modify_order_payload_and_tr_id_contract():
@@ -248,14 +253,19 @@ def test_kis_modify_order_payload_and_tr_id_contract():
     assert modify_req["headers"]["tr_id"] == "VTTO1103U"
 
     body = modify_req["body"]
+    assert "SHTN_PDNO" not in body, "Official KIS order_rvsecncl DTO must not contain SHTN_PDNO"
+    assert body["ORD_PRCS_DVSN_CD"] == "02"
     assert body["CANO"] == "87654321"
     assert body["ACNT_PRDT_CD"] == "03"
-    assert body["ORGN_ODNO"] == "00077777"
-    assert body["SHTN_PDNO"] == "201S03370"
     assert body["RVSE_CNCL_DVSN_CD"] == "01"  # 01: 정정
-    assert body["ORD_DVSN_CD"] == "00"
+    assert body["ORGN_ODNO"] == "00077777"
     assert body["ORD_QTY"] == "7"
     assert body["UNIT_PRICE"] == "3.25"
+    assert body["NMPR_TYPE_CD"] == "01"
+    assert body["KRX_NMPR_CNDT_CD"] == "0"
+    assert body["RMN_QTY_YN"] == "Y"
+    assert body["ORD_DVSN_CD"] == "01"
+    assert body["FUOP_ITEM_DVSN_CD"] == "01"
 
 
 def test_kis_cancel_and_modify_unknown_order_blocked():
