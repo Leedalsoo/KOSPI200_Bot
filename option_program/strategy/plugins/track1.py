@@ -196,12 +196,12 @@ class Track1(StrategyContract):
         logger.info(f"[장 시작 유기체 세팅] 2중 링 가두리 구축 완료 | 1차 내각 행사가: {put_strike_inner} (#1)")
         return signals
 
-    def on_tick(self, current_price: float, trend_signal: bool, days_to_expiry: float = 30.0, current_date: str = "") -> List[Dict]:
+    def on_tick(self, current_price: float, trend_signal: bool, days_to_expiry: Optional[float] = None, current_date: str = "") -> List[Dict]:
         """[2단계] 틱 스트리밍 루프: 가두리 유기적 개방(Open)/닫힘(Close), 꼬리표 순환 및 미아 방어 헷지"""
         signals: List[Dict[str, Any]] = []
 
         # 🎯 [만기 D-4 컷오프 프로토콜] 만기 4일 전 시간가치 소멸 시 보유 중인 가두리 매도 포지션 조기 청산
-        if days_to_expiry <= 4.0 and self.active_fence is not None:
+        if days_to_expiry is not None and days_to_expiry <= 4.0 and self.active_fence is not None:
             old_tag = self.active_fence['tag_id']
             old_type = self.active_fence['type']
             old_strike = self.active_fence['strike']
@@ -220,7 +220,7 @@ class Track1(StrategyContract):
             self.active_fence = None
             return signals
 
-        if not self.active_fence or days_to_expiry <= 4.0:
+        if not self.active_fence or (days_to_expiry is not None and days_to_expiry <= 4.0):
             return signals
 
         # 100% 격돌 및 1.5pt 반전 매 틱 독립 우선 체크 (유기적 가두리 닫힘/Unwind 루프)

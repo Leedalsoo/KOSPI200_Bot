@@ -270,14 +270,12 @@ class OptionProgramRuntime:
                         if t1_init.get("signals"):
                             signals_dicts.extend(t1_init["signals"])
                     is_bull = (condition.regime == "BULL") if condition else False
-                    t1_kwargs: Dict[str, Any] = {
-                        "current_price": tick.underlying_price,
-                        "trend_signal": is_bull,
-                        "current_date": date_str,
-                    }
-                    if calculated_dte is not None:
-                        t1_kwargs["days_to_expiry"] = calculated_dte
-                    raw_signals = st.on_tick(**t1_kwargs)
+                    raw_signals = st.on_tick(
+                        current_price=tick.underlying_price,
+                        trend_signal=is_bull,
+                        days_to_expiry=calculated_dte,
+                        current_date=date_str
+                    )
                     if isinstance(raw_signals, list):
                         signals_dicts.extend(raw_signals)
 

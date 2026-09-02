@@ -174,6 +174,25 @@ class TestOptionContractMaster(unittest.TestCase):
         # 2. 임의의 30.0이나 999.0 fallback으로 D-4 컷오프가 오작동하지 않고 active_fence가 안전하게 보존됨
         self.assertIsNotNone(t1.active_fence, "Active fence must be preserved without arbitrary DTE fallback")
 
+    def test_track1_on_tick_default_days_to_expiry_is_none(self) -> None:
+        """[Track1 DTE 계약 증명] days_to_expiry 기본값이 30.0이 아닌 None이며 임의 fallback이 적용되지 않음을 직접 증명."""
+        from option_program.strategy.plugins.track1 import Track1
+        t1 = Track1(config={})
+        t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+
+        # 1. days_to_expiry 인자 없이 호출 시 30.0이 아닌 None이 기본 적용되어 정상 실행
+        t1.on_tick(current_price=350.0, trend_signal=False)
+        self.assertIsNotNone(t1.active_fence, "active_fence remains active when days_to_expiry is None (no 30.0 fallback)")
+
+        # 2. days_to_expiry=None 명시적 전달 시에도 크래시 없이 정상 작동
+        t1.on_tick(current_price=350.0, trend_signal=False, days_to_expiry=None)
+        self.assertIsNotNone(t1.active_fence)
+
+        # 3. DTE <= 4.0 제공 시 기존 D-4 보호 컷오프 정상 발동
+        sigs_cutoff = t1.on_tick(current_price=350.0, trend_signal=False, days_to_expiry=4.0)
+        self.assertIsNone(t1.active_fence, "active_fence cleared when days_to_expiry <= 4.0")
+        self.assertTrue(any(s.get("action") == "FENCE_CLEAR" for s in sigs_cutoff))
+
     def test_source_failure_explicitly_raised_or_recorded(self) -> None:
         """잘못된 ZIP 데이터 또는 다운로드 실패 시 조용히 성공으로 은폐되지 않고 예외 발생 또는 last_error 기록 검증."""
         # 손상된 ZIP 바이트 스트림 로딩 시 KisMasterParseError 발생 검증
