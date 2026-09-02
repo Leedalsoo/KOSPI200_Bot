@@ -109,7 +109,8 @@ class Track1(StrategyContract):
         current_date = market_data.get("date_str", "UNKNOWN")
         trend_signal = market_data.get("momentum_confirmed", False) 
 
-        days_to_expiry = float(market_data.get("days_to_expiry", 30.0))
+        raw_dte = market_data.get("days_to_expiry")
+        days_to_expiry: Optional[float] = float(raw_dte) if raw_dte is not None else None
         active_vol = float(market_data.get("active_vol", 1.0))
         base_vol = float(market_data.get("base_vol", 1.0))
 

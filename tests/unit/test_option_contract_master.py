@@ -193,6 +193,33 @@ class TestOptionContractMaster(unittest.TestCase):
         self.assertIsNone(t1.active_fence, "active_fence cleared when days_to_expiry <= 4.0")
         self.assertTrue(any(s.get("action") == "FENCE_CLEAR" for s in sigs_cutoff))
 
+    def test_track1_evaluate_strategy_to_on_tick_dte_contract(self) -> None:
+        """[Track1 evaluate_strategy -> on_tick DTE 계약 증명]
+        1. evaluate_strategy()에 days_to_expiry가 없는 경우 on_tick()에 None이 전달되고 30.0이 자동 적용되지 않음.
+        2. 실제 DTE를 제공하면 그 값이 on_tick()에 유지됨.
+        3. DTE <= 4.0일 때 기존 D-4 보호 로직이 유지됨.
+        4. DTE 미존재 시 active fence가 arbitrary DTE 때문에 잘못 청산되지 않음.
+        """
+        from option_program.strategy.plugins.track1 import Track1
+        t1 = Track1(config={})
+
+        # 1. days_to_expiry 없는 market_data로 evaluate_strategy 호출
+        t1.is_market_opened = True
+        t1.active_fence = {"type": "PUT", "strike": 342.5, "tag_id": 1}
+        res_no_dte = t1.evaluate_strategy(350.0, 350.0, {"date_str": "2026-09-04"})
+        self.assertIsNotNone(t1.active_fence, "active_fence must remain active when days_to_expiry is omitted (no 30.0 fallback)")
+        self.assertFalse(any(s.get("action") == "FENCE_CLEAR" for s in res_no_dte.get("signals", [])))
+
+        # 2. 실제 DTE=10.0 제공 시 D-4 컷오프 미발동 및 가두리 유지
+        res_dte_10 = t1.evaluate_strategy(350.0, 350.0, {"date_str": "2026-09-04", "days_to_expiry": 10.0})
+        self.assertIsNotNone(t1.active_fence, "active_fence must remain active when DTE=10.0")
+        self.assertFalse(any(s.get("action") == "FENCE_CLEAR" for s in res_dte_10.get("signals", [])))
+
+        # 3. 실제 DTE=4.0 제공 시 기존 D-4 보호 로직(FENCE_CLEAR) 정상 발동
+        res_cutoff = t1.evaluate_strategy(350.0, 350.0, {"date_str": "2026-09-04", "days_to_expiry": 4.0})
+        self.assertIsNone(t1.active_fence, "active_fence cleared when DTE=4.0 provided in evaluate_strategy")
+        self.assertTrue(any(s.get("action") == "FENCE_CLEAR" for s in res_cutoff.get("signals", [])))
+
     def test_source_failure_explicitly_raised_or_recorded(self) -> None:
         """잘못된 ZIP 데이터 또는 다운로드 실패 시 조용히 성공으로 은폐되지 않고 예외 발생 또는 last_error 기록 검증."""
         # 손상된 ZIP 바이트 스트림 로딩 시 KisMasterParseError 발생 검증
