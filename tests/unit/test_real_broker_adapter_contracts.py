@@ -332,8 +332,7 @@ def test_kis_failure_categorization_regression():
 
 
 def test_kis_account_summary_request_contract_and_mapping():
-    """Validates get_account_summary query params, TR ID (CTFO6118R/VTFO6118R), EXCC_STAT_CD='1', and DTO mapping."""
-    import pytest
+    """Validates get_account_summary query params, TR ID (CTFO6118R/VTFO6118R), EXCC_STAT_CD='1', and 1:1 DTO mapping."""
     captured_requests: List[Dict[str, Any]] = []
 
     def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
@@ -350,14 +349,14 @@ def test_kis_account_summary_request_contract_and_mapping():
                 "rt_cd": "0",
                 "msg_cd": "APBK0013",
                 "msg1": "조회 완료",
-                "output1": {
+                "output1": [],
+                "output2": {
                     "dnca_tot_amt": "35000000",
                     "mgn_amt": "2500000",
                     "ord_psbl_amt": "32500000",
                     "evlu_pfls_smtl_amt": "2500000",
                     "rlzt_pfls": "150000",
                 },
-                "output2": [],
             }
         return {"rt_cd": "0"}
 
@@ -375,11 +374,12 @@ def test_kis_account_summary_request_contract_and_mapping():
 
     summary_real = adapter_real.get_account_summary()
     assert summary_real.account_id == "50012345-01"
-    assert summary_real.total_balance == 35000000.0
-    assert summary_real.used_margin == 2500000.0
-    assert summary_real.free_margin == 32500000.0
-    assert summary_real.unrealized_pnl == 2500000.0
-    assert summary_real.realized_pnl == 150000.0
+    # KIS 공식 응답 필드와 Canonical DTO의 1:1 매핑 확인
+    assert summary_real.total_balance == 35000000.0  # dnca_tot_amt (예수금총금액)
+    assert summary_real.used_margin == 2500000.0     # mgn_amt (증거금액)
+    assert summary_real.free_margin == 32500000.0    # ord_psbl_amt (주문가능금액)
+    assert summary_real.unrealized_pnl == 2500000.0  # evlu_pfls_smtl_amt (평가손익합계금액)
+    assert summary_real.realized_pnl == 150000.0     # rlzt_pfls (실현손익금액)
 
     inq_req = [r for r in captured_requests if "/inquire-balance" in r["path"]][0]
     assert inq_req["method"] == "GET"
@@ -411,6 +411,62 @@ def test_kis_account_summary_request_contract_and_mapping():
     assert inq_req_vts["headers"]["tr_id"] == "VTFO6118R"
     assert inq_req_vts["body"]["ACNT_PRDT_CD"] == "03"
     assert inq_req_vts["body"]["EXCC_STAT_CD"] == "1"
+
+
+def test_kis_pnl_source_and_valuation_pl_role_separation_contract():
+    """Validates PnL source contract and role separation between inquire-balance and inquire-balance-valuation-pl (CTFO6159R).
+
+    Official KIS API Distinction:
+    - `inquire-balance` (Real: CTFO6118R / Demo: VTFO6118R):
+        Comprehensive balance, margin, positions, and total unrealized/realized PnL summary in a single query.
+        Canonical mapping uses `output2.evlu_pfls_smtl_amt` (unrealized_pnl) and `output2.rlzt_pfls` (realized_pnl).
+    - `inquire-balance-valuation-pl` (Real: CTFO6159R / Demo: VTFO6159R):
+        Specialized valuation PnL detail service for itemized position valuation metrics.
+    """
+    captured_requests: List[Dict[str, Any]] = []
+
+    def mock_transport(method: str, path: str, headers: Dict[str, Any], body: Dict[str, Any]) -> Dict[str, Any]:
+        captured_requests.append({"method": method, "path": path, "headers": headers, "body": body})
+        if path == "/oauth2/tokenP":
+            return {"access_token": "TEST_TOKEN_123", "token_type": "Bearer", "expires_in": 86400}
+        if "inquire-balance" in path:
+            return {
+                "rt_cd": "0",
+                "msg_cd": "APBK0013",
+                "msg1": "조회 완료",
+                "output1": [
+                    {
+                        "pdno": "101W09",
+                        "sll_buy_dvsn_cd": "02",
+                        "cclt_qty": "1",
+                        "pchs_avg_pric": "350.00",
+                        "evlu_pfls_amt": "500000",
+                    }
+                ],
+                "output2": {
+                    "dnca_tot_amt": "50000000",
+                    "mgn_amt": "5000000",
+                    "ord_psbl_amt": "45000000",
+                    "evlu_pfls_smtl_amt": "500000",
+                    "rlzt_pfls": "-20000",
+                },
+            }
+        return {"rt_cd": "0"}
+
+    config = RealBrokerConfig(account_no="50012345-01", app_key="KEY", app_secret="SEC", is_simulation=True, is_vts=False)
+    client = RealBrokerHttpClient(config=config, transport=mock_transport)
+    adapter = RealBrokerAdapter(config=config, http_client=client)
+    assert adapter.connect() is True
+
+    # 계좌 요약 PnL 검증
+    summary = adapter.get_account_summary()
+    assert summary.unrealized_pnl == 500000.0  # output2.evlu_pfls_smtl_amt
+    assert summary.realized_pnl == -20000.0    # output2.rlzt_pfls
+
+    # 개별 포지션 평가손익 검증
+    positions = adapter.get_positions()
+    assert "101W09" in positions
+    assert positions["101W09"]["pnl"] == 500000.0  # output1[0].evlu_pfls_amt
 
 
 def test_kis_positions_request_contract_and_pagination():
@@ -533,10 +589,19 @@ def test_kis_positions_unbounded_pagination_over_five_pages():
     assert adapter.connect() is True
 
     positions = adapter.get_positions()
-    # 7페이지 전수 수집 검증
     assert len(positions) == 7
+    # 7페이지 전수 수집 확인
+    for idx in range(1, 8):
+        sym = f"201S033{idx}0"
+        assert sym in positions
+        assert positions[sym]["qty"] == idx
+
     inq_calls = [r for r in captured_requests if "/inquire-balance" in r["path"]]
     assert len(inq_calls) == 7
+    # 1페이지~7페이지의 CTX_AREA_NK200 연결 검증
+    assert inq_calls[0]["body"]["CTX_AREA_NK200"] == ""
+    assert inq_calls[1]["body"]["CTX_AREA_NK200"] == "NK_1"
+    assert inq_calls[6]["body"]["CTX_AREA_NK200"] == "NK_6"
 
 
 
