@@ -129,3 +129,115 @@ def test_out_of_order_tick_sequence_and_time_reversal_guarded():
     t4_inverted_time = adapter.parse_packet({"seq_id": 4, "timestamp_ns": 250, "underlying_price": 353.0})
     assert t4_inverted_time is None, "Timestamp inversion must be dropped as stale."
     assert adapter.metrics["stale_ticks_dropped"] == 1
+
+
+def test_kis_packet_symbol_and_futs_last_tr_date_parsing():
+    """KIS 국내선물옵션 시세 응답(futs_last_tr_date / stck_shrn_iscd) ➔ CanonicalMarketTick 정규화 검증."""
+    adapter = RealMarketDataAdapter()
+    adapter.connect()
+
+    # KIS TR: FHMIF10000000 응답 모사 (futs_last_tr_date="20260903", stck_shrn_iscd="201V8350")
+    kis_pkt = {
+        "seq_id": 1,
+        "stck_shrn_iscd": "201V8350",
+        "underlying_price": 350.0,
+        "strike_price": 350.0,
+        "option_type": "CALL",
+        "bid_price": 349.9,
+        "ask_price": 350.1,
+        "last_price": 350.0,
+        "volume": 100,
+        "futs_last_tr_date": "20260903",
+        "timestamp": "2026-08-28 09:00:01",
+    }
+
+    tick = adapter.parse_packet(kis_pkt)
+    assert tick is not None
+    assert tick.symbol == "201V8350"
+    assert tick.expiry == "2026-09-03"
+
+
+def test_kis_packet_lst_trad_date_and_canonical_expiry_parsing():
+    """KIS lst_trad_date 및 표준 YYYY-MM-DD 형식 파싱 검증."""
+    adapter = RealMarketDataAdapter()
+    adapter.connect()
+
+    # lst_trad_date="20261008" -> "2026-10-08"
+    pkt_lst = {
+        "seq_id": 1,
+        "symbol": "201X9350",
+        "underlying_price": 355.0,
+        "lst_trad_date": "20261008",
+    }
+    t1 = adapter.parse_packet(pkt_lst)
+    assert t1 is not None
+    assert t1.symbol == "201X9350"
+    assert t1.expiry == "2026-10-08"
+
+    # 이미 포맷된 YYYY-MM-DD expiry
+    pkt_std = {
+        "seq_id": 2,
+        "symbol": "201X9350",
+        "underlying_price": 355.0,
+        "expiry": "2026-10-08",
+    }
+    t2 = adapter.parse_packet(pkt_std)
+    assert t2 is not None
+    assert t2.expiry == "2026-10-08"
+
+
+def test_market_data_adapter_to_runtime_dte_pipeline():
+    """RealMarketDataAdapter.parse_packet() -> CanonicalMarketTick -> OptionProgramRuntime DTE 파이프라인 E2E 검증."""
+    from shared.calendar.krx_calendar import KrxTradingCalendar
+    from option_program.runtime.program_runtime import OptionProgramRuntime
+
+    adapter = RealMarketDataAdapter()
+    adapter.connect()
+
+    runtime = OptionProgramRuntime(calendar=KrxTradingCalendar())
+    t1 = runtime.strategies[0]
+    t1.active_fence = {"type": "CALL", "strike": 355.0, "tag_id": 1}
+
+    # 2026-08-28(금) 기준 2026-09-03(목) 만기일 (DTE=4.0 -> Track 1 컷오프 발동 조건)
+    raw_packet = {
+        "seq_id": 1,
+        "stck_shrn_iscd": "201V8350",
+        "underlying_price": 350.0,
+        "bid_price": 349.9,
+        "ask_price": 350.1,
+        "last_price": 350.0,
+        "volume": 10,
+        "futs_last_tr_date": "20260903",
+        "timestamp": "2026-08-28 09:00:01",
+    }
+
+    tick = adapter.parse_packet(raw_packet)
+    assert tick is not None
+    assert tick.expiry == "2026-09-03"
+
+    cmds = runtime.process_tick(tick)
+    # Track 1 만기 컷오프(DTE <= 4.0) 프로토콜로 인해 가두리 청산 주문 발동 확인
+    assert t1.active_fence is None
+    assert any(c.track_id == "Track1" for c in cmds)
+
+
+def test_empty_expiry_and_symbol_safe_fallback():
+    """expiry와 symbol이 없는 레거시 패킷 수신 시 기존 30.0 fallback 정상 동작 검증."""
+    from option_program.runtime.program_runtime import OptionProgramRuntime
+
+    adapter = RealMarketDataAdapter()
+    adapter.connect()
+    runtime = OptionProgramRuntime()
+
+    raw_legacy = {
+        "seq_id": 1,
+        "underlying_price": 350.0,
+        "timestamp": "2026-08-28 09:00:01",
+    }
+    tick = adapter.parse_packet(raw_legacy)
+    assert tick is not None
+    assert tick.expiry == ""
+    assert tick.symbol == ""
+
+    cmds = runtime.process_tick(tick)
+    assert isinstance(cmds, list)

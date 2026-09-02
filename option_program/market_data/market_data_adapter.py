@@ -126,6 +126,19 @@ class RealMarketDataAdapter(IMarketDataProvider):
             vol = int(raw_packet.get("volume", raw_packet.get("vol", 100)))
             ts_str = str(raw_packet.get("timestamp", datetime.now().strftime("%H:%M:%S.%f")[:-3]))
 
+            # 심볼 및 만기일자 추출 (KIS futs_last_tr_date / lst_trad_date 정규화 지원)
+            symbol = str(raw_packet.get("symbol", raw_packet.get("stck_shrn_iscd", raw_packet.get("shrn_iscd", "")))).strip()
+            raw_exp = str(
+                raw_packet.get("expiry")
+                or raw_packet.get("expiry_date")
+                or raw_packet.get("futs_last_tr_date")
+                or raw_packet.get("lst_trad_date")
+                or ""
+            ).strip()
+            # YYYYMMDD 8자리 숫자를 YYYY-MM-DD 표준 형식으로 정규화
+            if len(raw_exp) == 8 and raw_exp.isdigit():
+                raw_exp = f"{raw_exp[:4]}-{raw_exp[4:6]}-{raw_exp[6:]}"
+
             # 비정상 가격 방어 (음수 가격 또는 극단적 이상치)
             if underlying <= 0 or bid < 0 or ask < 0 or last < 0:
                 logger.warning(f"[MarketDataAdapter] Invalid negative/zero price dropped: under={underlying}, bid={bid}, ask={ask}")
@@ -140,7 +153,9 @@ class RealMarketDataAdapter(IMarketDataProvider):
                 ask_price=ask,
                 last_price=last,
                 volume=vol,
-                seq_id=seq_id
+                seq_id=seq_id,
+                expiry=raw_exp,
+                symbol=symbol,
             )
 
             self.metrics["parsed_ticks"] += 1
