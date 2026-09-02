@@ -328,6 +328,7 @@ class OrderRouter:
                 "exec_id": getattr(report, "exec_id", None),
                 "order_id": str(order_id),
                 "client_order_id": client_id or getattr(report, "client_order_id", None),
+                "broker_order_id": self._order_to_broker_id.get(order_id) or (self._client_to_broker_id.get(str(client_id)) if client_id else None),
                 "executed_qty": getattr(report, "executed_qty", 0),
                 "cum_executed_qty": cum_qty,
                 "requested_qty": requested_qty,
