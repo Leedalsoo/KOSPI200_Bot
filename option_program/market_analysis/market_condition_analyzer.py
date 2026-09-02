@@ -1,7 +1,8 @@
 import math
 from collections import deque
 from statistics import pstdev
-from typing import Optional
+from typing import Optional, List
+import numpy as np
 
 from shared.contracts.canonical import CanonicalMarketTick
 from option_program.strategy.regime_detector import RegimeDetector
@@ -19,8 +20,8 @@ class MarketConditionAnalyzer:
     ) -> None:
         self.return_window = max(10, return_window)
         self.baseline_window = max(self.return_window, baseline_window)
-        self.prices = deque(maxlen=self.baseline_window + 1)
-        self.spreads = deque(maxlen=max(10, spread_window))
+        self.prices: deque[float] = deque(maxlen=self.baseline_window + 1)
+        self.spreads: deque[float] = deque(maxlen=max(10, spread_window))
         self.regime_detector = RegimeDetector()
         self.previous_price: Optional[float] = None
         self.previous_timestamp: Optional[str] = None
@@ -45,7 +46,7 @@ class MarketConditionAnalyzer:
         self.prices.append(price)
         self.spreads.append(spread)
 
-        returns = []
+        returns: List[float] = []
         price_list = list(self.prices)
         for i in range(1, len(price_list)):
             p0 = price_list[i - 1]
@@ -60,9 +61,12 @@ class MarketConditionAnalyzer:
         baseline = pstdev(long_returns) if len(long_returns) >= 2 else volatility
         ratio = self._safe_ratio(volatility, baseline)
 
+        regime: str = "NEUTRAL"
+        confidence: float = 0.0
         try:
             if len(returns) >= 2:
-                regime, confidence = self.regime_detector.detect_regime_sync(returns)
+                regime, _ts = self.regime_detector.detect_regime_sync(np.array(returns, dtype=float))
+                confidence = 1.0 if regime != "NEUTRAL" else 0.0
             else:
                 regime, confidence = "NEUTRAL", 0.0
         except Exception:

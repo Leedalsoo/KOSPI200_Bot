@@ -25,8 +25,8 @@ class PaperTradingAccount:
         self.pnl_engine = PnLEngine()
         self.margin_engine = MarginEngine(initial_capital)
         self.ledger_engine = LedgerEngine()
-        self._processed_exec_ids = set()
-        self._last_price = None
+        self._processed_exec_ids: set[str] = set()
+        self._last_price: Optional[float] = None
 
         self.canonical_summary = CanonicalAccountSummary(
 

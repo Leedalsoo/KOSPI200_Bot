@@ -109,10 +109,10 @@ class MarketTick:
     timestamp: Any = datetime.now()
     last_price: Decimal = Decimal("0")
     volume: Optional[Any] = None
-    bid_prices: List[Decimal] = None
-    ask_prices: List[Decimal] = None
-    bid_qtys: List[int] = None
-    ask_qtys: List[int] = None
+    bid_prices: Optional[List[Decimal]] = None
+    ask_prices: Optional[List[Decimal]] = None
+    bid_qtys: Optional[List[int]] = None
+    ask_qtys: Optional[List[int]] = None
     seq: int = 0
     bid_price: Optional[Decimal] = None
     ask_price: Optional[Decimal] = None

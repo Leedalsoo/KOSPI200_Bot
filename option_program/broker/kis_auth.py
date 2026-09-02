@@ -288,6 +288,8 @@ class KISAuthManager:
         """유효한 access_token 반환 (만료되었거나 force_refresh 시 자동 재발급)."""
         if force_refresh or self._current_token is None or not self._current_token.is_valid():
             self.issue_token()
+        if self._current_token is None:
+            raise KISAuthError("Failed to obtain a valid access token.")
         return self._current_token.access_token
 
     def get_token_info(self) -> Optional[KISAuthToken]:

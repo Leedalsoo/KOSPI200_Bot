@@ -142,7 +142,7 @@ class Track1(StrategyContract):
 
     def on_market_open(self, current_price: float) -> List[Dict]:
         """[1단계] 장 시작 이중 링(Dual-Ring) 유기체 가두리 선제 구축 및 시초가 갭 헷지"""
-        signals = []
+        signals: List[Dict[str, Any]] = []
 
         # 갭상승/갭하락 개장 시 시초가 선제 헷지 (기존 가두리가 이미 존재하는 경우)
         if self.base_price > 0:

@@ -35,12 +35,16 @@ class StateRecoveryEngine:
         """스냅샷 기반 계좌, 포지션, 원장(Ledger) 전체 상태 100% 복구"""
         try:
             if isinstance(snapshot, dict):
-                bal = snapshot.get("balance", snapshot.get("total_balance", 25000000.0))
-                self.account.balance = float(bal)
-                self.account.used_margin = float(snapshot.get("used_margin", 0.0))
-                self.account.free_margin = float(snapshot.get("free_margin", bal))
-                self.account.realized_pnl = float(snapshot.get("realized_pnl", 0.0))
-                self.account.unrealized_pnl = float(snapshot.get("unrealized_pnl", 0.0))
+                bal = snapshot.get("balance") if snapshot.get("balance") is not None else snapshot.get("total_balance", 25000000.0)
+                self.account.balance = float(bal if bal is not None else 0.0)
+                used_m = snapshot.get("used_margin", 0.0)
+                self.account.used_margin = float(used_m if used_m is not None else 0.0)
+                free_m = snapshot.get("free_margin", bal)
+                self.account.free_margin = float(free_m if free_m is not None else 0.0)
+                real_pnl = snapshot.get("realized_pnl", 0.0)
+                self.account.realized_pnl = float(real_pnl if real_pnl is not None else 0.0)
+                unreal_pnl = snapshot.get("unrealized_pnl", 0.0)
+                self.account.unrealized_pnl = float(unreal_pnl if unreal_pnl is not None else 0.0)
                 if "positions" in snapshot:
                     self.account.positions = {k: dict(v) for k, v in snapshot["positions"].items()}
                 if "ledger_transactions" in snapshot:
@@ -49,11 +53,15 @@ class StateRecoveryEngine:
                     target_metrics.update(snapshot["metrics"])
             else:
                 bal = getattr(snapshot, "balance", getattr(snapshot, "total_balance", 25000000.0))
-                self.account.balance = float(bal)
-                self.account.used_margin = float(getattr(snapshot, "used_margin", 0.0))
-                self.account.free_margin = float(getattr(snapshot, "free_margin", bal))
-                self.account.realized_pnl = float(getattr(snapshot, "realized_pnl", 0.0))
-                self.account.unrealized_pnl = float(getattr(snapshot, "unrealized_pnl", 0.0))
+                self.account.balance = float(bal if bal is not None else 0.0)
+                used_m = getattr(snapshot, "used_margin", 0.0)
+                self.account.used_margin = float(used_m if used_m is not None else 0.0)
+                free_m = getattr(snapshot, "free_margin", bal)
+                self.account.free_margin = float(free_m if free_m is not None else 0.0)
+                real_pnl = getattr(snapshot, "realized_pnl", 0.0)
+                self.account.realized_pnl = float(real_pnl if real_pnl is not None else 0.0)
+                unreal_pnl = getattr(snapshot, "unrealized_pnl", 0.0)
+                self.account.unrealized_pnl = float(unreal_pnl if unreal_pnl is not None else 0.0)
                 if hasattr(snapshot, "positions"):
                     self.account.positions = {k: dict(v) for k, v in snapshot.positions.items()}
                 if hasattr(snapshot, "ledger_transactions"):

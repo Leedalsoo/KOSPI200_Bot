@@ -28,7 +28,7 @@ class Track8(StrategyContract):
         # Dynamic Profit Take & Rebuild Evaluator
         self.rebuild_evaluator = DynamicProfitRebuildEvaluator()
         self.profit_target = float(self.config.get("profit_target", 300000.0))
-
+        self.strangle_state: Dict[str, Any] = {}
         self.reset_state()
         logger.info("Macro Regime Protection & Monthly Wide Strangle Strategy (Track8) Initialized.")
 
@@ -184,14 +184,14 @@ class Track8(StrategyContract):
         if not self.strangle_state["is_active"]:
             return {"status": "INACTIVE", "signals": []}
 
-        put_k = self.strangle_state["put_strike"]
-        call_k = self.strangle_state["call_strike"]
-        qty = max(self.strangle_state.get("qty_call", 1), self.strangle_state.get("qty_put", 1))
+        put_k = float(self.strangle_state.get("put_strike", 0.0))
+        call_k = float(self.strangle_state.get("call_strike", 0.0))
+        qty = int(max(float(self.strangle_state.get("qty_call", 1)), float(self.strangle_state.get("qty_put", 1))))
 
         put_intrinsic = max(0.0, put_k - current_price) * 250000.0 * qty
         call_intrinsic = max(0.0, current_price - call_k) * 250000.0 * qty
         total_intrinsic = put_intrinsic + call_intrinsic
-        spent = self.strangle_state.get("premium_spent", 500000.0)
+        spent = float(self.strangle_state.get("premium_spent", 500000.0))
 
         # 1단계: VKOSPI 변동성 연동 최소 이익선 산정 (기본 1.8배)
         min_multiplier = 1.8 if active_vol < 1.3 else 2.5
@@ -202,7 +202,7 @@ class Track8(StrategyContract):
 
         # 2단계: 트레일링 스탑 가동 중 최고점 대비 3단계 동적 스케일링 반락선 지정가 예약 큐 실시간 선제 배치
         if self.strangle_state["trailing_stop_active"]:
-            prev_high = self.strangle_state.get("high_watermark_intrinsic", 0.0)
+            prev_high = float(self.strangle_state.get("high_watermark_intrinsic", 0.0))
             current_high = max(prev_high, total_intrinsic)
 
             pnl_ratio = current_high / max(1.0, spent)
@@ -308,8 +308,8 @@ class Track8(StrategyContract):
 
         # 만기 D-4~D-0 다이내믹 조건부 홀딩 재평가
         if dte <= 4.0:
-            call_k = self.strangle_state["call_strike"]
-            put_k = self.strangle_state["put_strike"]
+            call_k = float(self.strangle_state.get("call_strike", 0.0))
+            put_k = float(self.strangle_state.get("put_strike", 0.0))
             
             # Moneyness(±3% 이내 접근) 및 IV 팽창 여부 체크
             is_near_call = (call_k > 0 and abs(current_price - call_k) / max(1.0, call_k) <= 0.03)

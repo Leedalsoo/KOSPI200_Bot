@@ -1,6 +1,6 @@
 """Settlement Engine for M5 (EOD & Expiry Settlement)."""
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from virtual_securities_firm.account.paper_account import PaperTradingAccount
 
 logger = logging.getLogger(__name__)
@@ -9,7 +9,7 @@ class SettlementEngine:
     """[M5 정산 엔진: 일일 정산 (EOD Settlement) 및 만기 정산 (Expiry Settlement) 전담]"""
     def __init__(self, account: PaperTradingAccount):
         self.account = account
-        self.settlement_history = []
+        self.settlement_history: List[Dict[str, Any]] = []
 
     def perform_eod_settlement(self, final_settlement_price: float) -> Dict[str, Any]:
         """일일 장마감 MTM 정산 및 증거금 재계산 -> LedgerEngine에 정산 분개 기록"""

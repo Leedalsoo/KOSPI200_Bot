@@ -235,8 +235,10 @@ class Track2(StrategyContract):
     def _validate_whipsaw_filters(self, tick: MarketTick, basis: Decimal, near_iv: Decimal, far_iv: Decimal, poc_price: Decimal) -> bool:
         """[원칙 2] 4중 미시구조 필터(OBI > 0.5, 베이시스, IV 스큐 엇박자 차단, POC 관통) 교차 검증"""
         # 1. 호가창 잔량 불균형 (OBI)
-        bid_sum = sum(tick.bid_qtys[:5])
-        ask_sum = sum(tick.ask_qtys[:5])
+        bid_qtys = tick.bid_qtys or []
+        ask_qtys = tick.ask_qtys or []
+        bid_sum = sum(bid_qtys[:5])
+        ask_sum = sum(ask_qtys[:5])
         if bid_sum + ask_sum == 0:
             obi_val = 0.0
         else:
