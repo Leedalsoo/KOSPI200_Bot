@@ -1,4 +1,5 @@
 """Option Program Runtime (OptionProgram) - Pure Strategy Signal Generation."""
+import dataclasses
 import logging
 import time
 from typing import List, Optional, Dict, Any
@@ -247,6 +248,10 @@ class OptionProgramRuntime:
                 if not resolved_expiry and getattr(tick, "symbol", ""):
                     resolved_expiry = self.option_master.get_expiry(tick.symbol) or ""
 
+                # 🎯 Master lookup으로 만기일을 획득했으면 CanonicalMarketTick.expiry에 실제 공급
+                if resolved_expiry and tick.expiry != resolved_expiry:
+                    tick = dataclasses.replace(tick, expiry=resolved_expiry)
+
                 calculated_dte: Optional[float] = None
                 if resolved_expiry and date_str:
                     try:
@@ -255,7 +260,8 @@ class OptionProgramRuntime:
                         logger.debug(f"DTE calculation note: {e}")
                         calculated_dte = None
 
-                t1_dte = calculated_dte if calculated_dte is not None else 30.0
+                # 🎯 임의의 30.0 DTE fallback 제거: expiry/DTE가 없으면 None 유지
+                t1_dte = calculated_dte
 
                 if st_name == "Track1":
                     if st.active_fence is None:
@@ -267,7 +273,7 @@ class OptionProgramRuntime:
                     raw_signals = st.on_tick(
                         current_price=tick.underlying_price,
                         trend_signal=is_bull,
-                        days_to_expiry=t1_dte,
+                        days_to_expiry=t1_dte if t1_dte is not None else 999.0,
                         current_date=date_str
                     )
                     if isinstance(raw_signals, list):

@@ -20,6 +20,21 @@ logger = logging.getLogger(__name__)
 KIS_FO_IDX_MASTER_URL = "https://new.real.download.dws.co.kr/common/master/fo_idx_code_mts.mst.zip"
 
 
+class KisMasterSourceError(Exception):
+    """KIS 마스터 소스 다운로드 및 파싱 관련 기본 예외."""
+    pass
+
+
+class KisMasterDownloadError(KisMasterSourceError):
+    """KIS 마스터 파일 다운로드 실패 시 발생하는 예외."""
+    pass
+
+
+class KisMasterParseError(KisMasterSourceError):
+    """KIS 마스터 파일 압축 해제 또는 파싱 실패 시 발생하는 예외."""
+    pass
+
+
 def calculate_krx_monthly_option_expiry(
     year: int,
     month: int,
@@ -70,6 +85,9 @@ def parse_kis_fo_idx_mst(
     calendar: Optional[KrxTradingCalendar] = None,
 ) -> Dict[str, str]:
     """KIS 공식 fo_idx_code_mts.mst 텍스트 내용을 파싱하여 {symbol: expiry_date} 매핑 생성."""
+    if not raw_content or not raw_content.strip():
+        return {}
+
     contracts: Dict[str, str] = {}
     cal = calendar or KrxTradingCalendar()
 
@@ -146,22 +164,32 @@ class KisOptionMasterLoader:
         calendar: Optional[KrxTradingCalendar] = None,
     ) -> Dict[str, str]:
         """ZIP 바이트 스트림에서 fo_idx_code_mts.mst 압축을 풀고 파싱."""
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-            # fo_idx_code_mts.mst 우선 탐색
-            target_fn = None
-            for fn in z.namelist():
-                if "fo_idx_code_mts" in fn or "fo_idx_code" in fn or "optcode" in fn:
-                    target_fn = fn
-                    break
-            if not target_fn and z.namelist():
-                target_fn = z.namelist()[0]
+        if not zip_bytes:
+            raise KisMasterParseError("Empty zip bytes provided for KIS master loading.")
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+                # fo_idx_code_mts.mst 우선 탐색
+                target_fn = None
+                for fn in z.namelist():
+                    if "fo_idx_code_mts" in fn or "fo_idx_code" in fn or "optcode" in fn:
+                        target_fn = fn
+                        break
+                if not target_fn and z.namelist():
+                    target_fn = z.namelist()[0]
 
-            if not target_fn:
-                return {}
+                if not target_fn:
+                    raise KisMasterParseError("No valid master file found in zip archive.")
 
-            raw_bytes = z.read(target_fn)
-            raw_text = raw_bytes.decode("cp949", errors="ignore")
-            return parse_kis_fo_idx_mst(raw_text, calendar=calendar)
+                raw_bytes = z.read(target_fn)
+                raw_text = raw_bytes.decode("cp949", errors="ignore")
+                parsed = parse_kis_fo_idx_mst(raw_text, calendar=calendar)
+                if not parsed:
+                    raise KisMasterParseError(f"Master file '{target_fn}' parsed 0 contracts.")
+                return parsed
+        except Exception as e:
+            if isinstance(e, KisMasterParseError):
+                raise
+            raise KisMasterParseError(f"Failed to extract and parse zip archive: {e}") from e
 
     @classmethod
     def load_from_url(
@@ -177,8 +205,7 @@ class KisOptionMasterLoader:
                 data = resp.read()
                 return cls.load_from_zip_bytes(data, calendar=calendar)
         except Exception as exc:
-            logger.warning(f"[KisOptionMasterLoader] Failed to download master from {url}: {exc}")
-            return {}
+            raise KisMasterDownloadError(f"Failed to download KIS master from {url}: {exc}") from exc
 
 
 class IOptionContractMaster(ABC):
@@ -209,6 +236,7 @@ class InMemoryOptionContractMaster(IOptionContractMaster):
     ) -> None:
         # {symbol: expiry_date_str (YYYY-MM-DD)}
         self._contracts: Dict[str, str] = dict(contracts or {})
+        self.last_error: Optional[str] = None
         if auto_load_kis_source and not self._contracts:
             self.load_from_kis_source(calendar=calendar)
 
@@ -227,10 +255,16 @@ class InMemoryOptionContractMaster(IOptionContractMaster):
         url: str = KIS_FO_IDX_MASTER_URL,
     ) -> int:
         """공식 KIS 마스터 소스를 다운로드하여 등록."""
-        loaded = KisOptionMasterLoader.load_from_url(url=url, calendar=calendar)
-        self._contracts.update(loaded)
-        logger.info(f"[InMemoryOptionContractMaster] Loaded {len(loaded)} contracts from KIS source.")
-        return len(loaded)
+        try:
+            loaded = KisOptionMasterLoader.load_from_url(url=url, calendar=calendar)
+            self._contracts.update(loaded)
+            self.last_error = None
+            logger.info(f"[InMemoryOptionContractMaster] Loaded {len(loaded)} contracts from KIS source.")
+            return len(loaded)
+        except Exception as e:
+            self.last_error = str(e)
+            logger.warning(f"[InMemoryOptionContractMaster] KIS source load note: {e}")
+            return 0
 
     def load_from_raw_mst_content(
         self,
@@ -259,6 +293,8 @@ class KisProductionOptionContractMaster(IOptionContractMaster):
     ) -> None:
         self.calendar: KrxTradingCalendar = calendar or KrxTradingCalendar()
         self._contracts: Dict[str, str] = dict(contracts or {})
+        self.last_error: Optional[str] = None
+        self.is_loaded: bool = len(self._contracts) > 0
         if auto_load and not self._contracts:
             self.load_from_kis_source(url=url)
 
@@ -273,15 +309,30 @@ class KisProductionOptionContractMaster(IOptionContractMaster):
 
     def load_from_kis_source(self, url: str = KIS_FO_IDX_MASTER_URL) -> int:
         """공식 KIS 마스터 소스를 다운로드하여 등록."""
-        loaded = KisOptionMasterLoader.load_from_url(url=url, calendar=self.calendar)
-        self._contracts.update(loaded)
-        logger.info(f"[KisProductionOptionContractMaster] Loaded {len(loaded)} contracts from KIS source.")
-        return len(loaded)
+        try:
+            loaded = KisOptionMasterLoader.load_from_url(url=url, calendar=self.calendar)
+            self._contracts.update(loaded)
+            self.is_loaded = len(self._contracts) > 0
+            self.last_error = None
+            logger.info(f"[KisProductionOptionContractMaster] Loaded {len(loaded)} contracts from KIS source.")
+            return len(loaded)
+        except Exception as e:
+            self.last_error = str(e)
+            logger.warning(f"[KisProductionOptionContractMaster] Source download note: {e}")
+            return 0
 
     def load_from_raw_mst_content(self, raw_text: str) -> int:
         """원시 MST 텍스트로부터 파싱하여 등록."""
         parsed = parse_kis_fo_idx_mst(raw_text, calendar=self.calendar)
         self._contracts.update(parsed)
+        self.is_loaded = len(self._contracts) > 0
+        return len(parsed)
+
+    def load_from_zip_bytes(self, zip_bytes: bytes) -> int:
+        """ZIP 바이트 스트림으로부터 파싱하여 등록."""
+        parsed = KisOptionMasterLoader.load_from_zip_bytes(zip_bytes, calendar=self.calendar)
+        self._contracts.update(parsed)
+        self.is_loaded = len(self._contracts) > 0
         return len(parsed)
 
     @property
