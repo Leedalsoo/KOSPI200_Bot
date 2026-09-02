@@ -115,6 +115,12 @@ class TestOptionContractMaster(unittest.TestCase):
         has_kospi_options = any(sym.startswith(("B", "C", "2", "3")) for sym in contracts.keys())
         self.assertTrue(has_kospi_options, "Real KIS MST must contain valid KOSPI200 option symbols")
 
+        # KisProductionOptionContractMaster를 통한 정상 공급 상태 계약 검증
+        prod_master = KisProductionOptionContractMaster(contracts=contracts)
+        self.assertTrue(prod_master.is_loaded, "Production master must report is_loaded=True when populated")
+        self.assertGreater(prod_master.total_contracts, 1000, "total_contracts must reflect parsed contracts")
+        self.assertIsNone(prod_master.last_error, "last_error must be None on successful load")
+
     def test_process_tick_e2e_canonical_expiry_propagation(self) -> None:
         """[핵심 요구 2] process_tick() 실행을 포함한 Master expiry ➔ CanonicalMarketTick.expiry E2E assertion."""
         runtime = OptionProgramRuntime()
@@ -222,19 +228,58 @@ class TestOptionContractMaster(unittest.TestCase):
 
     def test_source_failure_explicitly_raised_or_recorded(self) -> None:
         """잘못된 ZIP 데이터 또는 다운로드 실패 시 조용히 성공으로 은폐되지 않고 예외 발생 또는 last_error 기록 검증."""
-        # 손상된 ZIP 바이트 스트림 로딩 시 KisMasterParseError 발생 검증
+        # 1. 초기 빈 Master는 is_loaded=False, total_contracts=0, last_error=None
+        empty_master = KisProductionOptionContractMaster(auto_load=False)
+        self.assertFalse(empty_master.is_loaded, "Empty master must not report is_loaded=True")
+        self.assertEqual(empty_master.total_contracts, 0)
+        self.assertIsNone(empty_master.last_error)
+
+        # 2. 손상된 ZIP 바이트 스트림 로딩 시 KisMasterParseError 발생 검증
         with self.assertRaises(KisMasterParseError):
             KisOptionMasterLoader.load_from_zip_bytes(b"CORRUPTED_NON_ZIP_DATA")
 
-        # 빈 바이트 스트림 로딩 시 KisMasterParseError 발생 검증
+        # 3. 빈 바이트 스트림 로딩 시 KisMasterParseError 발생 검증
         with self.assertRaises(KisMasterParseError):
             KisOptionMasterLoader.load_from_zip_bytes(b"")
 
-        # Master 인스턴스에 잘못된 데이터 로딩 시 last_error에 명시적 기록 검증
+        # 4. Master 인스턴스에 잘못된 데이터 로딩 시 last_error에 명시적 기록 및 is_loaded=False 유지
+        bad_url_master = KisProductionOptionContractMaster(auto_load=False)
+        bad_url_master.load_from_kis_source(url="https://invalid.url.nonexistent/master.zip")
+        self.assertIsNotNone(bad_url_master.last_error, "Failed source load must record last_error")
+        self.assertFalse(bad_url_master.is_loaded, "Failed source load must keep is_loaded=False")
+        self.assertEqual(bad_url_master.total_contracts, 0, "Failed source load must keep total_contracts=0")
+
+        # 5. Master 인스턴스에 손상된 zip 바이트 로딩 시 예외 발생 및 last_error 기록, is_loaded=False 유지
+        with self.assertRaises(KisMasterParseError):
+            bad_url_master.load_from_zip_bytes(b"CORRUPTED")
+        self.assertIsNotNone(bad_url_master.last_error)
+        self.assertFalse(bad_url_master.is_loaded)
+
+    def test_option_master_supply_state_consistency(self) -> None:
+        """is_loaded, total_contracts, last_error 상태 계약의 상호 일관성 검증.
+        - total_contracts > 0 <=> is_loaded == True
+        - 정상 로드 성공 시 last_error == None 복구
+        """
         master = KisProductionOptionContractMaster(auto_load=False)
-        master.load_from_kis_source(url="https://invalid.url.nonexistent/master.zip")
-        self.assertIsNotNone(master.last_error)
         self.assertFalse(master.is_loaded)
+        self.assertEqual(master.total_contracts, 0)
+
+        # 정상 ZIP 데이터 로드 시 공급 상태 전환 확인
+        sample_zip = create_sample_kis_mst_zip_bytes()
+        loaded_count = master.load_from_zip_bytes(sample_zip)
+        self.assertGreater(loaded_count, 0)
+        self.assertTrue(master.is_loaded, "is_loaded must be True when contracts are loaded")
+        self.assertEqual(master.total_contracts, loaded_count)
+        self.assertIsNone(master.last_error, "last_error must be None upon successful load")
+
+        # InMemoryOptionContractMaster도 동일한 상태 계약 준수 확인
+        mem_master = InMemoryOptionContractMaster()
+        self.assertFalse(mem_master.is_loaded)
+        self.assertEqual(mem_master.total_contracts, 0)
+        mem_master.register_contract("TEST_SYM", "2026-09-10")
+        self.assertTrue(mem_master.is_loaded)
+        self.assertEqual(mem_master.total_contracts, 1)
+        self.assertIsNone(mem_master.last_error)
 
     def test_explicit_option_master_dependency_injection_preserved(self) -> None:
         """명시적으로 option_master를 주입했을 때 기존 DI 경로가 유지되는지 검증."""

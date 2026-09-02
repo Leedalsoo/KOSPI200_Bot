@@ -224,6 +224,22 @@ class IOptionContractMaster(ABC):
         """옵션 종목코드와 만기일을 마스터 테이블에 등록."""
         pass
 
+    @property
+    def is_loaded(self) -> bool:
+        """마스터 계약이 정상적으로 로드되어 1개 이상의 계약을 공급 가능한 상태인지 여부."""
+        return self.total_contracts > 0
+
+    @property
+    @abstractmethod
+    def total_contracts(self) -> int:
+        """현재 등록된 총 옵션 계약 수."""
+        pass
+
+    @property
+    def last_error(self) -> Optional[str]:
+        """마지막 소스 로드 시도 시 발생한 오류 메시지 (성공 시 None)."""
+        return None
+
 
 class InMemoryOptionContractMaster(IOptionContractMaster):
     """[기본 구현체] 메모리 기반 옵션 종목 마스터 테이블."""
@@ -236,7 +252,7 @@ class InMemoryOptionContractMaster(IOptionContractMaster):
     ) -> None:
         # {symbol: expiry_date_str (YYYY-MM-DD)}
         self._contracts: Dict[str, str] = dict(contracts or {})
-        self.last_error: Optional[str] = None
+        self._last_error: Optional[str] = None
         if auto_load_kis_source and not self._contracts:
             self.load_from_kis_source(calendar=calendar)
 
@@ -258,11 +274,11 @@ class InMemoryOptionContractMaster(IOptionContractMaster):
         try:
             loaded = KisOptionMasterLoader.load_from_url(url=url, calendar=calendar)
             self._contracts.update(loaded)
-            self.last_error = None
+            self._last_error = None
             logger.info(f"[InMemoryOptionContractMaster] Loaded {len(loaded)} contracts from KIS source.")
             return len(loaded)
         except Exception as e:
-            self.last_error = str(e)
+            self._last_error = str(e)
             logger.warning(f"[InMemoryOptionContractMaster] KIS source load note: {e}")
             return 0
 
@@ -274,11 +290,20 @@ class InMemoryOptionContractMaster(IOptionContractMaster):
         """원시 MST 텍스트로부터 파싱하여 등록."""
         parsed = parse_kis_fo_idx_mst(raw_text, calendar=calendar)
         self._contracts.update(parsed)
+        self._last_error = None
         return len(parsed)
 
     @property
     def total_contracts(self) -> int:
         return len(self._contracts)
+
+    @property
+    def is_loaded(self) -> bool:
+        return len(self._contracts) > 0
+
+    @property
+    def last_error(self) -> Optional[str]:
+        return self._last_error
 
 
 class KisProductionOptionContractMaster(IOptionContractMaster):
@@ -293,8 +318,7 @@ class KisProductionOptionContractMaster(IOptionContractMaster):
     ) -> None:
         self.calendar: KrxTradingCalendar = calendar or KrxTradingCalendar()
         self._contracts: Dict[str, str] = dict(contracts or {})
-        self.last_error: Optional[str] = None
-        self.is_loaded: bool = len(self._contracts) > 0
+        self._last_error: Optional[str] = None
         if auto_load and not self._contracts:
             self.load_from_kis_source(url=url)
 
@@ -312,32 +336,47 @@ class KisProductionOptionContractMaster(IOptionContractMaster):
         try:
             loaded = KisOptionMasterLoader.load_from_url(url=url, calendar=self.calendar)
             self._contracts.update(loaded)
-            self.is_loaded = len(self._contracts) > 0
-            self.last_error = None
+            self._last_error = None
             logger.info(f"[KisProductionOptionContractMaster] Loaded {len(loaded)} contracts from KIS source.")
             return len(loaded)
         except Exception as e:
-            self.last_error = str(e)
+            self._last_error = str(e)
             logger.warning(f"[KisProductionOptionContractMaster] Source download note: {e}")
             return 0
 
     def load_from_raw_mst_content(self, raw_text: str) -> int:
         """원시 MST 텍스트로부터 파싱하여 등록."""
-        parsed = parse_kis_fo_idx_mst(raw_text, calendar=self.calendar)
-        self._contracts.update(parsed)
-        self.is_loaded = len(self._contracts) > 0
-        return len(parsed)
+        try:
+            parsed = parse_kis_fo_idx_mst(raw_text, calendar=self.calendar)
+            self._contracts.update(parsed)
+            self._last_error = None
+            return len(parsed)
+        except Exception as e:
+            self._last_error = str(e)
+            raise
 
     def load_from_zip_bytes(self, zip_bytes: bytes) -> int:
         """ZIP 바이트 스트림으로부터 파싱하여 등록."""
-        parsed = KisOptionMasterLoader.load_from_zip_bytes(zip_bytes, calendar=self.calendar)
-        self._contracts.update(parsed)
-        self.is_loaded = len(self._contracts) > 0
-        return len(parsed)
+        try:
+            parsed = KisOptionMasterLoader.load_from_zip_bytes(zip_bytes, calendar=self.calendar)
+            self._contracts.update(parsed)
+            self._last_error = None
+            return len(parsed)
+        except Exception as e:
+            self._last_error = str(e)
+            raise
 
     @property
     def total_contracts(self) -> int:
         return len(self._contracts)
+
+    @property
+    def is_loaded(self) -> bool:
+        return len(self._contracts) > 0
+
+    @property
+    def last_error(self) -> Optional[str]:
+        return self._last_error
 
 
 def create_default_option_master(
