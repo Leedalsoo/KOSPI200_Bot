@@ -6,8 +6,14 @@ from datetime import date, datetime
 from shared.calendar.krx_calendar import (
     IHolidayDataProvider,
     InMemoryHolidayProvider,
+    KisHolidayParseError,
+    KisHolidaySourceError,
+    KisHolidayUnavailableError,
+    KisProductionHolidayProvider,
     KrxTradingCalendar,
     _normalize_date,
+    create_default_krx_calendar,
+    parse_kis_holiday_output,
 )
 
 
@@ -171,6 +177,99 @@ class TestKrxTradingCalendar(unittest.TestCase):
         # Track 1의 만기 D-4 컷오프 프로토콜로 인해 가두리 청산 주문이 생성됨을 확인
         self.assertIsNone(t1.active_fence, "Track 1 active fence should be cleared on DTE <= 4.0")
         self.assertTrue(any(c.track_id == "Track1" and c.side.value == "BUY" for c in cmds))
+
+    def test_parse_kis_holiday_output_extracts_non_trading_days(self):
+        """KIS chk-holiday API 응답 output 파싱: opnd_yn == 'N' 추출 검증."""
+        sample_output = [
+            {"bass_dt": "20260101", "wday_dvsn_cd": "05", "bzdy_yn": "N", "tr_day_yn": "N", "opnd_yn": "N"},
+            {"bass_dt": "20260102", "wday_dvsn_cd": "06", "bzdy_yn": "Y", "tr_day_yn": "Y", "opnd_yn": "Y"},
+            {"bass_dt": "20260301", "wday_dvsn_cd": "01", "bzdy_yn": "N", "tr_day_yn": "N", "opnd_yn": "N"},
+            {"bass_dt": "20260302", "wday_dvsn_cd": "02", "bzdy_yn": "N", "tr_day_yn": "N", "opnd_yn": "N"},  # 대체공휴일
+            {"bass_dt": "20260505", "wday_dvsn_cd": "03", "bzdy_yn": "N", "tr_day_yn": "N", "opnd_yn": "N"},
+            {"bass_dt": "INVALID", "opnd_yn": "N"},  # 잘못된 날짜 방어
+        ]
+        parsed = parse_kis_holiday_output(sample_output)
+        self.assertEqual(len(parsed), 4)
+        self.assertIn(date(2026, 1, 1), parsed)
+        self.assertNotIn(date(2026, 1, 2), parsed)
+        self.assertIn(date(2026, 3, 1), parsed)
+        self.assertIn(date(2026, 3, 2), parsed)
+        self.assertIn(date(2026, 5, 5), parsed)
+
+    def test_kis_production_holiday_provider_load_from_response_data_success(self):
+        """KisProductionHolidayProvider: 공식 API 응답 데이터 주입 시 is_loaded 및 달력 판정 연동 검증."""
+        provider = KisProductionHolidayProvider(auto_load=False)
+        self.assertFalse(provider.is_loaded)
+        self.assertEqual(provider.total_holidays, 0)
+        self.assertIsNone(provider.last_error)
+
+        resp_data = {
+            "rt_cd": "0",
+            "msg_cd": "MCA00000",
+            "msg1": "정상조회",
+            "output": [
+                {"bass_dt": "20260815", "opnd_yn": "N"},  # 광복절
+                {"bass_dt": "20260817", "opnd_yn": "N"},  # 대체공휴일
+                {"bass_dt": "20260818", "opnd_yn": "Y"},  # 정상개장
+            ],
+            "ctx_area_nk": "",
+            "ctx_area_fk": "",
+        }
+
+        loaded = provider.load_from_response_data(resp_data)
+        self.assertEqual(loaded, 2)
+        self.assertTrue(provider.is_loaded)
+        self.assertEqual(provider.total_holidays, 2)
+        self.assertIsNone(provider.last_error)
+
+        # 캘린더 엔진과 연동 검증
+        cal = KrxTradingCalendar(holiday_provider=provider)
+        self.assertTrue(cal.is_holiday_source_loaded)
+        self.assertFalse(cal.is_trading_day("2026-08-17"))  # 대체공휴일 -> 비거래일
+        self.assertTrue(cal.is_trading_day("2026-08-18"))   # 정상개장일 -> 거래일
+
+    def test_kis_production_holiday_provider_failure_not_concealed_as_success(self):
+        """[규칙 4 검증] Source 로딩 실패 시 빈 세트로 은폐하지 않고 is_loaded=False 및 last_error 기록 검증."""
+        provider = KisProductionHolidayProvider(auto_load=False)
+
+        # 1. rt_cd != 0 오류 응답 주입
+        error_resp = {
+            "rt_cd": "1",
+            "msg_cd": "EGW00123",
+            "msg1": "인증에 실패하였습니다.",
+            "output": [],
+        }
+        with self.assertRaises(KisHolidaySourceError):
+            provider.load_from_response_data(error_resp)
+
+        self.assertFalse(provider.is_loaded, "Must not be considered loaded on error response")
+        self.assertIsNotNone(provider.last_error)
+        self.assertIn("EGW00123", str(provider.last_error))
+
+        # 2. 잘못된 형식(non-dict) 주입
+        with self.assertRaises(KisHolidayParseError):
+            provider.load_from_response_data("NOT_A_DICT")  # type: ignore
+
+    def test_kis_production_holiday_provider_unavailable_strict_mode(self):
+        """[규칙 5 검증] 미로드 상태에서 strict_mode=True 시 KisHolidayUnavailableError 발생 검증."""
+        unloaded_provider = KisProductionHolidayProvider(auto_load=False, strict_mode=True)
+        self.assertFalse(unloaded_provider.is_loaded)
+
+        with self.assertRaises(KisHolidayUnavailableError):
+            unloaded_provider.is_holiday(date(2026, 1, 1))
+
+    def test_default_runtime_has_kis_production_holiday_provider(self):
+        """기본 OptionProgramRuntime 생성 시 KisProductionHolidayProvider가 실제 주입됨을 검증."""
+        from option_program.runtime.program_runtime import OptionProgramRuntime
+
+        # 1. 기본 생성 시 Production Calendar 및 KisProductionHolidayProvider 연결 확인
+        runtime = OptionProgramRuntime()
+        self.assertIsInstance(runtime.calendar.holiday_provider, KisProductionHolidayProvider)
+
+        # 2. 명시적 calendar DI 주입 시 기존 계약 100% 보존 확인
+        custom_cal = KrxTradingCalendar(holiday_provider=InMemoryHolidayProvider())
+        custom_runtime = OptionProgramRuntime(calendar=custom_cal)
+        self.assertIsInstance(custom_runtime.calendar.holiday_provider, InMemoryHolidayProvider)
 
 
 if __name__ == "__main__":

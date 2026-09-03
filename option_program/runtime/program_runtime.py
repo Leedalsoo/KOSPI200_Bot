@@ -32,7 +32,7 @@ from option_program.orders.order_router import OrderRouter
 from option_program.market_analysis.market_condition_analyzer import MarketConditionAnalyzer
 from option_program.market_analysis.market_condition_models import MarketConditionSnapshot
 from infra.wal_store import WalStore
-from shared.calendar import KrxTradingCalendar, calculate_dte
+from shared.calendar import KrxTradingCalendar, calculate_dte, create_default_krx_calendar
 from shared.contracts.option_master import (
     IOptionContractMaster,
     InMemoryOptionContractMaster,
@@ -51,7 +51,9 @@ class OptionProgramRuntime:
         calendar: Optional[KrxTradingCalendar] = None,
         option_master: Optional[IOptionContractMaster] = None,
     ):
-        self.calendar: KrxTradingCalendar = calendar or KrxTradingCalendar()
+        self.calendar: KrxTradingCalendar = calendar or create_default_krx_calendar(
+            auto_load_kis=True
+        )
         self.option_master: IOptionContractMaster = option_master or create_default_option_master(
             calendar=self.calendar,
             auto_load_kis=True,
